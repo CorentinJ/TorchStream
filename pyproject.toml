@@ -7,8 +7,11 @@ authors = [
 ]
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.7"
-dependencies = []
+requires-python = ">=3.8"
+dependencies = [
+    "numpy>=1.23.0",
+    "torch>=1.11.0",
+]
 
 [project.urls]
 Repository = "https://github.com/CorentinJ/TorchStream"
