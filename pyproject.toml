@@ -1,0 +1,17 @@
+[project]
+name = "torchstream"
+version = "0.0.1"
+description = "A library for making PyTorch models streamable"
+authors = [
+  { name = "Corentin Jemine", email = "corentin.jemine@gmail.com" }
+]
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.7"
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/CorentinJ/TorchStream"
+
+[tool.ruff]
+line-length = 120
