@@ -10,7 +10,9 @@ license = { file = "LICENSE" }
 requires-python = ">=3.8"
 dependencies = [
     "numpy>=1.23.0",
+    "pytest>=8.3.4",
     "torch>=1.11.0",
+    "z3-solver>=4.14.0.0",
 ]
 
 [project.urls]
