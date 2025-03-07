@@ -15,6 +15,9 @@ def printsol(model):
     # FIXME: alphanum
     var_right_pad_vals = [str(var_dict[var]) for var in sorted(var_right_pad_names)]
     print(f"Padding: left={var_dict['p_l']}, right=({', '.join(var_right_pad_vals)})")
+    num_win_names = [var for var in var_dict if var.startswith("c_") and not var.startswith("c_reg_")]
+    num_win_vals = [str(var_dict[var]) for var in sorted(num_win_names)]
+    print(f"Num windows: ({', '.join(num_win_vals)})")
     print(f"Input: kernel_size={var_dict['k_i']}, stride={var_dict['s_i']}")
     print(f"Output: kernel_size={var_dict['k_o']}, stride={var_dict['s_o']}")
     print()
@@ -51,9 +54,9 @@ class SlidingWindowParamsSolver:
         # There is no point in making the padding higher than the kernel size, as it would waste compute on constant
         # values.
         self.p_l = Int("p_l")
-        self.p_rs = []
+        self.p_rs = []  # TODO: remove such lists? Do we really need to keep the ref?
         self.solver.add(self.p_l >= 0, self.p_l < self.k_i)
-        # Number of sliding windows for range constraints
+        # Number of sliding windows for constraints
         self.cs = []
 
     def add_input_to_output_length(self, input_length: int, output_length: int):
@@ -79,10 +82,11 @@ class SlidingWindowParamsSolver:
         )
 
         # Input to output size relation
-        padded_input_length = input_length + self.p_l + p_r
-        self.solver.add(padded_input_length >= self.k_i)
-        self.solver.add((padded_input_length - self.k_i) % self.s_i == 0)
-        self.solver.add(output_length == ((padded_input_length - self.k_i) / self.s_i) * self.s_o + self.k_o)
+        c = Int(f"c_{len(self.cs)}")
+        self.cs.append(c)
+        self.solver.add(c > 0)
+        self.solver.add(input_length + self.p_l + p_r - self.k_i == (c - 1) * self.s_i)
+        self.solver.add(output_length == (c - 1) * self.s_o + self.k_o)
 
         if self.solver.check() != sat:
             raise NoSolutionError(
@@ -101,30 +105,30 @@ class SlidingWindowParamsSolver:
         if input_range[1] <= input_range[0] or output_range[1] <= output_range[0]:
             raise ValueError("Input and output ranges must be non-empty")
 
-        # The number of windows that overlap with the nan region
-        c = Int(f"c_{len(self.cs)}")
+        # The number of windows that overlap with the input range
+        c = Int(f"c_reg_{len(self.cs)}")
         self.cs.append(c)
 
-        # The number of windows that overlap with the nan region either be the ceil or floor of the division
+        # The number of windows that overlap with the input range either be the ceil or floor of the division
         # below (z3 uses floor division on ints)
-        nan_in_len = input_range[1] - input_range[0]
+        in_len = input_range[1] - input_range[0]
         self.solver.add(
             Or(
-                c == (nan_in_len + self.k_i - 1) / self.s_i,
-                c == ((nan_in_len + self.k_i - 1) + self.s_i - 1) / self.s_i,
+                c == (in_len + self.k_i - 1) / self.s_i,
+                c == ((in_len + self.k_i - 1) + self.s_i - 1) / self.s_i,
             )
         )
-        # From the number of windows, we uniquely determine the nan output size
-        nan_out_len = output_range[1] - output_range[0]
-        self.solver.add(nan_out_len == (c - 1) * self.s_o + self.k_o)
+        # From the number of windows, we uniquely determine the region output size
+        out_len = output_range[1] - output_range[0]
+        self.solver.add(out_len == (c - 1) * self.s_o + self.k_o)
 
-        # We can also make deductions based on the nan start position in the input vs. the output
+        # We can also make deductions based on the start position in the input vs. the output
         if output_range[0] == 0:
             self.solver.add(input_range[0] + self.p_l <= self.k_i)
         else:
             self.solver.add(output_range[0] == ((input_range[0] - self.k_i + 1) + self.s_i - 1) / self.s_i)
 
-        # TODO: constraint on nan start/end pos relative to padding
+        # TODO (?): constraint on end pos relative to padding
 
         if self.solver.check() != sat:
             raise NoSolutionError(
@@ -133,7 +137,25 @@ class SlidingWindowParamsSolver:
             )
 
     def get_sol(self):
-        if self.solver.check() == sat:
+        # if self.solver.check() == sat:
+        #     model1 = self.solver.model()
+        #     printsol(model1)
+        #     self.solver.add(
+        #         Or(
+        #             self.k_i != model1[self.k_i],
+        #             self.k_o != model1[self.k_o],
+        #             self.s_i != model1[self.s_i],
+        #             self.s_o != model1[self.s_o],
+        #         )
+        #     )
+        #     if self.solver.check() == sat:
+        #         printsol(self.solver.model())
+        #     else:
+        #         print("The solution is unique.")
+        # else:
+        #     print("No solution")
+
+        while self.solver.check() == sat:
             model1 = self.solver.model()
             printsol(model1)
             self.solver.add(
@@ -144,12 +166,6 @@ class SlidingWindowParamsSolver:
                     self.s_o != model1[self.s_o],
                 )
             )
-            if self.solver.check() == sat:
-                printsol(self.solver.model())
-            else:
-                print("The solution is unique.")
-        else:
-            print("No solution")
 
 
 @torch.no_grad()
@@ -157,8 +173,10 @@ def test_conv1d():
     a = nn.Conv1d(1, 1, kernel_size=5, stride=2)
     solver = SlidingWindowParamsSolver()
 
-    in_lens = (12, 14, 17)
-    nan_inputs = [(7, 8), (5, 10), (11, 13)]
+    in_lens = (12,)  # 14, 17)
+    nan_inputs = [
+        (7, 8),
+    ]  # (5, 10), (11, 13)]
     for in_len, nan_input in zip(in_lens, nan_inputs):
         inp = torch.randn(1, 1, in_len)
         # inp[0, 0, -1] = torch.nan
