@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Tuple
 
 import numpy as np
@@ -8,24 +9,28 @@ from z3 import And, Int, Ints, Or, Solver, sat
 # TODO: support multiple inputs/output as long as they have the same sequence length
 
 
-def printsol(model):
-    var_dict = {str(decl): model[decl] for decl in model.decls()}
-    print("--- Solution ---")
-    var_right_pad_names = [var for var in var_dict if var.startswith("p_r_")]
-    # FIXME: alphanum
-    var_right_pad_vals = [str(var_dict[var]) for var in sorted(var_right_pad_names)]
-    print(f"Padding: left={var_dict['p_l']}, right=({', '.join(var_right_pad_vals)})")
-    num_win_names = [var for var in var_dict if var.startswith("c_") and not var.startswith("c_reg_")]
-    num_win_vals = [str(var_dict[var]) for var in sorted(num_win_names)]
-    print(f"Num windows: ({', '.join(num_win_vals)})")
-    print(f"Input: kernel_size={var_dict['k_i']}, stride={var_dict['s_i']}")
-    print(f"Output: kernel_size={var_dict['k_o']}, stride={var_dict['s_o']}")
-    print()
-    # print(model)
-
-
 class NoSolutionError(Exception):
     pass
+
+
+@dataclass
+class SlidingWindowParams:
+    kernel_size_in: int
+    stride_in: int
+    kernel_size_out: int
+    stride_out: int
+    left_pad: int
+    # FIXME
+    right_pad: Tuple[int, ...]
+
+    def __repr__(self):
+        return (
+            "SlidingWindowParams(\n"
+            + f"    kernel_size_in: {self.kernel_size_in}, stride_in: {self.stride_in}\n"
+            + f"    kernel_size_out: {self.kernel_size_out}, stride_out: {self.stride_out}\n"
+            + f"    left_pad: {self.left_pad}, right_pad: {self.right_pad}\n"
+            + ")"
+        )
 
 
 class SlidingWindowParamsSolver:
@@ -55,7 +60,8 @@ class SlidingWindowParamsSolver:
         # values.
         self.p_l = Int("p_l")
         self.p_rs = []  # TODO: remove such lists? Do we really need to keep the ref?
-        self.solver.add(self.p_l >= 0, self.p_l < self.k_i)
+        # FIXME!!
+        self.solver.add(self.p_l >= 0, self.p_l < self.k_i, self.p_l == 0)
         # Number of sliding windows for constraints
         self.cs = []
 
@@ -81,7 +87,7 @@ class SlidingWindowParamsSolver:
             p_r < self.k_i,
         )
 
-        # Input to output size relation
+        # Input to output size relation with the number of windows
         c = Int(f"c_{len(self.cs)}")
         self.cs.append(c)
         self.solver.add(c > 0)
@@ -105,30 +111,36 @@ class SlidingWindowParamsSolver:
         if input_range[1] <= input_range[0] or output_range[1] <= output_range[0]:
             raise ValueError("Input and output ranges must be non-empty")
 
-        # The number of windows that overlap with the input range
-        c = Int(f"c_reg_{len(self.cs)}")
-        self.cs.append(c)
+        # # The number of windows that overlap with the input range
+        # c = Int(f"c_reg_{len(self.cs)}")
+        # self.cs.append(c)
 
-        # The number of windows that overlap with the input range either be the ceil or floor of the division
-        # below (z3 uses floor division on ints)
-        in_len = input_range[1] - input_range[0]
-        self.solver.add(
-            Or(
-                c == (in_len + self.k_i - 1) / self.s_i,
-                c == ((in_len + self.k_i - 1) + self.s_i - 1) / self.s_i,
-            )
-        )
-        # From the number of windows, we uniquely determine the region output size
-        out_len = output_range[1] - output_range[0]
-        self.solver.add(out_len == (c - 1) * self.s_o + self.k_o)
+        # # The number of windows that overlap with the input range can either be the ceil or floor of the division
+        # # below (z3 uses floor division on ints)
+        # in_len = input_range[1] - input_range[0]
+        # self.solver.add(
+        #     Or(
+        #         c == (in_len + self.k_i - 1) / self.s_i,
+        #         c == ((in_len + self.k_i - 1) + self.s_i - 1) / self.s_i,
+        #     )
+        # )
+        # # From the number of windows, we uniquely determine the region output size
+        # out_len = output_range[1] - output_range[0]
+        # self.solver.add(out_len == (c - 1) * self.s_o + self.k_o)
 
         # We can also make deductions based on the start position in the input vs. the output
         if output_range[0] == 0:
             self.solver.add(input_range[0] + self.p_l <= self.k_i)
         else:
-            self.solver.add(output_range[0] == ((input_range[0] - self.k_i + 1) + self.s_i - 1) / self.s_i)
+            # FIXME: why doesn't this involve s_o?
+            self.solver.add(output_range[0] == ((input_range[0] + self.p_l - self.k_i + 1) + self.s_i - 1) / self.s_i)
+        # TODO? End edge case
 
         # TODO (?): constraint on end pos relative to padding
+        # if output_range[1] == 1:
+        # self.solver.add(input_range[0] + self.p_l <= self.k_i)
+        # else:
+        self.solver.add(output_range[1] == (((input_range[1] + self.p_l) / self.s_i) - 1) * self.s_o + self.k_o)
 
         if self.solver.check() != sat:
             raise NoSolutionError(
@@ -137,35 +149,31 @@ class SlidingWindowParamsSolver:
             )
 
     def get_sol(self):
-        # if self.solver.check() == sat:
-        #     model1 = self.solver.model()
-        #     printsol(model1)
-        #     self.solver.add(
-        #         Or(
-        #             self.k_i != model1[self.k_i],
-        #             self.k_o != model1[self.k_o],
-        #             self.s_i != model1[self.s_i],
-        #             self.s_o != model1[self.s_o],
-        #         )
-        #     )
-        #     if self.solver.check() == sat:
-        #         printsol(self.solver.model())
-        #     else:
-        #         print("The solution is unique.")
-        # else:
-        #     print("No solution")
-
+        out = []
         while self.solver.check() == sat:
-            model1 = self.solver.model()
-            printsol(model1)
+            model = self.solver.model()
+
+            params = SlidingWindowParams(
+                model[self.k_i].as_long(),
+                model[self.s_i].as_long(),
+                model[self.k_o].as_long(),
+                model[self.s_o].as_long(),
+                model[self.p_l].as_long(),
+                tuple(model[pr].as_long() for pr in self.p_rs),
+            )
+            out.append(params)
+
             self.solver.add(
                 Or(
-                    self.k_i != model1[self.k_i],
-                    self.k_o != model1[self.k_o],
-                    self.s_i != model1[self.s_i],
-                    self.s_o != model1[self.s_o],
+                    self.k_i != model[self.k_i],
+                    self.k_o != model[self.k_o],
+                    self.s_i != model[self.s_i],
+                    self.s_o != model[self.s_o],
+                    self.p_l != model[self.p_l],
                 )
             )
+
+        return out
 
 
 @torch.no_grad()
@@ -173,26 +181,61 @@ def test_conv1d():
     a = nn.Conv1d(1, 1, kernel_size=5, stride=2)
     solver = SlidingWindowParamsSolver()
 
+    # TODO: edge cases
     in_lens = (12,)  # 14, 17)
     nan_inputs = [
         (7, 8),
     ]  # (5, 10), (11, 13)]
+    out_lens = []
+    out_ranges = []
     for in_len, nan_input in zip(in_lens, nan_inputs):
         inp = torch.randn(1, 1, in_len)
-        # inp[0, 0, -1] = torch.nan
         inp[0, 0, slice(*nan_input)] = torch.nan
 
         out = a(inp)
         solver.add_input_to_output_length(in_len, out.size(2))
+        out_lens.append(out.size(2))
 
         vec = out[0, 0, :].numpy()
         corrupted_idx = np.where(np.isnan(vec))[0]
         left, right = corrupted_idx[0], corrupted_idx[-1] + 1
         print(f"In: {in_len}, Out: {out.size(2)}, Nans: {nan_input} -> {left, right}")
         solver.add_input_to_output_range((nan_input[0], nan_input[1]), (left, right))
+        out_ranges.append((left, right))
 
     print()
-    solver.get_sol()
+    all_params = solver.get_sol()
+
+    for params in all_params:
+        print("--- Solution ---")
+        print(params)
+        if params.kernel_size_out > 1 or params.stride_out > 1:
+            print("(Skipping...)")
+            continue
+
+        failed = False
+        for in_len, nan_input, out_len, out_range, rpad in zip(
+            in_lens, nan_inputs, out_lens, out_ranges, params.right_pad
+        ):
+            a = nn.Conv1d(1, 1, kernel_size=params.kernel_size_in, stride=params.stride_in, padding=0)
+
+            inp = torch.randn(1, 1, params.left_pad + rpad + in_len)
+            inp[0, 0, slice(params.left_pad + nan_input[0], params.left_pad + nan_input[1])] = torch.nan
+
+            out = a(inp)
+            if out.size(2) != out_len:
+                print(f"Failed: {in_len}, {nan_input}, {out_len}, {out.size(2)}")
+                failed = True
+
+            vec = out[0, 0, :].numpy()
+            corrupted_idx = np.where(np.isnan(vec))[0]
+            left, right = corrupted_idx[0], corrupted_idx[-1] + 1
+            if (left, right) != out_range:
+                print(f"Failed: {in_len}, {nan_input}, {out_range}, {(left, right)}")
+                failed = True
+
+        if not failed:
+            print("Success!")
 
 
 test_conv1d()
