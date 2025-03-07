@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Tuple, Union
+from typing import Iterable, Tuple, Union
 
 import numpy as np
 import torch
@@ -82,15 +82,8 @@ class SlidingWindowParamsSolver:
         # Number of sliding windows for constraints
         self.cs = []
 
-    def add_input_to_output_length(self, input_length: int, output_length: int):
-        """
-        TODO: doc
-        """
-        input_length = int(input_length)
-        output_length = int(output_length)
-        if input_length < 1 or output_length < 1:
-            raise ValueError("Input and output lengths must be strictly positive integers")
-
+    # TODO: name
+    def add_all(self, in_out_len: Tuple[int, int], in_out_ranges: Iterable[Tuple[Tuple[int, int], Tuple[int, int]]]):
         # Variable right padding. Two sensible cases:
         # - Padding on the left is 0, and both trimming or padding could occur on the right to line up with the windows
         # - Padding on the left is >0, in which case it would be odd to trim on the right, so we only allow padding
@@ -103,6 +96,19 @@ class SlidingWindowParamsSolver:
             ),
             p_r < self.k_i,
         )
+
+        self._add_input_to_output_length(*in_out_len, p_r)
+        for in_out_range in in_out_ranges:
+            self._add_input_to_output_range(*in_out_range, p_r)
+
+    def _add_input_to_output_length(self, input_length: int, output_length: int, p_r):
+        """
+        TODO: doc
+        """
+        input_length = int(input_length)
+        output_length = int(output_length)
+        if input_length < 1 or output_length < 1:
+            raise ValueError("Input and output lengths must be strictly positive integers")
 
         # Input to output size relation with the number of windows
         c = Int(f"c_{len(self.cs)}")
@@ -117,7 +123,7 @@ class SlidingWindowParamsSolver:
                 f"Adding the constraint input={input_length} -> output={output_length} made the model unsolvable."
             )
 
-    def add_input_to_output_range(self, input_range: Tuple[int, int], output_range: Tuple[int, int]):
+    def _add_input_to_output_range(self, input_range: Tuple[int, int], output_range: Tuple[int, int], p_r):
         """
         TODO: doc
         """
@@ -128,29 +134,13 @@ class SlidingWindowParamsSolver:
         if input_range[1] <= input_range[0] or output_range[1] <= output_range[0]:
             raise ValueError("Input and output ranges must be non-empty")
 
-        # # The number of windows that overlap with the input range
-        # c = Int(f"c_reg_{len(self.cs)}")
-        # self.cs.append(c)
-
-        # # The number of windows that overlap with the input range can either be the ceil or floor of the division
-        # # below (z3 uses floor division on ints)
-        # in_len = input_range[1] - input_range[0]
-        # self.solver.add(
-        #     Or(
-        #         c == (in_len + self.k_i - 1) / self.s_i,
-        #         c == ((in_len + self.k_i - 1) + self.s_i - 1) / self.s_i,
-        #     )
-        # )
-        # # From the number of windows, we uniquely determine the region output size
-        # out_len = output_range[1] - output_range[0]
-        # self.solver.add(out_len == (c - 1) * self.s_o + self.k_o)
-
-        # We can also make deductions based on the start position in the input vs. the output
+        # We put in relation the parameters based on the start/and position in the input vs. the output
         if output_range[0] == 0:
             self.solver.add(input_range[0] + self.p_l <= self.k_i)
         else:
-            # FIXME: why doesn't this involve s_o?
-            self.solver.add(output_range[0] == ((input_range[0] + self.p_l - self.k_i + 1) + self.s_i - 1) / self.s_i)
+            self.solver.add(
+                output_range[0] == (((input_range[0] + self.p_l - self.k_i + 1) + self.s_i - 1) / self.s_i) * self.s_o
+            )
         # TODO? End edge case
 
         # TODO (?): strict equality based on right padding
@@ -162,7 +152,7 @@ class SlidingWindowParamsSolver:
                 f"Adding the constraint input={input_range} -> output={output_range} made the model unsolvable."
             )
 
-    def get_sol(self):
+    def get_sols(self, max_solutions: int = 100):
         out = []
         while self.solver.check() == sat:
             model = self.solver.model()
@@ -186,6 +176,9 @@ class SlidingWindowParamsSolver:
                     self.p_l != model[self.p_l],
                 )
             )
+
+            if len(out) >= max_solutions:
+                break
 
         return out
 
@@ -233,16 +226,16 @@ def test_conv1d():
         inp[0, 0, slice(*nan_input)] = torch.nan
 
         out = a(inp)
-        solver.add_input_to_output_length(in_len, out.size(2))
         out_lens.append(out.size(2))
 
         left, right = get_nan_range(out)
         print(f"In: {in_len}, Out: {out.size(2)}, Nans: {nan_input} -> {left, right}")
-        solver.add_input_to_output_range((nan_input[0], nan_input[1]), (left, right))
         out_ranges.append((left, right))
 
+        solver.add_all((in_len, out.size(2)), [((nan_input[0], nan_input[1]), (left, right))])
+
     print()
-    all_params = solver.get_sol()
+    all_params = solver.get_sols()
 
     n_sols = 0
     for params in all_params:
@@ -260,19 +253,19 @@ def test_conv1d():
 
             out = a(inp, rpad)
             if len(out) != out_len:
-                print(f"{Fore.RED}Failed: {in_len}, {nan_input}, {out_len}, {len(out)}{Fore.RESET}")
+                print(f"{Fore.RED}Failed: expected out len {out_len}, got {len(out)}{Fore.RESET}")
                 failed = True
 
             left, right = get_nan_range(out)
             if (left, right) != out_range:
-                print(f"{Fore.RED}Failed: {in_len}, {nan_input}, {out_range}, {(left, right)}{Fore.RESET}")
+                print(f"{Fore.RED}Failed: expected out range {out_range}, got {(left, right)}{Fore.RESET}")
                 failed = True
 
         if not failed:
             print(f"{Fore.GREEN}Success!{Fore.RESET}")
             n_sols += 1
 
-    print(f"Found {n_sols} working solutions")
+    print(f"\nFound {n_sols}/{len(all_params)} working solutions")
 
 
 test_conv1d()
