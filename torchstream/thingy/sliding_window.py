@@ -1,12 +1,29 @@
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Tuple, Union
 
 import numpy as np
 import torch
+from colorama import Fore
 from torch import nn
 from z3 import And, Int, Ints, Or, Solver, sat
 
 # TODO: support multiple inputs/output as long as they have the same sequence length
+# TODO?: handle reflect padding
+#   -> Already handled?
+
+
+def get_nan_range(x: Union[torch.Tensor, np.ndarray], dim: int = -1):
+    if torch.is_tensor(x):
+        x = x.detach().cpu().numpy()
+
+    dim = range(x.ndim)[dim]
+    x = x.mean(axis=tuple(i for i in range(x.ndim) if i != dim))
+
+    corrupted_idx = np.where(np.isnan(x))[0]
+
+    if not len(corrupted_idx):
+        return None, None
+    return corrupted_idx[0], corrupted_idx[-1] + 1
 
 
 class NoSolutionError(Exception):
@@ -136,11 +153,8 @@ class SlidingWindowParamsSolver:
             self.solver.add(output_range[0] == ((input_range[0] + self.p_l - self.k_i + 1) + self.s_i - 1) / self.s_i)
         # TODO? End edge case
 
-        # TODO (?): constraint on end pos relative to padding
-        # if output_range[1] == 1:
-        # self.solver.add(input_range[0] + self.p_l <= self.k_i)
-        # else:
-        self.solver.add(output_range[1] == (((input_range[1] + self.p_l) / self.s_i) - 1) * self.s_o + self.k_o)
+        # TODO (?): strict equality based on right padding
+        self.solver.add(output_range[1] <= (((input_range[1] + self.p_l) / self.s_i) - 1) * self.s_o + self.k_o)
 
         if self.solver.check() != sat:
             raise NoSolutionError(
@@ -176,6 +190,32 @@ class SlidingWindowParamsSolver:
         return out
 
 
+class SimpleSlidingWindowTransform:
+    def __init__(self, params: SlidingWindowParams):
+        self.params = params
+
+    def __call__(self, x: np.ndarray, right_pad):
+        x = np.concatenate([np.zeros(self.params.left_pad), x])
+        if right_pad < 0:
+            x = x[:right_pad]
+        else:
+            x = np.concatenate([x, np.zeros(right_pad)])
+
+        # TODO: make methods of sliding window params
+        num_windows = (len(x) - self.params.kernel_size_in) / self.params.stride_in + 1
+        assert num_windows.is_integer()
+        num_windows = int(num_windows)
+        output_length = (num_windows - 1) * self.params.stride_out + self.params.kernel_size_out
+
+        out = np.zeros(output_length)
+        for i in range(num_windows):
+            in_sli = slice(i * self.params.stride_in, i * self.params.stride_in + self.params.kernel_size_in)
+            out_sli = slice(i * self.params.stride_out, i * self.params.stride_out + self.params.kernel_size_out)
+            out[out_sli] += np.mean(x[in_sli])
+
+        return out
+
+
 @torch.no_grad()
 def test_conv1d():
     a = nn.Conv1d(1, 1, kernel_size=5, stride=2)
@@ -196,9 +236,7 @@ def test_conv1d():
         solver.add_input_to_output_length(in_len, out.size(2))
         out_lens.append(out.size(2))
 
-        vec = out[0, 0, :].numpy()
-        corrupted_idx = np.where(np.isnan(vec))[0]
-        left, right = corrupted_idx[0], corrupted_idx[-1] + 1
+        left, right = get_nan_range(out)
         print(f"In: {in_len}, Out: {out.size(2)}, Nans: {nan_input} -> {left, right}")
         solver.add_input_to_output_range((nan_input[0], nan_input[1]), (left, right))
         out_ranges.append((left, right))
@@ -206,36 +244,35 @@ def test_conv1d():
     print()
     all_params = solver.get_sol()
 
+    n_sols = 0
     for params in all_params:
         print("--- Solution ---")
         print(params)
-        if params.kernel_size_out > 1 or params.stride_out > 1:
-            print("(Skipping...)")
-            continue
 
         failed = False
         for in_len, nan_input, out_len, out_range, rpad in zip(
             in_lens, nan_inputs, out_lens, out_ranges, params.right_pad
         ):
-            a = nn.Conv1d(1, 1, kernel_size=params.kernel_size_in, stride=params.stride_in, padding=0)
+            a = SimpleSlidingWindowTransform(params)
 
-            inp = torch.randn(1, 1, params.left_pad + rpad + in_len)
-            inp[0, 0, slice(params.left_pad + nan_input[0], params.left_pad + nan_input[1])] = torch.nan
+            inp = np.random.randn(in_len)
+            inp[nan_input[0] : nan_input[1]] = torch.nan
 
-            out = a(inp)
-            if out.size(2) != out_len:
-                print(f"Failed: {in_len}, {nan_input}, {out_len}, {out.size(2)}")
+            out = a(inp, rpad)
+            if len(out) != out_len:
+                print(f"{Fore.RED}Failed: {in_len}, {nan_input}, {out_len}, {len(out)}{Fore.RESET}")
                 failed = True
 
-            vec = out[0, 0, :].numpy()
-            corrupted_idx = np.where(np.isnan(vec))[0]
-            left, right = corrupted_idx[0], corrupted_idx[-1] + 1
+            left, right = get_nan_range(out)
             if (left, right) != out_range:
-                print(f"Failed: {in_len}, {nan_input}, {out_range}, {(left, right)}")
+                print(f"{Fore.RED}Failed: {in_len}, {nan_input}, {out_range}, {(left, right)}{Fore.RESET}")
                 failed = True
 
         if not failed:
-            print("Success!")
+            print(f"{Fore.GREEN}Success!{Fore.RESET}")
+            n_sols += 1
+
+    print(f"Found {n_sols} working solutions")
 
 
 test_conv1d()
