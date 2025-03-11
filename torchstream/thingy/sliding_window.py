@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from colorama import Fore
 from torch import nn
-from z3 import And, Int, Ints, Or, Solver, sat
+from z3 import And, If, Int, Ints, Or, Solver, sat
 
 # TODO: support multiple inputs/output as long as they have the same sequence length
 # TODO?: handle reflect padding
@@ -43,9 +43,9 @@ class SlidingWindowParams:
     def __repr__(self):
         return (
             "SlidingWindowParams(\n"
+            + f"    left_pad: {self.left_pad}, right_pad: {self.right_pad}\n"
             + f"    kernel_size_in: {self.kernel_size_in}, stride_in: {self.stride_in}\n"
             + f"    kernel_size_out: {self.kernel_size_out}, stride_out: {self.stride_out}\n"
-            + f"    left_pad: {self.left_pad}, right_pad: {self.right_pad}\n"
             + ")"
         )
 
@@ -77,13 +77,19 @@ class SlidingWindowParamsSolver:
         # values.
         self.p_l = Int("p_l")
         self.p_rs = []  # TODO: remove such lists? Do we really need to keep the ref?
-        # FIXME!!
-        self.solver.add(self.p_l >= 0, self.p_l < self.k_i, self.p_l == 0)
+        self.solver.add(self.p_l >= 0, self.p_l < self.k_i)
         # Number of sliding windows for constraints
         self.cs = []
 
     # TODO: name
     def add_all(self, in_out_len: Tuple[int, int], in_out_ranges: Iterable[Tuple[Tuple[int, int], Tuple[int, int]]]):
+        """
+        TODO: doc
+        """
+        in_len, out_len = int(in_out_len[0]), int(in_out_len[1])
+        if in_len < 1 or out_len < 1:
+            raise ValueError("Input and output lengths must be strictly positive integers")
+
         # Variable right padding. Two sensible cases:
         # - Padding on the left is 0, and both trimming or padding could occur on the right to line up with the windows
         # - Padding on the left is >0, in which case it would be odd to trim on the right, so we only allow padding
@@ -91,71 +97,56 @@ class SlidingWindowParamsSolver:
         self.p_rs.append(p_r)
         self.solver.add(
             Or(
-                And(self.p_l == 0, p_r > -self.k_i),
+                And(self.p_l == 0, p_r > -self.s_i),
                 And(self.p_l > 0, p_r >= 0),
             ),
             p_r < self.k_i,
         )
 
-        self._add_input_to_output_length(*in_out_len, p_r)
-        for in_out_range in in_out_ranges:
-            self._add_input_to_output_range(*in_out_range, p_r)
-
-    def _add_input_to_output_length(self, input_length: int, output_length: int, p_r):
-        """
-        TODO: doc
-        """
-        input_length = int(input_length)
-        output_length = int(output_length)
-        if input_length < 1 or output_length < 1:
-            raise ValueError("Input and output lengths must be strictly positive integers")
-
         # Input to output size relation with the number of windows
         c = Int(f"c_{len(self.cs)}")
         self.cs.append(c)
         self.solver.add(c > 0)
-        self.solver.add(input_length + self.p_l + p_r - self.k_i == (c - 1) * self.s_i)
-        self.solver.add(output_length == (c - 1) * self.s_o + self.k_o)
+        self.solver.add(in_len + self.p_l + p_r - self.k_i == (c - 1) * self.s_i)
+        self.solver.add(out_len == (c - 1) * self.s_o + self.k_o)
 
-        if self.solver.check() != sat:
-            raise NoSolutionError(
-                # TODO: better explanation for this, course for action etc...
-                f"Adding the constraint input={input_length} -> output={output_length} made the model unsolvable."
-            )
+        for range_idx, (in_range, out_range) in enumerate(in_out_ranges):
+            in_range = (int(in_range[0]), int(in_range[1]))
+            out_range = (int(out_range[0]), int(out_range[1]))
+            if in_range[0] < 0 or out_range[0] < 0:
+                raise ValueError("Input and output ranges must be non-negative integers")
+            if in_range[1] <= in_range[0] or out_range[1] <= out_range[0]:
+                raise ValueError("Input and output ranges must be non-empty")
 
-    def _add_input_to_output_range(self, input_range: Tuple[int, int], output_range: Tuple[int, int], p_r):
-        """
-        TODO: doc
-        """
-        input_range = (int(input_range[0]), int(input_range[1]))
-        output_range = (int(output_range[0]), int(output_range[1]))
-        if input_range[0] < 0 or output_range[0] < 0:
-            raise ValueError("Input and output ranges must be non-negative integers")
-        if input_range[1] <= input_range[0] or output_range[1] <= output_range[0]:
-            raise ValueError("Input and output ranges must be non-empty")
+            # The start of both the input and the output range correspond to the same window. The same can be said
+            # for the end of the ranges.
+            # FIXME: notation difference: c above is the number of windows, cs and ce are window indices
+            crs, cre = Ints(f"c_{len(self.cs)}_rs{range_idx} c_{len(self.cs)}_re{range_idx}")
+            self.solver.add(0 <= crs, crs <= cre, cre < c)
 
-        # We put in relation the parameters based on the start/and position in the input vs. the output
-        if output_range[0] == 0:
-            self.solver.add(input_range[0] + self.p_l <= self.k_i)
-        else:
             self.solver.add(
-                output_range[0] == (((input_range[0] + self.p_l - self.k_i + 1) + self.s_i - 1) / self.s_i) * self.s_o
+                crs
+                == (If(self.p_l + in_range[0] >= self.k_i, self.p_l + in_range[0] - self.k_i + 1, 0) + self.s_i - 1)
+                / self.s_i
             )
-        # TODO? End edge case
+            self.solver.add(out_range[0] == crs * self.s_o)
 
-        # TODO (?): strict equality based on right padding
-        self.solver.add(output_range[1] <= (((input_range[1] + self.p_l) / self.s_i) - 1) * self.s_o + self.k_o)
-
-        if self.solver.check() != sat:
-            raise NoSolutionError(
-                # TODO: better explanation for this, course for action etc...
-                f"Adding the constraint input={input_range} -> output={output_range} made the model unsolvable."
+            self.solver.add(
+                cre == If(self.p_l + in_range[1] >= c * self.s_i, c - 1, (self.p_l + in_range[1]) / self.s_i)
             )
+            self.solver.add(out_range[1] == cre * self.s_o + self.k_o)
 
-    def get_sols(self, max_solutions: int = 100):
+        # if self.solver.check() != sat:
+        #     raise NoSolutionError(
+        #         # TODO: better explanation for this, course for action etc...
+        #         f"Adding the constraint input={in_len} -> output={out_len} made the model unsolvable."
+        #     )
+
+    def get_sols(self, max_solutions: int = 50):
         out = []
         while self.solver.check() == sat:
             model = self.solver.model()
+            # print(model)
 
             params = SlidingWindowParams(
                 model[self.k_i].as_long(),
