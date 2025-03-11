@@ -81,6 +81,13 @@ class SlidingWindowParamsSolver:
         # Number of sliding windows for constraints
         self.cs = []
 
+        self.solver.add(
+            self.p_l == 8,
+            self.k_i == 9,
+            self.s_i == 6,
+            self.k_o == 2,
+        )
+
     # TODO: name
     def add_all(self, in_out_len: Tuple[int, int], in_out_ranges: Iterable[Tuple[Tuple[int, int], Tuple[int, int]]]):
         """
@@ -206,10 +213,8 @@ def test_conv1d():
     solver = SlidingWindowParamsSolver()
 
     # TODO: edge cases
-    in_lens = (12,)  # 14, 17)
-    nan_inputs = [
-        (7, 8),
-    ]  # (5, 10), (11, 13)]
+    in_lens = (12, 14)  # , 17)
+    nan_inputs = [(7, 8), (5, 10)]  # (11, 13)]
     out_lens = []
     out_ranges = []
     for in_len, nan_input in zip(in_lens, nan_inputs):
