@@ -81,13 +81,6 @@ class SlidingWindowParamsSolver:
         # Number of sliding windows for constraints
         self.cs = []
 
-        self.solver.add(
-            self.p_l == 8,
-            self.k_i == 9,
-            self.s_i == 6,
-            self.k_o == 2,
-        )
-
     # TODO: name
     def add_all(self, in_out_len: Tuple[int, int], in_out_ranges: Iterable[Tuple[Tuple[int, int], Tuple[int, int]]]):
         """
@@ -111,7 +104,8 @@ class SlidingWindowParamsSolver:
         )
 
         # Input to output size relation with the number of windows
-        c = Int(f"c_{len(self.cs)}")
+        c_idx = len(self.cs)
+        c = Int(f"c_{c_idx}")
         self.cs.append(c)
         self.solver.add(c > 0)
         self.solver.add(in_len + self.p_l + p_r - self.k_i == (c - 1) * self.s_i)
@@ -128,7 +122,7 @@ class SlidingWindowParamsSolver:
             # The start of both the input and the output range correspond to the same window. The same can be said
             # for the end of the ranges.
             # FIXME: notation difference: c above is the number of windows, cs and ce are window indices
-            crs, cre = Ints(f"c_{len(self.cs)}_rs{range_idx} c_{len(self.cs)}_re{range_idx}")
+            crs, cre = Ints(f"c_{c_idx}_rs{range_idx} c_{c_idx}_re{range_idx}")
             self.solver.add(0 <= crs, crs <= cre, cre < c)
 
             self.solver.add(
@@ -139,7 +133,7 @@ class SlidingWindowParamsSolver:
             self.solver.add(out_range[0] == crs * self.s_o)
 
             self.solver.add(
-                cre == If(self.p_l + in_range[1] >= c * self.s_i, c - 1, (self.p_l + in_range[1]) / self.s_i)
+                cre == If(self.p_l + in_range[1] > (c - 1) * self.s_i, c - 1, (self.p_l + in_range[1] - 1) / self.s_i)
             )
             self.solver.add(out_range[1] == cre * self.s_o + self.k_o)
 
@@ -153,7 +147,7 @@ class SlidingWindowParamsSolver:
         out = []
         while self.solver.check() == sat:
             model = self.solver.model()
-            # print(model)
+            print(model)
 
             params = SlidingWindowParams(
                 model[self.k_i].as_long(),
