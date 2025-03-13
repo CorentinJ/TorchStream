@@ -1,15 +1,14 @@
-from dataclasses import dataclass
 from typing import Iterable, Tuple, Union
 
 import numpy as np
 import torch
 from colorama import Fore
 from torch import nn
-from z3 import And, If, Int, Ints, Or, Solver, sat
+from z3 import And, Bool, If, Int, Ints, Or, Solver, sat
+
+from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 
 # TODO: support multiple inputs/output as long as they have the same sequence length
-# TODO?: handle reflect padding
-#   -> Already handled?
 
 
 def get_nan_range(x: Union[torch.Tensor, np.ndarray], dim: int = -1):
@@ -28,26 +27,6 @@ def get_nan_range(x: Union[torch.Tensor, np.ndarray], dim: int = -1):
 
 class NoSolutionError(Exception):
     pass
-
-
-@dataclass
-class SlidingWindowParams:
-    kernel_size_in: int
-    stride_in: int
-    kernel_size_out: int
-    stride_out: int
-    left_pad: int
-    # FIXME
-    right_pad: Tuple[int, ...]
-
-    def __repr__(self):
-        return (
-            "SlidingWindowParams(\n"
-            + f"    left_pad: {self.left_pad}, right_pad: {self.right_pad}\n"
-            + f"    kernel_size_in: {self.kernel_size_in}, stride_in: {self.stride_in}\n"
-            + f"    kernel_size_out: {self.kernel_size_out}, stride_out: {self.stride_out}\n"
-            + ")"
-        )
 
 
 class SlidingWindowParamsSolver:
@@ -76,8 +55,12 @@ class SlidingWindowParamsSolver:
         # There is no point in making the padding higher than the kernel size, as it would waste compute on constant
         # values.
         self.p_l = Int("p_l")
-        self.p_rs = []  # TODO: remove such lists? Do we really need to keep the ref?
-        self.solver.add(self.p_l >= 0, self.p_l < self.k_i)
+        self.solver.add(self.p_l < self.k_i)
+        self.drop_right = Bool("right_drop")
+        self.solver.add(If(self.drop_right, self.p_l == 0, self.p_l >= 0))
+
+        # Right padding variables
+        self.p_rs = []
         # Number of sliding windows for constraints
         self.cs = []
 
@@ -91,15 +74,12 @@ class SlidingWindowParamsSolver:
             raise ValueError("Input and output lengths must be strictly positive integers")
 
         # Variable right padding. Two sensible cases:
-        # - Padding on the left is 0, and both trimming or padding could occur on the right to line up with the windows
-        # - Padding on the left is >0, in which case it would be odd to trim on the right, so we only allow padding
+        # - We drop excess inputs on the right, so there can't be right padding
+        # - We pad if windows don't line up with the end of the sequence
         p_r = Int(f"p_r_{len(self.p_rs)}")
         self.p_rs.append(p_r)
         self.solver.add(
-            Or(
-                And(self.p_l == 0, p_r > -self.s_i),
-                And(self.p_l > 0, p_r >= 0),
-            ),
+            If(self.drop_right, And(p_r <= 0, p_r > -self.s_i), p_r >= 0),
             p_r < self.k_i,
         )
 
@@ -147,7 +127,7 @@ class SlidingWindowParamsSolver:
         out = []
         while self.solver.check() == sat:
             model = self.solver.model()
-            print(model)
+            # print(model)
 
             params = SlidingWindowParams(
                 model[self.k_i].as_long(),
@@ -203,12 +183,12 @@ class SimpleSlidingWindowTransform:
 
 @torch.no_grad()
 def test_conv1d():
-    a = nn.Conv1d(1, 1, kernel_size=5, stride=2)
+    a = nn.Conv1d(1, 1, kernel_size=4, stride=2, padding=3)
     solver = SlidingWindowParamsSolver()
 
     # TODO: edge cases
-    in_lens = (12, 14)  # , 17)
-    nan_inputs = [(7, 8), (5, 10)]  # (11, 13)]
+    in_lens = (80, 120, 120, 120, 200, 2)  # 14, 17)
+    nan_inputs = [(0, 1), (8, 50), (9, 51), (10, 48), (199, 200), (1, 2)]  # (5, 10), (11, 13)]
     out_lens = []
     out_ranges = []
     for in_len, nan_input in zip(in_lens, nan_inputs):
@@ -219,6 +199,8 @@ def test_conv1d():
         out_lens.append(out.size(2))
 
         left, right = get_nan_range(out)
+        if left is None:
+            raise ValueError("No NaNs in output")
         print(f"In: {in_len}, Out: {out.size(2)}, Nans: {nan_input} -> {left, right}")
         out_ranges.append((left, right))
 
