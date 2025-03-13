@@ -1,8 +1,9 @@
-from typing import Iterable, Tuple
+from typing import Callable, Iterable, Tuple
 
 from z3 import And, Bool, If, Int, Ints, Or, Solver, sat
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+from torchstream.tensor_provider import TensorProvider
 
 
 class NoSolutionError(Exception):
@@ -133,3 +134,35 @@ class SlidingWindowParamsSolver:
                 break
 
         return out
+
+
+# TODO: allow transforms with multiple sequential inputs
+def find_sliding_window_params_for_transform(
+    trsfm: Callable,
+    input_provider: TensorProvider,
+    min_seq_size: int = 1,
+    max_seq_size: int = None,
+) -> SlidingWindowParams:
+    solver = SlidingWindowParamsSolver()
+    param_candidates = []
+
+    history = []
+    while True:
+        # Determine an input size
+        if not history:
+            seq_size = 10
+        else:
+            # TODO!
+            pass
+        seq_size = max(min_seq_size, seq_size)
+        if max_seq_size:
+            seq_size = min(seq_size, max_seq_size)
+
+        x = input_provider.get_tensor(seq_size)
+
+        try:
+            y = trsfm(x)
+        except Exception as e:
+            y = e
+        finally:
+            history.append((x, y))

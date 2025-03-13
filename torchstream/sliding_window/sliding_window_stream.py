@@ -10,7 +10,7 @@ from torchstream.sliding_window.sliding_window_params_solver import SlidingWindo
 
 @torch.no_grad()
 def test_conv1d():
-    a = nn.Conv1d(1, 1, kernel_size=4, stride=2, padding=3)
+    a = nn.Conv1d(1, 1, kernel_size=5, stride=2)
     solver = SlidingWindowParamsSolver()
 
     # TODO: edge cases
@@ -67,4 +67,5 @@ def test_conv1d():
     print(f"\nFound {n_sols}/{len(all_params)} working solutions")
 
 
+test_conv1d()
 test_conv1d()
