@@ -15,6 +15,11 @@ dependencies = [
     "z3-solver>=4.14.0.0",
 ]
 
+# Defining a build system lets us install the project as a dev package
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
 [project.urls]
 Repository = "https://github.com/CorentinJ/TorchStream"
 
