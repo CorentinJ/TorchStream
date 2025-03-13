@@ -1,28 +1,8 @@
-from typing import Iterable, Tuple, Union
+from typing import Iterable, Tuple
 
-import numpy as np
-import torch
-from colorama import Fore
-from torch import nn
 from z3 import And, Bool, If, Int, Ints, Or, Solver, sat
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
-
-# TODO: support multiple inputs/output as long as they have the same sequence length
-
-
-def get_nan_range(x: Union[torch.Tensor, np.ndarray], dim: int = -1):
-    if torch.is_tensor(x):
-        x = x.detach().cpu().numpy()
-
-    dim = range(x.ndim)[dim]
-    x = x.mean(axis=tuple(i for i in range(x.ndim) if i != dim))
-
-    corrupted_idx = np.where(np.isnan(x))[0]
-
-    if not len(corrupted_idx):
-        return None, None
-    return corrupted_idx[0], corrupted_idx[-1] + 1
 
 
 class NoSolutionError(Exception):
@@ -153,91 +133,3 @@ class SlidingWindowParamsSolver:
                 break
 
         return out
-
-
-class SimpleSlidingWindowTransform:
-    def __init__(self, params: SlidingWindowParams):
-        self.params = params
-
-    def __call__(self, x: np.ndarray, right_pad):
-        x = np.concatenate([np.zeros(self.params.left_pad), x])
-        if right_pad < 0:
-            x = x[:right_pad]
-        else:
-            x = np.concatenate([x, np.zeros(right_pad)])
-
-        # TODO: make methods of sliding window params
-        num_windows = (len(x) - self.params.kernel_size_in) / self.params.stride_in + 1
-        assert num_windows.is_integer()
-        num_windows = int(num_windows)
-        output_length = (num_windows - 1) * self.params.stride_out + self.params.kernel_size_out
-
-        out = np.zeros(output_length)
-        for i in range(num_windows):
-            in_sli = slice(i * self.params.stride_in, i * self.params.stride_in + self.params.kernel_size_in)
-            out_sli = slice(i * self.params.stride_out, i * self.params.stride_out + self.params.kernel_size_out)
-            out[out_sli] += np.mean(x[in_sli])
-
-        return out
-
-
-@torch.no_grad()
-def test_conv1d():
-    a = nn.Conv1d(1, 1, kernel_size=4, stride=2, padding=3)
-    solver = SlidingWindowParamsSolver()
-
-    # TODO: edge cases
-    in_lens = (80, 120, 120, 120, 200, 2)  # 14, 17)
-    nan_inputs = [(0, 1), (8, 50), (9, 51), (10, 48), (199, 200), (1, 2)]  # (5, 10), (11, 13)]
-    out_lens = []
-    out_ranges = []
-    for in_len, nan_input in zip(in_lens, nan_inputs):
-        inp = torch.randn(1, 1, in_len)
-        inp[0, 0, slice(*nan_input)] = torch.nan
-
-        out = a(inp)
-        out_lens.append(out.size(2))
-
-        left, right = get_nan_range(out)
-        if left is None:
-            raise ValueError("No NaNs in output")
-        print(f"In: {in_len}, Out: {out.size(2)}, Nans: {nan_input} -> {left, right}")
-        out_ranges.append((left, right))
-
-        solver.add_all((in_len, out.size(2)), [((nan_input[0], nan_input[1]), (left, right))])
-
-    print()
-    all_params = solver.get_sols()
-
-    n_sols = 0
-    for params in all_params:
-        print("--- Solution ---")
-        print(params)
-
-        failed = False
-        for in_len, nan_input, out_len, out_range, rpad in zip(
-            in_lens, nan_inputs, out_lens, out_ranges, params.right_pad
-        ):
-            a = SimpleSlidingWindowTransform(params)
-
-            inp = np.random.randn(in_len)
-            inp[nan_input[0] : nan_input[1]] = torch.nan
-
-            out = a(inp, rpad)
-            if len(out) != out_len:
-                print(f"{Fore.RED}Failed: expected out len {out_len}, got {len(out)}{Fore.RESET}")
-                failed = True
-
-            left, right = get_nan_range(out)
-            if (left, right) != out_range:
-                print(f"{Fore.RED}Failed: expected out range {out_range}, got {(left, right)}{Fore.RESET}")
-                failed = True
-
-        if not failed:
-            print(f"{Fore.GREEN}Success!{Fore.RESET}")
-            n_sols += 1
-
-    print(f"\nFound {n_sols}/{len(all_params)} working solutions")
-
-
-test_conv1d()
