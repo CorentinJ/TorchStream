@@ -1,10 +1,8 @@
-import numpy as np
 import torch
 from colorama import Fore
 from torch import nn
 
-from torchstream.sliding_window.dummy_sliding_window_transform import DummySlidingWindowTransform
-from torchstream.sliding_window.nan_trick import get_nan_range
+from torchstream.sliding_window.nan_trick import check_nan_trick, get_nan_range
 from torchstream.sliding_window.sliding_window_params_solver import SlidingWindowParamsSolver
 
 
@@ -45,19 +43,9 @@ def test_conv1d():
         for in_len, nan_input, out_len, out_range, rpad in zip(
             in_lens, nan_inputs, out_lens, out_ranges, params.right_pad
         ):
-            a = DummySlidingWindowTransform(params)
-
-            inp = np.random.randn(in_len)
-            inp[nan_input[0] : nan_input[1]] = torch.nan
-
-            out = a(inp, rpad)
-            if len(out) != out_len:
-                print(f"{Fore.RED}Failed: expected out len {out_len}, got {len(out)}{Fore.RESET}")
-                failed = True
-
-            left, right = get_nan_range(out)
-            if (left, right) != out_range:
-                print(f"{Fore.RED}Failed: expected out range {out_range}, got {(left, right)}{Fore.RESET}")
+            success, reason = check_nan_trick(params, in_len, out_len, nan_input, out_range)
+            if not success:
+                print(f"{Fore.RED}Failed!{Fore.RESET} Reason: {reason}")
                 failed = True
 
         if not failed:
