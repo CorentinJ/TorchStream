@@ -150,12 +150,13 @@ def find_sliding_window_params_for_transform(
     while True:
         # Determine an input size
         if not history:
-            seq_size = max(min_seq_size, 10)
-            if max_seq_size:
-                seq_size = min(seq_size, max_seq_size)
+            seq_size = 10
         else:
             # TODO!
             pass
+        seq_size = max(min_seq_size, seq_size)
+        if max_seq_size:
+            seq_size = min(seq_size, max_seq_size)
 
         x = input_provider.get_tensor(seq_size)
 
