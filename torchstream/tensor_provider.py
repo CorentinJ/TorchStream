@@ -1,4 +1,4 @@
-from collections import abc
+import abc
 from typing import Union
 
 import numpy as np

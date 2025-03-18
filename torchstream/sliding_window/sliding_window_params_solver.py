@@ -1,9 +1,13 @@
+from copy import deepcopy
 from typing import Callable, Iterable, Tuple
 
+import torch
+from torch import nn
 from z3 import And, Bool, If, Int, Ints, Or, Solver, sat
 
+from torchstream.sliding_window.nan_trick import get_nan_range, set_nan_range
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
-from torchstream.tensor_provider import TensorProvider
+from torchstream.tensor_provider import TensorProvider, TensorSpec
 
 
 class NoSolutionError(Exception):
@@ -13,6 +17,7 @@ class NoSolutionError(Exception):
 class SlidingWindowParamsSolver:
     """
     TODO: doc
+    The input size to the number of windows is monotonic and deterministic
     """
 
     def __init__(self):
@@ -105,9 +110,12 @@ class SlidingWindowParamsSolver:
         #     )
 
     def get_sols(self, max_solutions: int = 50):
+        # TODO: use push/pop instead?
+        solver = deepcopy(self.solver)
+
         out = []
-        while self.solver.check() == sat:
-            model = self.solver.model()
+        while solver.check() == sat:
+            model = solver.model()
             # print(model)
 
             params = SlidingWindowParams(
@@ -116,11 +124,12 @@ class SlidingWindowParamsSolver:
                 model[self.k_o].as_long(),
                 model[self.s_o].as_long(),
                 model[self.p_l].as_long(),
-                tuple(model[pr].as_long() for pr in self.p_rs),
+                False,
+                # tuple(model[pr].as_long() for pr in self.p_rs),
             )
             out.append(params)
 
-            self.solver.add(
+            solver.add(
                 Or(
                     self.k_i != model[self.k_i],
                     self.k_o != model[self.k_o],
@@ -137,6 +146,7 @@ class SlidingWindowParamsSolver:
 
 
 # TODO: allow transforms with multiple sequential inputs
+@torch.no_grad()
 def find_sliding_window_params_for_transform(
     trsfm: Callable,
     input_provider: TensorProvider,
@@ -144,25 +154,80 @@ def find_sliding_window_params_for_transform(
     max_seq_size: int = None,
 ) -> SlidingWindowParams:
     solver = SlidingWindowParamsSolver()
-    param_candidates = []
 
     history = []
     while True:
         # Determine an input size
-        if not history:
-            seq_size = 10
-        else:
-            # TODO!
-            pass
+        # if not history:
+        #     seq_size = 10
+        #     in_nan_range = (5, 6)
+        # else:
+
+        # FIXME!
+        seq_size = (80, 120, 120, 120, 200, 2)[len(history)]
+        in_nan_range = [(0, 1), (8, 50), (9, 51), (10, 48), (199, 200), (1, 2)][len(history)]
+
         seq_size = max(min_seq_size, seq_size)
         if max_seq_size:
             seq_size = min(seq_size, max_seq_size)
 
+        print(seq_size, in_nan_range)
+
+        # TODO: nan range lims
+
         x = input_provider.get_tensor(seq_size)
+        # TODO: move to TensorProvider?
+        assert x.size(input_provider.dim) == seq_size
+
+        set_nan_range(x, in_nan_range, dim=input_provider.dim)
 
         try:
             y = trsfm(x)
         except Exception as e:
             y = e
-        finally:
-            history.append((x, y))
+
+        # FIXME: output format
+        if torch.is_tensor(y):
+            # FIXME: dim
+            out_nan_range = get_nan_range(y, dim=-1)
+            solver.add_all(
+                (seq_size, y.size(-1)),
+                [(in_nan_range, out_nan_range)],
+            )
+            print(f"In: {seq_size}, Out: {y.size(-1)}, Nans: {in_nan_range} -> {out_nan_range}")
+
+        history.append((x, y))
+        sols = solver.get_sols()
+        print(f"Num sols: {len(sols)}")
+
+        if len(sols) == 1:
+            break
+
+    # n_sols = 0
+    # for params in all_params:
+    #     print("--- Solution ---")
+    #     print(params)
+
+    #     failed = False
+    #     for in_len, nan_input, out_len, out_range, rpad in zip(
+    #         in_lens, nan_inputs, out_lens, out_ranges, params.right_pad
+    #     ):
+    #         success, reason = check_nan_trick(params, in_len, out_len, nan_input, out_range)
+    #         if not success:
+    #             print(f"{Fore.RED}Failed!{Fore.RESET} Reason: {reason}")
+    #             failed = True
+
+    #     if not failed:
+    #         print(f"{Fore.GREEN}Success!{Fore.RESET}")
+    #         n_sols += 1
+
+    # print(f"\nFound {n_sols}/{len(all_params)} working solutions")
+
+
+def test_conv1d():
+    conv = nn.Conv1d(1, 1, kernel_size=5, stride=2)
+    sols = find_sliding_window_params_for_transform(conv, TensorSpec(shape=(1, 1, -1)), max_seq_size=200)
+    print(sols)
+
+
+test_conv1d()
