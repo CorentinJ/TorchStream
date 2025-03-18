@@ -15,10 +15,8 @@ class SlidingWindowParams:
     stride_out: int
     # The static number of elements to pad on the left side of the input.
     left_pad: int
-    # When True, if the windows do not line up with the end of the sequence, the extra elements are not used. This
-    # implies that left padding is 0.
-    # When False, right padding can be added instead (an amount lower than the input kernel size).
-    drop_right: bool
+    # TODO: doc
+    alpha: int
 
     def __post_init__(self):
         if self.kernel_size_in < 1:
@@ -31,13 +29,14 @@ class SlidingWindowParams:
             raise ValueError("stride_out must be at least 1 and at most kernel_size_out.")
         if self.left_pad < 0:
             raise ValueError("left_pad must be at least 0.")
-        if self.drop_right and self.left_pad != 0:
-            raise ValueError("When drop_right is True, left_pad must be 0.")
+        # TODO: constraint between left pad & alpha
+        # if self.drop_right and self.left_pad != 0:
+        # raise ValueError("When drop_right is True, left_pad must be 0.")
 
     def __repr__(self):
         return (
             "SlidingWindowParams(\n"
-            + f"    left_pad: {self.left_pad}, drop_right={self.drop_right}\n"
+            + f"    left_pad: {self.left_pad}, alpha={self.alpha}\n"
             + f"    kernel_size_in: {self.kernel_size_in}, stride_in: {self.stride_in}\n"
             + f"    kernel_size_out: {self.kernel_size_out}, stride_out: {self.stride_out}\n"
             + ")"
