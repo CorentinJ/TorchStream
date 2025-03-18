@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass
 
 
@@ -15,10 +16,12 @@ class SlidingWindowParams:
     stride_out: int
     # The static number of elements to pad on the left side of the input.
     left_pad: int
-    # When True, if the windows do not line up with the end of the sequence, the extra elements are not used. This
-    # implies that left padding is 0.
-    # When False, right padding can be added instead (an amount lower than the input kernel size).
-    drop_right: bool
+    # This value represents the number of extra windows that are produced by the addition of the left and the right
+    # padding combined. It is a proxy for right padding, because right padding is not necessarily constant, but this
+    # value typically is. A few examples:
+    #   - For a convolution with no padding, alpha = 0.
+    #   - For a convolution with stride=1 and "same" padding (input size = output size), alpha = kernel_size_in - 1.
+    alpha: int
 
     def __post_init__(self):
         if self.kernel_size_in < 1:
@@ -29,16 +32,18 @@ class SlidingWindowParams:
             raise ValueError("kernel_size_out must be at least 1.")
         if self.stride_out < 1 or self.stride_out > self.kernel_size_out:
             raise ValueError("stride_out must be at least 1 and at most kernel_size_out.")
-        if self.left_pad < 0:
-            raise ValueError("left_pad must be at least 0.")
-        if self.drop_right and self.left_pad != 0:
-            raise ValueError("When drop_right is True, left_pad must be 0.")
+        if self.left_pad < 0 or self.left_pad >= self.kernel_size_in:
+            raise ValueError("left_pad must be at least 0 and at most kernel_size_in - 1.")
+        if self.alpha < 0 or self.alpha > 2 * (self.kernel_size_in - 1):
+            raise ValueError("alpha must be at least 0 and at most 2 * (kernel_size_in - 1).")
+        if math.ceil(self.left_pad / self.stride_in) > self.alpha:
+            raise ValueError("the left padding is excessive given the alpha value.")
 
     def __repr__(self):
         return (
             "SlidingWindowParams(\n"
-            + f"    left_pad: {self.left_pad}, drop_right={self.drop_right}\n"
-            + f"    kernel_size_in: {self.kernel_size_in}, stride_in: {self.stride_in}\n"
-            + f"    kernel_size_out: {self.kernel_size_out}, stride_out: {self.stride_out}\n"
+            + f"    left_pad: {self.left_pad}, alpha={self.alpha},\n"
+            + f"    kernel_size_in: {self.kernel_size_in}, stride_in: {self.stride_in},\n"
+            + f"    kernel_size_out: {self.kernel_size_out}, stride_out: {self.stride_out},\n"
             + ")"
         )

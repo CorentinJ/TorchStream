@@ -3,7 +3,7 @@ from typing import Callable, Iterable, Tuple
 
 import torch
 from torch import nn
-from z3 import And, Bool, If, Int, Ints, Or, Solver, sat
+from z3 import If, Int, Ints, Or, Solver, sat
 
 from torchstream.sliding_window.nan_trick import get_nan_range, set_nan_range
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
@@ -17,7 +17,12 @@ class NoSolutionError(Exception):
 class SlidingWindowParamsSolver:
     """
     TODO: doc
-    The input size to the number of windows is monotonic and deterministic
+    TODO: sort these out
+    - The input size to the number of windows is a deterministic, stepwise monotonic linear function.
+    - Right padding is either
+        - Same as the left
+        - None (implies no left padding either)
+        - Yielding the same number of windows as the input size
     """
 
     def __init__(self):
@@ -36,17 +41,16 @@ class SlidingWindowParamsSolver:
         self.k_o, self.s_o = Ints("k_o s_o")
         # Again, it would be strange to have a stride larger than the kernel size, leading to gaps in the output.
         self.solver.add(self.k_o >= self.s_o, self.s_o > 0)
-        # The left input padding. The right padding is susceptible to varying in practice (we account for that below).
-        # I have not yet seen a case where varying the left padding is useful, so we'll assume it constant.
-        # There is no point in making the padding higher than the kernel size, as it would waste compute on constant
-        # values.
+        # The left input padding. I have not yet seen a case where varying the left padding is useful, so we'll
+        # assume it constant. Also, there is no point in making the padding higher than the kernel size, as it would
+        # waste compute on constant values.
         self.p_l = Int("p_l")
         self.solver.add(self.p_l < self.k_i)
-        self.drop_right = Bool("right_drop")
-        self.solver.add(If(self.drop_right, self.p_l == 0, self.p_l >= 0))
+        # TODO doc
+        self.alpha = Int("alpha")
+        self.solver.add(0 <= self.alpha, self.alpha <= 2 * (self.k_i - 1))
+        self.solver.add((self.p_l + self.s_i - 1) / self.s_i <= self.alpha)
 
-        # Right padding variables
-        self.p_rs = []
         # Number of sliding windows for constraints
         self.cs = []
 
@@ -59,23 +63,17 @@ class SlidingWindowParamsSolver:
         if in_len < 1 or out_len < 1:
             raise ValueError("Input and output lengths must be strictly positive integers")
 
-        # Variable right padding. Two sensible cases:
-        # - We drop excess inputs on the right, so there can't be right padding
-        # - We pad if windows don't line up with the end of the sequence
-        p_r = Int(f"p_r_{len(self.p_rs)}")
-        self.p_rs.append(p_r)
-        self.solver.add(
-            If(self.drop_right, And(p_r <= 0, p_r > -self.s_i), p_r >= 0),
-            p_r < self.k_i,
-        )
-
         # Input to output size relation with the number of windows
         c_idx = len(self.cs)
         c = Int(f"c_{c_idx}")
         self.cs.append(c)
-        self.solver.add(c > 0)
-        self.solver.add(in_len + self.p_l + p_r - self.k_i == (c - 1) * self.s_i)
-        self.solver.add(out_len == (c - 1) * self.s_o + self.k_o)
+        self.solver.add(
+            # We necessarily have at least one window (empty outputs are not allowed for this solver)
+            c > 0,
+            # Padding
+            c == (in_len - self.k_i) / self.s_i + self.alpha + 1,
+            out_len == (c - 1) * self.s_o + self.k_o,
+        )
 
         for range_idx, (in_range, out_range) in enumerate(in_out_ranges):
             in_range = (int(in_range[0]), int(in_range[1]))
@@ -124,8 +122,7 @@ class SlidingWindowParamsSolver:
                 model[self.k_o].as_long(),
                 model[self.s_o].as_long(),
                 model[self.p_l].as_long(),
-                False,
-                # tuple(model[pr].as_long() for pr in self.p_rs),
+                model[self.alpha].as_long(),
             )
             out.append(params)
 
@@ -136,6 +133,7 @@ class SlidingWindowParamsSolver:
                     self.s_i != model[self.s_i],
                     self.s_o != model[self.s_o],
                     self.p_l != model[self.p_l],
+                    self.alpha != model[self.alpha],
                 )
             )
 
@@ -164,8 +162,8 @@ def find_sliding_window_params_for_transform(
         # else:
 
         # FIXME!
-        seq_size = (80, 120, 120, 120, 200, 2)[len(history)]
-        in_nan_range = [(0, 1), (8, 50), (9, 51), (10, 48), (199, 200), (1, 2)][len(history)]
+        seq_size = (80, 120, 120, 120, 200, 2, 1)[len(history)]
+        in_nan_range = [(0, 1), (8, 50), (9, 51), (10, 48), (199, 200), (1, 2), (0, 1)][len(history)]
 
         seq_size = max(min_seq_size, seq_size)
         if max_seq_size:
@@ -200,8 +198,13 @@ def find_sliding_window_params_for_transform(
         sols = solver.get_sols()
         print(f"Num sols: {len(sols)}")
 
+        if len(sols) <= 10:
+            print(sols)
+
         if len(sols) == 1:
             break
+
+        print("----------")
 
     # n_sols = 0
     # for params in all_params:
@@ -225,7 +228,7 @@ def find_sliding_window_params_for_transform(
 
 
 def test_conv1d():
-    conv = nn.Conv1d(1, 1, kernel_size=5, stride=2)
+    conv = nn.Conv1d(1, 1, kernel_size=4, stride=2, padding=3)
     sols = find_sliding_window_params_for_transform(conv, TensorSpec(shape=(1, 1, -1)), max_seq_size=200)
     print(sols)
 
