@@ -162,8 +162,8 @@ def find_sliding_window_params_for_transform(
         # else:
 
         # FIXME!
-        seq_size = (80, 120, 120, 120, 200, 2)[len(history)]
-        in_nan_range = [(0, 1), (8, 50), (9, 51), (10, 48), (199, 200), (1, 2)][len(history)]
+        seq_size = (80, 120, 120, 120, 200, 2, 1)[len(history)]
+        in_nan_range = [(0, 1), (8, 50), (9, 51), (10, 48), (199, 200), (1, 2), (0, 1)][len(history)]
 
         seq_size = max(min_seq_size, seq_size)
         if max_seq_size:
@@ -198,7 +198,7 @@ def find_sliding_window_params_for_transform(
         sols = solver.get_sols()
         print(f"Num sols: {len(sols)}")
 
-        if len(sols) <= 3:
+        if len(sols) <= 10:
             print(sols)
 
         if len(sols) == 1:
@@ -228,7 +228,7 @@ def find_sliding_window_params_for_transform(
 
 
 def test_conv1d():
-    conv = nn.Conv1d(1, 1, kernel_size=3, stride=1, padding=2)
+    conv = nn.Conv1d(1, 1, kernel_size=4, stride=2, padding=3)
     sols = find_sliding_window_params_for_transform(conv, TensorSpec(shape=(1, 1, -1)), max_seq_size=200)
     print(sols)
 
