@@ -25,10 +25,12 @@ class DummySlidingWindowTransform:
         num_windows = int(num_windows)
         output_length = (num_windows - 1) * self.params.stride_out + self.params.kernel_size_out
 
-        out = np.zeros(output_length)
+        out = np.zeros((output_length, 2), dtype=np.int64)
+        out[:, 0] = len(x)
         for i in range(num_windows):
             in_sli = slice(i * self.params.stride_in, i * self.params.stride_in + self.params.kernel_size_in)
             out_sli = slice(i * self.params.stride_out, i * self.params.stride_out + self.params.kernel_size_out)
-            out[out_sli] += np.mean(x[in_sli])
+            out[out_sli, 0] = np.minimum(out[out_sli, 0], in_sli.start)
+            out[out_sli, 1] = np.maximum(out[out_sli, 1], in_sli.stop)
 
         return out
