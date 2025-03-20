@@ -8,26 +8,19 @@ class DummySlidingWindowTransform:
         self.params = params
 
     def __call__(self, x: np.ndarray):
-        # FIXME!
-        right_pad = self.params.left_pad
+        left_pad, right_pad = self.params.get_padding(x.shape[-1])
+        out_size = self.params.get_output_size(x.shape[-1])
+        num_wins = self.params.get_num_windows(x.shape[-1])
 
-        x = np.concatenate([np.zeros(self.params.left_pad), x])
+        x = np.concatenate([np.zeros(left_pad), x])
         if right_pad < 0:
             x = x[:right_pad]
         else:
             x = np.concatenate([x, np.zeros(right_pad)])
 
-        # TODO: make methods of sliding window params
-        # num_windows = (len(x) - self.params.kernel_size_in) / self.params.stride_in + 1
-        # FIXME!
-        # assert num_windows.is_integer()
-        num_windows = (len(x) - self.params.kernel_size_in) // self.params.stride_in + 1
-        num_windows = int(num_windows)
-        output_length = (num_windows - 1) * self.params.stride_out + self.params.kernel_size_out
-
-        out = np.zeros((output_length, 2), dtype=np.int64)
+        out = np.zeros((out_size, 2), dtype=np.int64)
         out[:, 0] = len(x)
-        for i in range(num_windows):
+        for i in range(num_wins):
             in_sli = slice(i * self.params.stride_in, i * self.params.stride_in + self.params.kernel_size_in)
             out_sli = slice(i * self.params.stride_out, i * self.params.stride_out + self.params.kernel_size_out)
             out[out_sli, 0] = np.minimum(out[out_sli, 0], in_sli.start)

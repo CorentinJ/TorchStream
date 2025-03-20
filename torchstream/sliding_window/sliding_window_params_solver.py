@@ -2,10 +2,11 @@ from copy import deepcopy
 from typing import Callable, Iterable, Tuple
 
 import torch
+from colorama import Fore
 from torch import nn
 from z3 import If, Int, Ints, Or, Solver, sat
 
-from torchstream.sliding_window.nan_trick import get_nan_range, set_nan_range
+from torchstream.sliding_window.nan_trick import check_nan_trick, get_nan_range, set_nan_range
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.tensor_provider import TensorProvider, TensorSpec
 
@@ -196,7 +197,21 @@ def find_sliding_window_params_for_transform(
 
         history.append((x, y))
         sols = solver.get_sols()
-        print(f"Num sols: {len(sols)}")
+
+        n_sols = 0
+        for params in sols:
+            failed = False
+            success, reason = check_nan_trick(params, seq_size, y.size(-1), in_nan_range, out_nan_range)
+            if not success:
+                print("--- Solution ---")
+                print(params)
+                print(f"{Fore.RED}Failed!{Fore.RESET} Reason: {reason}")
+                failed = True
+
+            if not failed:
+                n_sols += 1
+
+        print(f"\nFound {n_sols}/{len(sols)} working solutions")
 
         if len(sols) <= 10:
             print(sols)
@@ -205,26 +220,6 @@ def find_sliding_window_params_for_transform(
             break
 
         print("----------")
-
-    # n_sols = 0
-    # for params in all_params:
-    #     print("--- Solution ---")
-    #     print(params)
-
-    #     failed = False
-    #     for in_len, nan_input, out_len, out_range, rpad in zip(
-    #         in_lens, nan_inputs, out_lens, out_ranges, params.right_pad
-    #     ):
-    #         success, reason = check_nan_trick(params, in_len, out_len, nan_input, out_range)
-    #         if not success:
-    #             print(f"{Fore.RED}Failed!{Fore.RESET} Reason: {reason}")
-    #             failed = True
-
-    #     if not failed:
-    #         print(f"{Fore.GREEN}Success!{Fore.RESET}")
-    #         n_sols += 1
-
-    # print(f"\nFound {n_sols}/{len(all_params)} working solutions")
 
 
 def test_conv1d():
