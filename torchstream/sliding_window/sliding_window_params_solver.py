@@ -49,6 +49,7 @@ class SlidingWindowParamsSolver:
         self.solver.add(self.p_l < self.k_i)
         # TODO doc
         self.alpha = Int("alpha")
+        # FIXME!: wrong upper bound
         self.solver.add(0 <= self.alpha, self.alpha <= 2 * (self.k_i - 1))
         self.solver.add((self.p_l + self.s_i - 1) / self.s_i <= self.alpha)
 

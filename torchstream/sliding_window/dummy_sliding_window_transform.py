@@ -3,6 +3,7 @@ import numpy as np
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 
 
+# FIXME: make this a moving average instead? Not sure of the use...
 class DummySlidingWindowTransform:
     def __init__(self, params: SlidingWindowParams):
         self.params = params
