@@ -6,7 +6,7 @@ from colorama import Fore
 from torch import nn
 from z3 import If, Int, Ints, Or, Solver, sat
 
-from torchstream.sliding_window.nan_trick import check_nan_trick, get_nan_range, set_nan_range
+from torchstream.sliding_window.nan_trick import check_nan_trick, get_input_parameters_xxx, get_nan_range, set_nan_range
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.tensor_provider import TensorProvider, TensorSpec
 
@@ -20,10 +20,12 @@ class SlidingWindowParamsSolver:
     TODO: doc
     TODO: sort these out
     - The input size to the number of windows is a deterministic, stepwise monotonic linear function.
-    - Right padding is either
-        - Same as the left
-        - None (implies no left padding either)
-        - Yielding the same number of windows as the input size
+
+    TODO: padding
+    - The most common padding is constant, with zeroes. But there are other padding methods such as reflect or
+    circular that sample from the input array to determine the padding values. How does this compromise results from
+    the nan trick? Does the transform still qualify as a sliding window approach (e.g. if it reads in the middle of
+    the vector to get padding values)?
     """
 
     def __init__(self):
@@ -46,12 +48,10 @@ class SlidingWindowParamsSolver:
         # assume it constant. Also, there is no point in making the padding higher than the kernel size, as it would
         # waste compute on constant values.
         self.p_l = Int("p_l")
-        self.solver.add(self.p_l < self.k_i)
+        self.solver.add(0 <= self.p_l, self.p_l < self.k_i)
         # TODO doc
-        self.alpha = Int("alpha")
-        # FIXME!: wrong upper bound
-        self.solver.add(0 <= self.alpha, self.alpha <= 2 * (self.k_i - 1))
-        self.solver.add((self.p_l + self.s_i - 1) / self.s_i <= self.alpha)
+        self.p_r = Int("p_r")
+        self.solver.add(0 <= self.p_r, self.p_r < self.k_i)
 
         # Number of sliding windows for constraints
         self.cs = []
@@ -73,7 +73,7 @@ class SlidingWindowParamsSolver:
             # We necessarily have at least one window (empty outputs are not allowed for this solver)
             c > 0,
             # Padding
-            c == (in_len - self.k_i) / self.s_i + self.alpha + 1,
+            c == (self.p_l + in_len + self.p_r - self.k_i) / self.s_i + 1,
             out_len == (c - 1) * self.s_o + self.k_o,
         )
 
@@ -119,23 +119,23 @@ class SlidingWindowParamsSolver:
             # print(model)
 
             params = SlidingWindowParams(
-                model[self.k_i].as_long(),
-                model[self.s_i].as_long(),
-                model[self.k_o].as_long(),
-                model[self.s_o].as_long(),
-                model[self.p_l].as_long(),
-                model[self.alpha].as_long(),
+                kernel_size_in=model[self.k_i].as_long(),
+                stride_in=model[self.s_i].as_long(),
+                left_pad=model[self.p_l].as_long(),
+                right_pad=model[self.p_r].as_long(),
+                kernel_size_out=model[self.k_o].as_long(),
+                stride_out=model[self.s_o].as_long(),
             )
             out.append(params)
 
             solver.add(
                 Or(
                     self.k_i != model[self.k_i],
-                    self.k_o != model[self.k_o],
                     self.s_i != model[self.s_i],
-                    self.s_o != model[self.s_o],
                     self.p_l != model[self.p_l],
-                    self.alpha != model[self.alpha],
+                    self.p_r != model[self.p_r],
+                    self.k_o != model[self.k_o],
+                    self.s_o != model[self.s_o],
                 )
             )
 
@@ -146,6 +146,7 @@ class SlidingWindowParamsSolver:
 
 
 # TODO: allow transforms with multiple sequential inputs
+#   -> Or simply call the function multiple times? unsure
 @torch.no_grad()
 def find_sliding_window_params_for_transform(
     trsfm: Callable,
@@ -156,16 +157,15 @@ def find_sliding_window_params_for_transform(
     solver = SlidingWindowParamsSolver()
 
     history = []
+    sols = []
     while True:
         # Determine an input size
-        # if not history:
-        #     seq_size = 10
-        #     in_nan_range = (5, 6)
-        # else:
-
-        # FIXME!
-        seq_size = (80, 120, 120, 120, 200, 2, 1)[len(history)]
-        in_nan_range = [(0, 1), (8, 50), (9, 51), (10, 48), (199, 200), (1, 2), (0, 1)][len(history)]
+        if not sols:
+            # TODO: min input size
+            seq_size = 10
+            in_nan_range = (5, 6)
+        else:
+            seq_size, in_nan_range = get_input_parameters_xxx(sols)
 
         seq_size = max(min_seq_size, seq_size)
         if max_seq_size:
@@ -199,6 +199,7 @@ def find_sliding_window_params_for_transform(
         history.append((x, y))
         sols = solver.get_sols()
 
+        # Nan trick verification (TODO: remove?)
         n_sols = 0
         for params in sols:
             failed = False
@@ -211,11 +212,11 @@ def find_sliding_window_params_for_transform(
 
             if not failed:
                 n_sols += 1
-
         print(f"\nFound {n_sols}/{len(sols)} working solutions")
 
         if len(sols) <= 10:
-            print(sols)
+            for sol in sols:
+                print(sol)
 
         if len(sols) == 1:
             break
@@ -224,7 +225,7 @@ def find_sliding_window_params_for_transform(
 
 
 def test_conv1d():
-    conv = nn.Conv1d(1, 1, kernel_size=4, stride=2, padding=3)
+    conv = nn.Conv1d(1, 1, kernel_size=4, stride=2, padding=2)
     sols = find_sliding_window_params_for_transform(conv, TensorSpec(shape=(1, 1, -1)), max_seq_size=200)
     print(sols)
 

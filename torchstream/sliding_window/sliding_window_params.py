@@ -1,4 +1,3 @@
-import math
 from dataclasses import dataclass, field
 from typing import Tuple
 
@@ -22,7 +21,8 @@ class SlidingWindowParams:
     # value typically is. A few examples:
     #   - For a conv1d layer with no padding, alpha = 0.
     #   - For a conv1d layer with stride=1 and "same" padding (input size = output size), alpha = kernel_size_in - 1.
-    alpha: int = field(default_factory=int)
+    # FIXME!! change doc repo wide
+    right_pad: int = field(default_factory=int)
     # The kernel size of the output. It is 1 for normal convolutions, but can be larger for transposed convolutions.
     kernel_size_out: int = field(default=1)
     stride_out: int = field(default=1)
@@ -38,10 +38,8 @@ class SlidingWindowParams:
             raise ValueError("stride_out must be at least 1 and at most kernel_size_out.")
         if self.left_pad < 0 or self.left_pad >= self.kernel_size_in:
             raise ValueError("left_pad must be at least 0 and at most kernel_size_in - 1.")
-        if self.alpha < 0 or self.alpha > 2 * math.ceil((self.kernel_size_in - 1) / self.stride_in):
-            raise ValueError("alpha must be at least 0 and at most 2 * ceil((kernel_size_in - 1) / stride_in).")
-        if math.ceil(self.left_pad / self.stride_in) > self.alpha:
-            raise ValueError("the left padding is excessive given the alpha value.")
+        if self.right_pad < 0 or self.right_pad >= self.kernel_size_in:
+            raise ValueError("right_pad must be at least 0 and at most kernel_size_in - 1.")
 
     def get_num_windows(self, input_size: int) -> int:
         """
@@ -51,14 +49,14 @@ class SlidingWindowParams:
         """
         if input_size <= 0:
             return 0
-        return max(0, (input_size - self.kernel_size_in) // self.stride_in + self.alpha + 1)
+        return max(0, (self.left_pad + input_size + self.right_pad - self.kernel_size_in) // self.stride_in + 1)
 
-    def get_padding(self, input_size: int) -> Tuple[int, int]:
+    def get_effective_padding(self, input_size: int) -> Tuple[int, int]:
         """
         Returns the padding that would be applied to the input tensor before applying the sliding window transform.
-
-        Note that the right padding might be negative, implying that the input tensor gets trimmed on the right
-        instead of being padded.
+        Because sliding windows with input stride > 1 might not line up exactly with the end of the padded input, the
+        right padding for a given input size might be effectively less than <self.right_pad>. There are also cases
+        where inputs on the right go unused, and therefore the effective right padding returned will be negative.
 
         :param input_size: The size of the input tensor, without padding added.
         """
@@ -71,10 +69,8 @@ class SlidingWindowParams:
 
         padded_input_size = (num_wins - 1) * self.stride_in + self.kernel_size_in
         right_pad = padded_input_size - input_size - self.left_pad
-
-        if self.left_pad > 0:
-            assert right_pad > 0, "Internal error: right padding should be positive if left padding is positive."
-        assert right_pad < self.kernel_size_in, "Internal error: padding on either side should not exceed kernel size"
+        assert -self.stride_in < right_pad, "Internal error: trimming on the right should be smaller than the stride"
+        assert right_pad <= self.kernel_size_in, "Internal error: padding on either side should not exceed kernel size"
 
         return (self.left_pad, right_pad)
 
@@ -92,12 +88,14 @@ class SlidingWindowParams:
     def get_min_input_size(self) -> int:
         """
         Returns the minimum input size necessary to have any output.
+        This class considers that running a sliding window on an empty input is pointless and therefore the returned
+        value is always at least one.
         """
-        return self.kernel_size_in - self.alpha * self.stride_in
+        return max(1, self.kernel_size_in - self.right_pad - self.left_pad)
 
     def get_inverse_map(self, input_size: int) -> np.ndarray:
         # TODO! doc
-        left_pad, right_pad = self.get_padding(input_size)
+        left_pad, right_pad = self.get_effective_padding(input_size)
         out_size = self.get_output_size(input_size)
         num_wins = self.get_num_windows(input_size)
 
@@ -119,7 +117,7 @@ class SlidingWindowParams:
         return (
             "SlidingWindowParams(\n"
             + f"    kernel_size_in={self.kernel_size_in}, stride_in={self.stride_in},\n"
-            + f"    left_pad={self.left_pad}, alpha={self.alpha},\n"
+            + f"    left_pad={self.left_pad}, right_pad={self.right_pad},\n"
             + f"    kernel_size_out={self.kernel_size_out}, stride_out={self.stride_out},\n"
             + ")"
         )
