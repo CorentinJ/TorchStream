@@ -6,12 +6,11 @@ from typing import Callable, Iterable, List, Tuple
 import numpy as np
 import torch
 from colorama import Fore
-from torch import nn
 from z3 import If, Int, Ints, Or, Solver, sat
 
 from torchstream.sliding_window.nan_trick import check_nan_trick, get_nan_range, set_nan_range
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
-from torchstream.tensor_provider import TensorProvider, TensorSpec
+from torchstream.tensor_provider import TensorProvider
 
 
 class NoSolutionError(Exception):
@@ -234,11 +233,12 @@ def find_nan_trick_params_by_infogain(hypotheses: SlidingWindowParams):
 def find_sliding_window_params_for_transform(
     trsfm: Callable,
     input_provider: TensorProvider,
-    min_seq_size: int = 1,
-    max_seq_size: int = None,
-) -> SlidingWindowParams:
+    min_in_seq_size: int = 1,
+    max_in_seq_size: int = 10_000,
+) -> List[SlidingWindowParams]:
     solver = SlidingWindowParamsSolver()
 
+    # TODO: remove history?
     history = []
     sols = []
     while True:
@@ -254,9 +254,9 @@ def find_sliding_window_params_for_transform(
                 break
 
         # TODO: integrate in parameter search space
-        seq_size = max(min_seq_size, seq_size)
-        if max_seq_size:
-            seq_size = min(seq_size, max_seq_size)
+        seq_size = max(min_in_seq_size, seq_size)
+        if max_in_seq_size:
+            seq_size = min(seq_size, max_in_seq_size)
 
         print(seq_size, in_nan_range)
 
@@ -305,24 +305,23 @@ def find_sliding_window_params_for_transform(
             for sol in sols:
                 print(sol)
 
-        if len(sols) == 1:
+        if len(sols) <= 1:
             break
 
         print("----------")
 
+    # TODO: handle no solution
 
-temp = nn.Conv1d(1, 1, kernel_size=7, stride=2, padding=0)
+    # At this point we may have multiple solutions.
+    # TODO: doc
+    def sliding_window_params_simplicity_score(sliding_window_params: SlidingWindowParams) -> int:
+        score = 0
+        if sliding_window_params.stride_in == 1 and sliding_window_params.kernel_size_in == 1:
+            score += 1
+        if sliding_window_params.stride_out == 1 and sliding_window_params.kernel_size_out == 1:
+            score += 1
+        return score
 
+    sols = sorted(sols, key=sliding_window_params_simplicity_score, reverse=True)
 
-def my_transform(x):
-    x = torch.nn.functional.pad(x, (1, 3))
-    return temp(x)
-
-
-def test_conv1d():
-    # conv = nn.Conv1d(1, 1, kernel_size=7, stride=1, padding=2)
-    sols = find_sliding_window_params_for_transform(my_transform, TensorSpec(shape=(1, 1, -1)), max_seq_size=200)
-    print(sols)
-
-
-test_conv1d()
+    return sols
