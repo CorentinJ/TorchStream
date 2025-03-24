@@ -1,12 +1,15 @@
+import math
+from collections import Counter
 from copy import deepcopy
-from typing import Callable, Iterable, Tuple
+from typing import Callable, Iterable, List, Tuple
 
+import numpy as np
 import torch
 from colorama import Fore
 from torch import nn
 from z3 import If, Int, Ints, Or, Solver, sat
 
-from torchstream.sliding_window.nan_trick import check_nan_trick, get_input_parameters_xxx, get_nan_range, set_nan_range
+from torchstream.sliding_window.nan_trick import check_nan_trick, get_nan_range, set_nan_range
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.tensor_provider import TensorProvider, TensorSpec
 
@@ -145,6 +148,86 @@ class SlidingWindowParamsSolver:
         return out
 
 
+def _count_unique_arrays(
+    arrays: List[np.ndarray], counts: Iterable[int] | None = None
+) -> Tuple[List[np.ndarray], List[int]]:
+    if counts is None:
+        counts = [1] * len(arrays)
+    counts = list(counts)
+    if len(counts) != len(arrays):
+        raise ValueError()
+
+    # NOTE: this can also be achieved with np.unique given an axis arg, but it requires padding arrays to the same
+    # shape...
+    array_idx_map = {}
+    unique_arrays = []
+    unique_arrays_count = []
+    for array in arrays:
+        key = array.tobytes()
+
+        if key not in array_idx_map:
+            array_idx_map[key] = len(unique_arrays)
+            unique_arrays.append(array.copy())
+            unique_arrays_count.append(0)
+        array_idx = array_idx_map[key]
+
+        unique_arrays_count[array_idx] += 1
+
+    return unique_arrays, unique_arrays_count
+
+
+def find_nan_trick_params_by_infogain(hypotheses: SlidingWindowParams):
+    # TODO: doc
+    # TODO: handle cases where the input is too small?
+    min_seq_size = max(sol.get_min_input_size() for sol in hypotheses)
+    max_seq_size = min_seq_size + max(sol.kernel_size_in for sol in hypotheses)
+
+    best_infogain = 0.0
+    best_parameters = (None, None)
+    for seq_size in range(min_seq_size, max_seq_size + 1):
+        inv_maps = []
+        for hypothesis in hypotheses:
+            inv_map = hypothesis.get_inverse_map(seq_size)
+
+            # FIXME
+            inv_map = np.maximum(inv_map, 0)
+            inv_map = np.minimum(inv_map, seq_size)
+
+            inv_maps.append(inv_map)
+
+        inv_maps, inv_maps_count = _count_unique_arrays(inv_maps)
+
+        # TODO: sublinear algo
+        for in_nan_idx in range(seq_size):
+            # TODO: algo with nan ranges larger than 1
+            in_nan_range = (in_nan_idx, in_nan_idx + 1)
+            outcomes = Counter()
+            for inv_map, inv_map_count in zip(inv_maps, inv_maps_count):
+                out_nan_range = (
+                    np.searchsorted(inv_map[:, 1], in_nan_range[0], side="right"),
+                    np.searchsorted(inv_map[:, 0], in_nan_range[1], side="left"),
+                )
+                if out_nan_range[1] <= out_nan_range[0]:
+                    out_nan_range = None
+                outcomes[len(inv_map), out_nan_range] += inv_map_count
+
+                # TODO: empirical verification
+
+            infogain = math.log(len(hypotheses))
+            for outcome_count in outcomes.values():
+                infogain -= (outcome_count * math.log(outcome_count)) / len(hypotheses)
+
+            if infogain > best_infogain:
+                best_infogain = infogain
+                best_parameters = (seq_size, in_nan_range)
+
+            # Break early if the solution is optimal
+            if len(outcomes) == len(hypotheses):
+                return best_parameters
+
+    return best_parameters
+
+
 # TODO: allow transforms with multiple sequential inputs
 #   -> Or simply call the function multiple times? unsure
 @torch.no_grad()
@@ -165,8 +248,12 @@ def find_sliding_window_params_for_transform(
             seq_size = 10
             in_nan_range = (5, 6)
         else:
-            seq_size, in_nan_range = get_input_parameters_xxx(sols)
+            seq_size, in_nan_range = find_nan_trick_params_by_infogain(sols)
+            if seq_size is None:
+                print("Cannot differentiate between params")
+                break
 
+        # TODO: integrate in parameter search space
         seq_size = max(min_seq_size, seq_size)
         if max_seq_size:
             seq_size = min(seq_size, max_seq_size)
@@ -224,9 +311,17 @@ def find_sliding_window_params_for_transform(
         print("----------")
 
 
+temp = nn.Conv1d(1, 1, kernel_size=7, stride=2, padding=0)
+
+
+def my_transform(x):
+    x = torch.nn.functional.pad(x, (1, 3))
+    return temp(x)
+
+
 def test_conv1d():
-    conv = nn.Conv1d(1, 1, kernel_size=4, stride=2, padding=2)
-    sols = find_sliding_window_params_for_transform(conv, TensorSpec(shape=(1, 1, -1)), max_seq_size=200)
+    # conv = nn.Conv1d(1, 1, kernel_size=7, stride=1, padding=2)
+    sols = find_sliding_window_params_for_transform(my_transform, TensorSpec(shape=(1, 1, -1)), max_seq_size=200)
     print(sols)
 
 
