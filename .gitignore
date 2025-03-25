@@ -32,3 +32,6 @@ pip-delete-this-directory.txt
 .pytest_cache
 .*/
 __*__/
+
+# pytest-profiling outputs
+prof/

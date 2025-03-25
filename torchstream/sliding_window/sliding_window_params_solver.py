@@ -1,12 +1,10 @@
 import logging
 import math
 from collections import Counter
-from copy import deepcopy
 from typing import Callable, Iterable, List, Tuple
 
 import numpy as np
 import torch
-from colorama import Fore
 from z3 import If, Int, Ints, Or, Solver, sat
 
 from torchstream.sliding_window.nan_trick import check_nan_trick, get_nan_range, set_nan_range
@@ -122,40 +120,40 @@ class SlidingWindowParamsSolver:
         #         f"Adding the constraint input={in_len} -> output={out_len} made the model unsolvable."
         #     )
 
-    def get_sols(self, max_solutions: int = 50):
-        # TODO: use push/pop instead?
-        solver = deepcopy(self.solver)
+    def get_solutions(self, max_solutions: int = 10) -> List[SlidingWindowParams]:
+        # TODO! doc
+        # This context manager will contain the new constraints to the context; they won't be kept upon exiting the
+        # context.
+        with self.solver as temp_solver:
+            solutions = []
+            while temp_solver.check() == sat:
+                model = temp_solver.model()
 
-        out = []
-        while solver.check() == sat:
-            model = solver.model()
-            # print(model)
-
-            params = SlidingWindowParams(
-                kernel_size_in=model[self.k_i].as_long(),
-                stride_in=model[self.s_i].as_long(),
-                left_pad=model[self.p_l].as_long(),
-                right_pad=model[self.p_r].as_long(),
-                kernel_size_out=model[self.k_o].as_long(),
-                stride_out=model[self.s_o].as_long(),
-            )
-            out.append(params)
-
-            solver.add(
-                Or(
-                    self.k_i != model[self.k_i],
-                    self.s_i != model[self.s_i],
-                    self.p_l != model[self.p_l],
-                    self.p_r != model[self.p_r],
-                    self.k_o != model[self.k_o],
-                    self.s_o != model[self.s_o],
+                params = SlidingWindowParams(
+                    kernel_size_in=model[self.k_i].as_long(),
+                    stride_in=model[self.s_i].as_long(),
+                    left_pad=model[self.p_l].as_long(),
+                    right_pad=model[self.p_r].as_long(),
+                    kernel_size_out=model[self.k_o].as_long(),
+                    stride_out=model[self.s_o].as_long(),
                 )
-            )
+                solutions.append(params)
 
-            if len(out) >= max_solutions:
-                break
+                temp_solver.add(
+                    Or(
+                        self.k_i != model[self.k_i],
+                        self.s_i != model[self.s_i],
+                        self.p_l != model[self.p_l],
+                        self.p_r != model[self.p_r],
+                        self.k_o != model[self.k_o],
+                        self.s_o != model[self.s_o],
+                    )
+                )
 
-        return out
+                if len(solutions) >= max_solutions:
+                    break
+
+        return solutions
 
 
 def _count_unique_arrays(
@@ -246,6 +244,7 @@ def find_sliding_window_params_for_transform(
     input_provider: TensorProvider,
     min_in_seq_size: int = 1,
     max_in_seq_size: int = 10_000,
+    max_solutions_per_step: int = 10,
 ) -> List[SlidingWindowParams]:
     solver = SlidingWindowParamsSolver()
 
@@ -304,35 +303,20 @@ def find_sliding_window_params_for_transform(
 
         # FIXME: dim
         out_nan_range = get_nan_range(y, dim=-1)
+        logger.info(f"Transform yielded a {y.shape} shaped output with nans in {out_nan_range}")
+
         # TODO: change signature
         solver.add_all((seq_size, y.size(-1)), [(in_nan_range, out_nan_range)])
-        logger.info(f"Got {y.shape} shaped output with nans in {out_nan_range}")
+        sols = solver.get_solutions(max_solutions=max_solutions_per_step)
 
-        sols = solver.get_sols()
-
-        # Nan trick verification (TODO: remove?)
-        n_sols = 0
+        # Nan trick verification (TODO: remove/make optional)
         for params in sols:
-            failed = False
             success, reason = check_nan_trick(params, seq_size, y.size(-1), in_nan_range, out_nan_range)
-            if not success:
-                print("--- Solution ---")
-                print(params)
-                print(f"{Fore.RED}Failed!{Fore.RESET} Reason: {reason}")
-                failed = True
-
-            if not failed:
-                n_sols += 1
-        print(f"\nFound {n_sols}/{len(sols)} working solutions")
-
-        if len(sols) <= 10:
-            for sol in sols:
-                print(sol)
-
-        if len(sols) <= 1:
-            break
-
-        print("----------")
+            assert success, f"Internal error: nan trick verification failed: {reason}"
+        logger.info(
+            f"Step {step}: got {len(sols)} solutions"
+            + (f"max is {max_solutions_per_step}" if len(sols) == max_solutions_per_step else "")
+        )
 
     # TODO: handle no solution
 

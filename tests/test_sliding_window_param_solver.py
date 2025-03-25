@@ -22,6 +22,7 @@ def my_transform(x):
 @pytest.mark.parametrize("stride", [1, 2, 3, 4, 5, 10, 17])
 @pytest.mark.parametrize("padding", [0, 1, 2, 3, 4])
 @pytest.mark.parametrize("dilation", [1, 2, 3])
+@pytest.mark.timeout(5)
 def test_conv1d(kernel_size: int, stride: int, padding: int, dilation: int):
     kernel_span = (kernel_size - 1) * dilation + 1
     if stride > kernel_span:
