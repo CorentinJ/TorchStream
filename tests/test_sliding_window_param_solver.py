@@ -15,6 +15,9 @@ def my_transform(x):
     return temp(x)
 
 
+# kernel_size = 17, stride = 1, padding = 0, dilation = 1
+# kernel_size = 5, stride = 1, padding = 0, dilation = 1
+# 1 0 3 3
 @pytest.mark.parametrize("kernel_size", [1, 2, 3, 4, 5, 10, 17])
 @pytest.mark.parametrize("stride", [1, 2, 3, 4, 5, 10, 17])
 @pytest.mark.parametrize("padding", [0, 1, 2, 3, 4])

@@ -1,3 +1,4 @@
+import logging
 import math
 from collections import Counter
 from copy import deepcopy
@@ -11,6 +12,8 @@ from z3 import If, Int, Ints, Or, Solver, sat
 from torchstream.sliding_window.nan_trick import check_nan_trick, get_nan_range, set_nan_range
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.tensor_provider import TensorProvider
+
+logger = logging.getLogger(__name__)
 
 
 class NoSolutionError(Exception):
@@ -59,7 +62,11 @@ class SlidingWindowParamsSolver:
         self.cs = []
 
     # TODO: name
-    def add_all(self, in_out_len: Tuple[int, int], in_out_ranges: Iterable[Tuple[Tuple[int, int], Tuple[int, int]]]):
+    def add_all(
+        self,
+        in_out_len: Tuple[int, int],
+        in_out_ranges: Iterable[Tuple[Tuple[int, int], Tuple[int, int] | None]],
+    ):
         """
         TODO: doc
         """
@@ -80,6 +87,10 @@ class SlidingWindowParamsSolver:
         )
 
         for range_idx, (in_range, out_range) in enumerate(in_out_ranges):
+            if out_range is None:
+                # FIXME! to implement
+                continue
+
             in_range = (int(in_range[0]), int(in_range[1]))
             out_range = (int(out_range[0]), int(out_range[1]))
             if in_range[0] < 0 or out_range[0] < 0:
@@ -238,27 +249,31 @@ def find_sliding_window_params_for_transform(
 ) -> List[SlidingWindowParams]:
     solver = SlidingWindowParamsSolver()
 
-    # TODO: remove history?
-    history = []
+    step = 1
     sols = []
-    while True:
+    while step == 1 or len(sols) > 1:
         # Determine an input size
         if not sols:
-            # TODO: min input size
-            seq_size = 10
-            in_nan_range = (5, 6)
+            # In the absence of any information, use sane defaults
+            seq_size = int(10 ** (math.log10(min_in_seq_size * max_in_seq_size) / 2))
+            in_nan_range = (seq_size // 2, seq_size // 2 + 1)
         else:
+            # Once we have a couple of hypotheses, we'll use the parameters that yield the best information gain
             seq_size, in_nan_range = find_nan_trick_params_by_infogain(sols)
             if seq_size is None:
-                print("Cannot differentiate between params")
+                # TODO: is this problematic at all for streaming? It seems equivalent sliding windows parameters would
+                # lead to the same parameters for the streaming implementation of the transform.
+                logger.info(
+                    f"Got {len(sols)} sliding window parameters that are consistent with the transform, but they "
+                    f"cannot be discriminated further. All possible parameters will be returned, with the most likely "
+                    f"ones first."
+                )
                 break
 
         # TODO: integrate in parameter search space
         seq_size = max(min_in_seq_size, seq_size)
         if max_in_seq_size:
             seq_size = min(seq_size, max_in_seq_size)
-
-        print(seq_size, in_nan_range)
 
         # TODO: nan range lims
 
@@ -268,22 +283,31 @@ def find_sliding_window_params_for_transform(
 
         set_nan_range(x, in_nan_range, dim=input_provider.dim)
 
+        logger.info(f"Running transform with input size {seq_size} and nans at {in_nan_range}")
         try:
+            # FIXME: output format
             y = trsfm(x)
-        except Exception as e:
-            y = e
+        except RuntimeError as e:
+            # We'll assume that RuntimeError are conv errors for a too small input size
+            # TODO: more reliable mechanism
+            if min_in_seq_size == max_in_seq_size:
+                raise e
 
-        # FIXME: output format
-        if torch.is_tensor(y):
-            # FIXME: dim
-            out_nan_range = get_nan_range(y, dim=-1)
-            solver.add_all(
-                (seq_size, y.size(-1)),
-                [(in_nan_range, out_nan_range)],
+            # NOTE: min_in_seq_size is not a constraint on the sliding window parameters
+            min_in_seq_size = int(10 ** (math.log10(min_in_seq_size) + 1))
+            min_in_seq_size = min(min_in_seq_size, max_in_seq_size)
+            # TODO: better message
+            logger.info(
+                f"Transform failed with input size {seq_size}. Increasing min sequence size to {min_in_seq_size}"
             )
-            print(f"In: {seq_size}, Out: {y.size(-1)}, Nans: {in_nan_range} -> {out_nan_range}")
+            continue
 
-        history.append((x, y))
+        # FIXME: dim
+        out_nan_range = get_nan_range(y, dim=-1)
+        # TODO: change signature
+        solver.add_all((seq_size, y.size(-1)), [(in_nan_range, out_nan_range)])
+        logger.info(f"Got {y.shape} shaped output with nans in {out_nan_range}")
+
         sols = solver.get_sols()
 
         # Nan trick verification (TODO: remove?)
