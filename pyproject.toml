@@ -6,7 +6,7 @@ authors = [
   { name = "Corentin Jemine", email = "corentin.jemine@gmail.com" }
 ]
 readme = "README.md"
-license = { file = "LICENSE" }
+license-files = ["LICENSE"]
 requires-python = ">=3.8"
 dependencies = [
     "numpy>=1.23.0",
@@ -16,13 +16,16 @@ dependencies = [
     "z3-solver>=4.14.0.0",
 ]
 
+[project.urls]
+Repository = "https://github.com/CorentinJ/TorchStream"
+
+[tool.setuptools.packages.find]
+include = ["torchstream*"]
+
 # Defining a build system lets us install the project as a dev package
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
-
-[project.urls]
-Repository = "https://github.com/CorentinJ/TorchStream"
 
 [tool.ruff]
 line-length = 120

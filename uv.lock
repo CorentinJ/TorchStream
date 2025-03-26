@@ -501,7 +501,6 @@ wheels = [
 name = "torchstream"
 version = "0.0.1"
 source = { editable = "." }
-# TODO!: split dev and lib dependencies
 dependencies = [
     { name = "numpy" },
     { name = "pytest" },
