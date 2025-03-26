@@ -23,6 +23,8 @@ class SlidingWindowParamsSolver:
     TODO: doc
     TODO: sort these out
     - The input size to the number of windows is a deterministic, stepwise monotonic linear function.
+    - On the nan trick: if there's no nan in the output, it necessarily means that the effective input size was smaller
+    than the padded input size.
 
     TODO: padding
     - The most common padding is constant, with zeroes. But there are other padding methods such as reflect or
@@ -85,40 +87,42 @@ class SlidingWindowParamsSolver:
         )
 
         for range_idx, (in_range, out_range) in enumerate(in_out_ranges):
-            if out_range is None:
-                # FIXME! to implement
-                continue
-
             in_range = (int(in_range[0]), int(in_range[1]))
-            out_range = (int(out_range[0]), int(out_range[1]))
-            if in_range[0] < 0 or out_range[0] < 0:
-                raise ValueError("Input and output ranges must be non-negative integers")
-            if in_range[1] <= in_range[0] or out_range[1] <= out_range[0]:
-                raise ValueError("Input and output ranges must be non-empty")
+            if in_range[0] < 0:
+                raise ValueError("Input ranges must be non-negative integers")
+            if in_range[1] <= in_range[0]:
+                raise ValueError("Input ranges must be non-empty")
 
-            # The start of both the input and the output range correspond to the same window. The same can be said
-            # for the end of the ranges.
-            # FIXME: notation difference: c above is the number of windows, cs and ce are window indices
-            crs, cre = Ints(f"c_{c_idx}_rs{range_idx} c_{c_idx}_re{range_idx}")
-            self.solver.add(0 <= crs, crs <= cre, cre < c)
+            if out_range is not None:
+                out_range = (int(out_range[0]), int(out_range[1]))
+                if out_range[0] < 0:
+                    raise ValueError("Output ranges must be non-negative integers")
+                if out_range[1] <= out_range[0]:
+                    raise ValueError("Output ranges must be non-empty")
 
-            self.solver.add(
-                crs
-                == (If(self.p_l + in_range[0] >= self.k_i, self.p_l + in_range[0] - self.k_i + 1, 0) + self.s_i - 1)
-                / self.s_i
-            )
-            self.solver.add(out_range[0] == crs * self.s_o)
+            if out_range:
+                # The start of both the input and the output range correspond to the same window. The same can be said
+                # for the end of the ranges.
+                # FIXME: notation difference: c above is the number of windows, cs and ce are window indices
+                crs, cre = Ints(f"c_{c_idx}_rs{range_idx} c_{c_idx}_re{range_idx}")
+                self.solver.add(0 <= crs, crs <= cre, cre < c)
 
-            self.solver.add(
-                cre == If(self.p_l + in_range[1] > (c - 1) * self.s_i, c - 1, (self.p_l + in_range[1] - 1) / self.s_i)
-            )
-            self.solver.add(out_range[1] == cre * self.s_o + self.k_o)
+                self.solver.add(out_range[0] == crs * self.s_o)
+                self.solver.add(
+                    crs
+                    == (If(self.p_l + in_range[0] >= self.k_i, self.p_l + in_range[0] - self.k_i + 1, 0) + self.s_i - 1)
+                    / self.s_i
+                )
 
-        # if self.solver.check() != sat:
-        #     raise NoSolutionError(
-        #         # TODO: better explanation for this, course for action etc...
-        #         f"Adding the constraint input={in_len} -> output={out_len} made the model unsolvable."
-        #     )
+                self.solver.add(out_range[1] == cre * self.s_o + self.k_o)
+                self.solver.add(
+                    cre
+                    == If(self.p_l + in_range[1] > (c - 1) * self.s_i, c - 1, (self.p_l + in_range[1] - 1) / self.s_i)
+                )
+            else:
+                # When there's no output, it necessarily means that the input range was dropped due to windows not
+                # lining up. Therefore, the input range is fully contained after the last window.
+                self.solver.add(self.p_l + in_range[0] >= self.k_i + self.s_i * (c - 1))
 
     def get_solutions(self, max_solutions: int = 10) -> List[SlidingWindowParams]:
         # TODO! doc
