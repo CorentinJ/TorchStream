@@ -327,12 +327,11 @@ def find_sliding_window_params_for_transform(
     # At this point we may have multiple solutions.
     # TODO: doc
     def sliding_window_params_simplicity_score(sliding_window_params: SlidingWindowParams) -> int:
-        score = 0
         if sliding_window_params.stride_in == 1 and sliding_window_params.kernel_size_in == 1:
-            score += 1
+            return 2
         if sliding_window_params.stride_out == 1 and sliding_window_params.kernel_size_out == 1:
-            score += 1
-        return score
+            return 1
+        return 0
 
     sols = sorted(sols, key=sliding_window_params_simplicity_score, reverse=True)
 

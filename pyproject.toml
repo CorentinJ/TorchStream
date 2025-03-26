@@ -11,6 +11,7 @@ requires-python = ">=3.8"
 dependencies = [
     "numpy>=1.23.0",
     "pytest-profiling>=1.8.1",
+    "pytest-timeout>=2.3.1",
     "pytest>=8.3.4",
     "torch>=1.11.0",
     "z3-solver>=4.14.0.0",
