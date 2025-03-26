@@ -242,13 +242,14 @@ def find_nan_trick_params_by_infogain(hypotheses: SlidingWindowParams):
 
 # TODO: allow transforms with multiple sequential inputs
 #   -> Or simply call the function multiple times? unsure
+# TODO: handle the case where a model always yields an output even if the input is too small?
 @torch.no_grad()
 def find_sliding_window_params_for_transform(
     trsfm: Callable,
     input_provider: TensorProvider,
     min_in_seq_size: int = 1,
     max_in_seq_size: int = 10_000,
-    max_solutions_per_step: int = 10,
+    max_solutions_per_step: int = 50,
 ) -> List[SlidingWindowParams]:
     solver = SlidingWindowParamsSolver()
 
@@ -296,6 +297,7 @@ def find_sliding_window_params_for_transform(
             if min_in_seq_size == max_in_seq_size:
                 raise e
 
+            # FIXME: this is a bad approach. Small seq sizes remain useful
             # NOTE: min_in_seq_size is not a constraint on the sliding window parameters
             min_in_seq_size = int(10 ** (math.log10(min_in_seq_size) + 1))
             min_in_seq_size = min(min_in_seq_size, max_in_seq_size)
@@ -307,7 +309,7 @@ def find_sliding_window_params_for_transform(
 
         # FIXME: dim
         out_nan_range = get_nan_range(y, dim=-1)
-        logger.info(f"Transform yielded a {y.shape} shaped output with nans in {out_nan_range}")
+        logger.info(f"Got a {tuple(y.shape)} shaped output with nans at {out_nan_range}")
 
         # TODO: change signature
         solver.add_all((seq_size, y.size(-1)), [(in_nan_range, out_nan_range)])
@@ -319,8 +321,10 @@ def find_sliding_window_params_for_transform(
             assert success, f"Internal error: nan trick verification failed: {reason}"
         logger.info(
             f"Step {step}: got {len(sols)} solutions"
-            + (f"max is {max_solutions_per_step}" if len(sols) == max_solutions_per_step else "")
+            + (f" (max is {max_solutions_per_step})" if len(sols) == max_solutions_per_step else "")
         )
+
+        step += 1
 
     # TODO: handle no solution
 
