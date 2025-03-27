@@ -1,6 +1,5 @@
 import logging
 import math
-from collections import Counter
 from typing import Callable, Iterable, List, Tuple
 
 import numpy as np
@@ -156,43 +155,26 @@ class SlidingWindowParamsSolver:
         return solutions
 
 
-def _count_unique_arrays(
-    arrays: List[np.ndarray], counts: Iterable[int] | None = None
-) -> Tuple[List[np.ndarray], List[int]]:
-    if counts is None:
-        counts = [1] * len(arrays)
-    counts = list(counts)
-    if len(counts) != len(arrays):
-        raise ValueError()
-
-    # NOTE: this can also be achieved with np.unique given an axis arg, but it requires padding arrays to the same
-    # shape...
-    array_idx_map = {}
-    unique_arrays = []
-    unique_arrays_count = []
-    for array in arrays:
-        key = array.tobytes()
-
-        if key not in array_idx_map:
-            array_idx_map[key] = len(unique_arrays)
-            unique_arrays.append(array.copy())
-            unique_arrays_count.append(0)
-        array_idx = array_idx_map[key]
-
-        unique_arrays_count[array_idx] += 1
-
-    return unique_arrays, unique_arrays_count
+def _get_infogain(category_counts: Iterable[int]) -> float:
+    category_counts = list(category_counts)
+    infogain = math.log(sum(category_counts))
+    for category_count in category_counts:
+        infogain -= (category_count * math.log(category_count)) / sum(category_counts)
+    return infogain
 
 
-def find_nan_trick_params_by_infogain(hypotheses: SlidingWindowParams):
+def find_nan_trick_params_by_infogain(hypotheses: List[SlidingWindowParams]):
     # TODO: doc
     min_seq_size = min(sol.get_min_input_size() for sol in hypotheses)
     max_seq_size = min_seq_size + max(sol.kernel_size_in for sol in hypotheses)
 
     best_infogain = 0.0
+    best_hyps_by_outcome = None
     best_parameters = (None, None)
     for seq_size in range(min_seq_size, max_seq_size + 1):
-        inv_maps = []
+        # Group hypotheses by their inverse map
+        inv_maps_idx = {}
+        hyps_by_inv_map = []
         for hypothesis in hypotheses:
             inv_map = hypothesis.get_inverse_map(seq_size)
 
@@ -200,39 +182,43 @@ def find_nan_trick_params_by_infogain(hypotheses: SlidingWindowParams):
             inv_map = np.maximum(inv_map, 0)
             inv_map = np.minimum(inv_map, seq_size)
 
-            inv_maps.append(inv_map)
-
-        inv_maps, inv_maps_count = _count_unique_arrays(inv_maps)
+            key = inv_map.tobytes()
+            if key not in inv_maps_idx:
+                inv_maps_idx[key] = len(hyps_by_inv_map)
+                hyps_by_inv_map.append((inv_map, []))
+            hyps_by_inv_map[inv_maps_idx[key]][1].append(hypothesis)
 
         # TODO: sublinear algo
         for in_nan_idx in range(seq_size):
             # TODO: algo with nan ranges larger than 1
             in_nan_range = (in_nan_idx, in_nan_idx + 1)
-            outcomes = Counter()
-            for inv_map, inv_map_count in zip(inv_maps, inv_maps_count):
+
+            hyps_by_outcome = {}
+            for inv_map, hyp_group in hyps_by_inv_map:
                 out_nan_range = (
                     np.searchsorted(inv_map[:, 1], in_nan_range[0], side="right"),
                     np.searchsorted(inv_map[:, 0], in_nan_range[1], side="left"),
                 )
                 if out_nan_range[1] <= out_nan_range[0]:
                     out_nan_range = None
-                outcomes[len(inv_map), out_nan_range] += inv_map_count
+                hyps_by_outcome.setdefault((len(inv_map), out_nan_range), []).extend(hyp_group)
 
-                # TODO: empirical verification
+                # TODO: make optional
+                for hypothesis in hyp_group:
+                    success, reason = check_nan_trick(hypothesis, seq_size, len(inv_map), in_nan_range, out_nan_range)
+                    assert success, reason
 
-            infogain = math.log(len(hypotheses))
-            for outcome_count in outcomes.values():
-                infogain -= (outcome_count * math.log(outcome_count)) / len(hypotheses)
-
+            infogain = _get_infogain(map(len, hyps_by_outcome.values()))
             if infogain > best_infogain:
                 best_infogain = infogain
+                best_hyps_by_outcome = hyps_by_outcome
                 best_parameters = (seq_size, in_nan_range)
 
             # Break early if the solution is optimal
-            if len(outcomes) == len(hypotheses):
-                return best_parameters
+            if len(hyps_by_outcome) == len(hypotheses):
+                return best_parameters, best_hyps_by_outcome
 
-    return best_parameters
+    return best_parameters, best_hyps_by_outcome
 
 
 # TODO: allow transforms with multiple sequential inputs
@@ -262,7 +248,8 @@ def find_sliding_window_params_for_transform(
             in_nan_range = (seq_size // 2, seq_size // 2 + 1)
         else:
             # Once we have a couple of hypotheses, we'll use the parameters that yield the best information gain
-            seq_size, in_nan_range = find_nan_trick_params_by_infogain(sols)
+            # TODO: return hypotheses, validate that they correspond to the new solutions
+            (seq_size, in_nan_range), _ = find_nan_trick_params_by_infogain(sols)
             if seq_size is None:
                 # TODO: is this problematic at all for streaming? It seems equivalent sliding windows parameters would
                 # lead to the same parameters for the streaming implementation of the transform.
@@ -272,6 +259,14 @@ def find_sliding_window_params_for_transform(
                     f"ones first."
                 )
                 break
+
+        # seq_size, in_nan_range = [
+        #     (100, (50, 51)),
+        #     (46, (12, 13)),
+        #     (41, (13, 14)),
+        #     (26, (0, 1)),
+        #     (25, (0, 1)),
+        # ][step - 1]
 
         # TODO: integrate in parameter search space
         seq_size = max(min_in_seq_size, seq_size)

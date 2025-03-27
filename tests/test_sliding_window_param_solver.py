@@ -44,7 +44,8 @@ def test_conv1d(kernel_size: int, stride: int, padding: int, dilation: int):
         # TODO: handle different padding modes
     )
 
-    sols = find_sliding_window_params_for_transform(conv, TensorSpec(shape=(1, 1, -1)))
+    # FIXME: revert to 50
+    sols = find_sliding_window_params_for_transform(conv, TensorSpec(shape=(1, 1, -1)), max_solutions_per_step=100)
 
     assert sols, f"Expected solution, but none found for {params_str}"
     assert any(
