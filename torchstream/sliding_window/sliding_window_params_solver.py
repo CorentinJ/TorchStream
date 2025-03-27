@@ -5,7 +5,7 @@ from typing import Callable, Iterable, List, Tuple
 
 import numpy as np
 import torch
-from z3 import If, Int, Ints, Or, Solver, sat
+from z3 import If, Implies, Int, Ints, Or, Solver, sat
 
 from torchstream.sliding_window.nan_trick import check_nan_trick, get_nan_range, set_nan_range
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
@@ -59,10 +59,10 @@ class SlidingWindowParamsSolver:
         self.solver.add(0 <= self.p_r, self.p_r < self.k_i)
 
         # Number of sliding windows for constraints
+        # TODO?: remove
         self.cs = []
 
-    # TODO: name
-    def add_all(
+    def add_in_out_range_map(
         self,
         in_out_len: Tuple[int, int],
         in_out_ranges: Iterable[Tuple[Tuple[int, int], Tuple[int, int] | None]],
@@ -71,40 +71,36 @@ class SlidingWindowParamsSolver:
         TODO: doc
         """
         in_len, out_len = int(in_out_len[0]), int(in_out_len[1])
-        if in_len < 1 or out_len < 1:
-            raise ValueError("Input and output lengths must be strictly positive integers")
+        if in_len < 1:
+            raise ValueError("The input length must be a strictly positive integer")
+        if out_len < 0:
+            raise ValueError("The output length must be a non-negative integer")
 
         # Input to output size relation with the number of windows
-        c_idx = len(self.cs)
-        c = Int(f"c_{c_idx}")
+        constraint_idx = len(self.cs)
+        c = Int(f"c_{constraint_idx}")
         self.cs.append(c)
+        padded_in_len = self.p_l + in_len + self.p_r
         self.solver.add(
-            # We necessarily have at least one window (empty outputs are not allowed for this solver)
-            c > 0,
-            # Padding
-            c == (self.p_l + in_len + self.p_r - self.k_i) / self.s_i + 1,
-            out_len == (c - 1) * self.s_o + self.k_o,
+            c == If(padded_in_len >= self.k_i, (padded_in_len - self.k_i) / self.s_i + 1, 0),
+            out_len == If(c > 0, (c - 1) * self.s_o + self.k_o, 0),
         )
 
         for range_idx, (in_range, out_range) in enumerate(in_out_ranges):
             in_range = (int(in_range[0]), int(in_range[1]))
-            if in_range[0] < 0:
-                raise ValueError("Input ranges must be non-negative integers")
-            if in_range[1] <= in_range[0]:
-                raise ValueError("Input ranges must be non-empty")
+            if not (0 <= in_range[0] < in_range[1] <= in_len):
+                raise ValueError("Input ranges must be non-empty and contained within (0, in_len)")
 
             if out_range is not None:
                 out_range = (int(out_range[0]), int(out_range[1]))
-                if out_range[0] < 0:
-                    raise ValueError("Output ranges must be non-negative integers")
-                if out_range[1] <= out_range[0]:
-                    raise ValueError("Output ranges must be non-empty")
+                if not (0 <= out_range[0] < out_range[1] <= out_len):
+                    raise ValueError("Output ranges must be non-empty and contained within (0, out_len), or be None")
 
             if out_range:
                 # The start of both the input and the output range correspond to the same window. The same can be said
                 # for the end of the ranges.
                 # FIXME: notation difference: c above is the number of windows, cs and ce are window indices
-                crs, cre = Ints(f"c_{c_idx}_rs{range_idx} c_{c_idx}_re{range_idx}")
+                crs, cre = Ints(f"c_{constraint_idx}_rs{range_idx} c_{constraint_idx}_re{range_idx}")
                 self.solver.add(0 <= crs, crs <= cre, cre < c)
 
                 self.solver.add(out_range[0] == crs * self.s_o)
@@ -120,11 +116,11 @@ class SlidingWindowParamsSolver:
                     == If(self.p_l + in_range[1] > (c - 1) * self.s_i, c - 1, (self.p_l + in_range[1] - 1) / self.s_i)
                 )
             else:
-                # When there's no output, it necessarily means that the input range was dropped due to windows not
-                # lining up. Therefore, the input range is fully contained after the last window.
-                self.solver.add(self.p_l + in_range[0] >= self.k_i + self.s_i * (c - 1))
+                # When there's an output but no in->out range, it necessarily means that the input range was dropped
+                # due to windows not lining up. Therefore, the input range is fully contained after the last window.
+                self.solver.add(Implies(c > 0, self.p_l + in_range[0] >= self.k_i + self.s_i * (c - 1)))
 
-    def get_solutions(self, max_solutions: int = 10) -> List[SlidingWindowParams]:
+    def get_solutions(self, max_solutions: int = 50) -> List[SlidingWindowParams]:
         # TODO! doc
         # This context manager will contain the new constraints to the context; they won't be kept upon exiting the
         # context.
@@ -190,8 +186,7 @@ def _count_unique_arrays(
 
 def find_nan_trick_params_by_infogain(hypotheses: SlidingWindowParams):
     # TODO: doc
-    # TODO: handle cases where the input is too small?
-    min_seq_size = max(sol.get_min_input_size() for sol in hypotheses)
+    min_seq_size = min(sol.get_min_input_size() for sol in hypotheses)
     max_seq_size = min_seq_size + max(sol.kernel_size_in for sol in hypotheses)
 
     best_infogain = 0.0
@@ -255,11 +250,15 @@ def find_sliding_window_params_for_transform(
 
     step = 1
     sols = []
+    prev_nan_trick_params = set()
     while step == 1 or len(sols) > 1:
         # Determine an input size
         if not sols:
             # In the absence of any information, use sane defaults
-            seq_size = int(10 ** (math.log10(min_in_seq_size * max_in_seq_size) / 2))
+            if step > 3:
+                seq_size = max_in_seq_size
+            else:
+                seq_size = int(10 ** (math.log10(min_in_seq_size * max_in_seq_size) / 2))
             in_nan_range = (seq_size // 2, seq_size // 2 + 1)
         else:
             # Once we have a couple of hypotheses, we'll use the parameters that yield the best information gain
@@ -281,6 +280,9 @@ def find_sliding_window_params_for_transform(
 
         # TODO: nan range lims
 
+        assert (seq_size, in_nan_range) not in prev_nan_trick_params, "Internal error: nan trick parameters repeated"
+        prev_nan_trick_params.add((seq_size, in_nan_range))
+
         x = input_provider.get_tensor(seq_size)
         # TODO: move to TensorProvider?
         assert x.size(input_provider.dim) == seq_size
@@ -294,25 +296,26 @@ def find_sliding_window_params_for_transform(
         except RuntimeError as e:
             # We'll assume that RuntimeError are conv errors for a too small input size
             # TODO: more reliable mechanism
-            if min_in_seq_size == max_in_seq_size:
-                raise e
+            # TODO: handle errors due to nans
 
-            # FIXME: this is a bad approach. Small seq sizes remain useful
-            # NOTE: min_in_seq_size is not a constraint on the sliding window parameters
-            min_in_seq_size = int(10 ** (math.log10(min_in_seq_size) + 1))
-            min_in_seq_size = min(min_in_seq_size, max_in_seq_size)
+            if seq_size == max_in_seq_size:
+                raise e
+            min_in_seq_size = seq_size + 1
+
             # TODO: better message
             logger.info(
                 f"Transform failed with input size {seq_size}. Increasing min sequence size to {min_in_seq_size}"
             )
-            continue
+
+            # TODO: this is a hack
+            y = torch.zeros(1, 1, 0)
 
         # FIXME: dim
         out_nan_range = get_nan_range(y, dim=-1)
         logger.info(f"Got a {tuple(y.shape)} shaped output with nans at {out_nan_range}")
 
         # TODO: change signature
-        solver.add_all((seq_size, y.size(-1)), [(in_nan_range, out_nan_range)])
+        solver.add_in_out_range_map((seq_size, y.size(-1)), [(in_nan_range, out_nan_range)])
         sols = solver.get_solutions(max_solutions=max_solutions_per_step)
 
         # Nan trick verification (TODO: remove/make optional)
