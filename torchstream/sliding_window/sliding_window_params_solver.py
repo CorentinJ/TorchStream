@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from z3 import And, If, Implies, Int, Ints, Not, Or, Solver, sat
 
-from torchstream.sliding_window.nan_trick import check_nan_trick, run_nan_trick
+from torchstream.sliding_window.nan_trick import run_nan_trick
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.tensor_provider import TensorProvider
 
@@ -119,10 +119,26 @@ class SlidingWindowParamsSolver:
                 # due to windows not lining up. Therefore, the input range is fully contained after the last window.
                 self.solver.add(Implies(c > 0, self.p_l + in_range[0] >= self.k_i + self.s_i * (c - 1)))
 
+    def is_compatible(self, solution: SlidingWindowParams) -> bool:
+        with self.solver as temp_solver:
+            temp_solver.add(
+                self.k_i == solution.kernel_size_in,
+                self.s_i == solution.stride_in,
+                self.p_l == solution.left_pad,
+                self.p_r == solution.right_pad,
+                self.k_o == solution.kernel_size_out,
+                self.s_o == solution.stride_out,
+            )
+            return temp_solver.check() == sat
+
     def get_solutions(
-        self, known_solutions: List[SlidingWindowParams] | None = None, max_solutions: int = 50
+        self, known_solutions: List[SlidingWindowParams] | None = None, max_solutions: int = 100
     ) -> List[SlidingWindowParams]:
         # TODO! doc
+        # TODO! a small gain in performance is possible by only iterating on solutions never computed before, and
+        # letting the caller handle manage bookkeeping of successful previous solutions. But that require a change
+        # in the API and it's not an obvious approach.
+
         # This context manager will contain the new constraints to the context; they won't be kept upon exiting the
         # context.
         with self.solver as temp_solver:
@@ -139,13 +155,6 @@ class SlidingWindowParamsSolver:
                     self.s_o == known_sol.stride_out,
                 )
 
-                with temp_solver as known_sol_checker:
-                    known_sol_checker.add(known_sol_constraint)
-                    if known_sol_checker.check() != sat:
-                        raise ValueError(
-                            f"The solution {known_sol} given as a known solution does not satisfy the constraints"
-                        )
-
                 # Exclude that solution from the new solutions
                 temp_solver.add(Not(known_sol_constraint))
 
@@ -161,7 +170,6 @@ class SlidingWindowParamsSolver:
                     kernel_size_out=model[self.k_o].as_long(),
                     stride_out=model[self.s_o].as_long(),
                 )
-                assert params not in solutions
                 solutions.append(params)
 
                 temp_solver.add(
@@ -188,8 +196,9 @@ def _get_infogain(category_counts: Iterable[int]) -> float:
 
 def find_nan_trick_params_by_infogain(hypotheses: List[SlidingWindowParams]):
     # TODO: doc
+    # TODO: are better bounds possible?
     min_seq_size = min(sol.get_min_input_size() for sol in hypotheses)
-    max_seq_size = min_seq_size + max(sol.kernel_size_in for sol in hypotheses)
+    max_seq_size = max(sol.get_min_input_size() + sol.kernel_size_in for sol in hypotheses)
 
     best_infogain = 0.0
     best_hyps_by_outcome = None
@@ -226,10 +235,10 @@ def find_nan_trick_params_by_infogain(hypotheses: List[SlidingWindowParams]):
                     out_nan_range = None
                 hyps_by_outcome.setdefault((len(inv_map), out_nan_range), []).extend(hyp_group)
 
-                # TODO: make optional
-                for hypothesis in hyp_group:
-                    success, reason = check_nan_trick(hypothesis, seq_size, len(inv_map), in_nan_range, out_nan_range)
-                    assert success, reason
+                # # FIXME: what to do of this check? It's too slow
+                # for hypothesis in hyp_group:
+                #     success, reason = check_nan_trick(hypothesis, seq_size, len(inv_map), in_nan_range, out_nan_range)
+                #     assert success, reason
 
             infogain = _get_infogain(map(len, hyps_by_outcome.values()))
             if infogain > best_infogain:
@@ -254,7 +263,7 @@ def find_sliding_window_params_for_transform(
     input_provider: TensorProvider,
     min_in_seq_size: int = 1,
     max_in_seq_size: int = 10_000,
-    max_solutions_per_step: int = 50,
+    max_solutions_per_step: int = 100,
 ) -> List[SlidingWindowParams]:
     solver = SlidingWindowParamsSolver()
 
@@ -284,18 +293,11 @@ def find_sliding_window_params_for_transform(
                 )
                 break
 
-        # seq_size, in_nan_range = [
-        #     (100, (50, 51)),
-        #     (46, (12, 13)),
-        #     (41, (13, 14)),
-        #     (26, (0, 1)),
-        #     (25, (0, 1)),
-        # ][step - 1]
-
-        # TODO: integrate in parameter search space
-        seq_size = max(min_in_seq_size, seq_size)
-        if max_in_seq_size:
-            seq_size = min(seq_size, max_in_seq_size)
+        # # FIXME: integrate in parameter search space
+        # seq_size = max(min_in_seq_size, seq_size)
+        # if max_in_seq_size:
+        #     seq_size = min(seq_size, max_in_seq_size)
+        assert min_in_seq_size <= seq_size <= max_in_seq_size, "Internal error: invalid sequence size"
 
         assert (seq_size, in_nan_range) not in prev_nan_trick_params, "Internal error: nan trick parameters repeated"
         prev_nan_trick_params.add((seq_size, in_nan_range))
@@ -318,6 +320,8 @@ def find_sliding_window_params_for_transform(
 
         # Get new hypotheses, keeping the previous ones that are compatible with the new results
         compatible_prev_hypotheses = hyps_by_outcome.pop((out_size, out_nan_range), []) if hyps_by_outcome else []
+        if hypotheses:
+            logger.info(f"{len(hypotheses) - len(compatible_prev_hypotheses)}/{len(hypotheses)} hypotheses eliminated")
         hypotheses = solver.get_solutions(compatible_prev_hypotheses, max_solutions=max_solutions_per_step)
 
         # Also verify that the hypotheses that have been eliminated are not in the solver's output
@@ -327,10 +331,6 @@ def find_sliding_window_params_for_transform(
                 "Internal error: some hypotheses that have been eliminated were found in the solver's output"
             )
 
-        # Nan trick verification (TODO: remove/make optional)
-        for params in hypotheses:
-            success, reason = check_nan_trick(params, seq_size, out_size, in_nan_range, out_nan_range)
-            assert success, f"Internal error: nan trick verification failed: {reason}"
         logger.info(
             f"Step {step}: got {len(hypotheses)} hypotheses"
             + (f" (max is {max_solutions_per_step})" if len(hypotheses) == max_solutions_per_step else "")
