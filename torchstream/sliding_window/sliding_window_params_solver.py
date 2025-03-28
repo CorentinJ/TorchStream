@@ -194,25 +194,34 @@ def _get_infogain(category_counts: Iterable[int]) -> float:
     return infogain
 
 
-def find_nan_trick_params_by_infogain(hypotheses: List[SlidingWindowParams]):
+def find_nan_trick_params_by_infogain(
+    hypotheses: List[SlidingWindowParams], min_in_seq_size: int = 1, max_in_seq_size: int | None = None
+) -> Tuple[int, Tuple[int, int], dict]:
     # TODO: doc
+    max_in_seq_size = max_in_seq_size or int(1e100)
+    if min_in_seq_size < 1:
+        raise ValueError("The minimum sequence size must be a strictly positive integer")
+    if max_in_seq_size < min_in_seq_size:
+        raise ValueError("The maximum sequence size must be None or greater than the minimum sequence size")
+
+    # Take a subset of the sequence size space
     # TODO: are better bounds possible?
-    min_seq_size = min(sol.get_min_input_size() for sol in hypotheses)
-    max_seq_size = max(sol.get_min_input_size() + sol.kernel_size_in for sol in hypotheses)
+    min_in_seq_size = max(min(sol.get_min_input_size() for sol in hypotheses), min_in_seq_size)
+    max_in_seq_size = min(max(sol.get_min_input_size() + sol.kernel_size_in for sol in hypotheses), max_in_seq_size)
 
     best_infogain = 0.0
     best_hyps_by_outcome = None
     best_parameters = (None, None)
-    for seq_size in range(min_seq_size, max_seq_size + 1):
+    for in_seq_size in range(min_in_seq_size, max_in_seq_size + 1):
         # Group hypotheses by their inverse map
         inv_maps_idx = {}
         hyps_by_inv_map = []
         for hypothesis in hypotheses:
-            inv_map = hypothesis.get_inverse_map(seq_size)
+            inv_map = hypothesis.get_inverse_map(in_seq_size)
 
             # FIXME
             inv_map = np.maximum(inv_map, 0)
-            inv_map = np.minimum(inv_map, seq_size)
+            inv_map = np.minimum(inv_map, in_seq_size)
 
             key = inv_map.tobytes()
             if key not in inv_maps_idx:
@@ -221,7 +230,7 @@ def find_nan_trick_params_by_infogain(hypotheses: List[SlidingWindowParams]):
             hyps_by_inv_map[inv_maps_idx[key]][1].append(hypothesis)
 
         # TODO: sublinear algo
-        for in_nan_idx in range(seq_size):
+        for in_nan_idx in range(in_seq_size):
             # TODO: algo with nan ranges larger than 1
             in_nan_range = (in_nan_idx, in_nan_idx + 1)
 
@@ -235,22 +244,17 @@ def find_nan_trick_params_by_infogain(hypotheses: List[SlidingWindowParams]):
                     out_nan_range = None
                 hyps_by_outcome.setdefault((len(inv_map), out_nan_range), []).extend(hyp_group)
 
-                # # FIXME: what to do of this check? It's too slow
-                # for hypothesis in hyp_group:
-                #     success, reason = check_nan_trick(hypothesis, seq_size, len(inv_map), in_nan_range, out_nan_range)
-                #     assert success, reason
-
             infogain = _get_infogain(map(len, hyps_by_outcome.values()))
             if infogain > best_infogain:
                 best_infogain = infogain
                 best_hyps_by_outcome = hyps_by_outcome
-                best_parameters = (seq_size, in_nan_range)
+                best_parameters = (in_seq_size, in_nan_range)
 
             # Break early if the solution is optimal
             if len(hyps_by_outcome) == len(hypotheses):
-                return best_parameters, best_hyps_by_outcome
+                return *best_parameters, best_hyps_by_outcome
 
-    return best_parameters, best_hyps_by_outcome
+    return *best_parameters, best_hyps_by_outcome
 
 
 # TODO: allow transforms with multiple sequential inputs
@@ -271,7 +275,7 @@ def find_sliding_window_params_for_transform(
     hypotheses = []
     prev_nan_trick_params = set()
     while step == 1 or len(hypotheses) > 1:
-        # Determine an input size
+        # Determine an input size and an input nan range
         if not hypotheses:
             # In the absence of any information, use sane defaults
             if step > 3:
@@ -282,7 +286,9 @@ def find_sliding_window_params_for_transform(
             hyps_by_outcome = None
         else:
             # Once we have a couple of hypotheses, we'll use the parameters that yield the best information gain
-            (seq_size, in_nan_range), hyps_by_outcome = find_nan_trick_params_by_infogain(hypotheses)
+            seq_size, in_nan_range, hyps_by_outcome = find_nan_trick_params_by_infogain(
+                hypotheses, min_in_seq_size, max_in_seq_size
+            )
             if seq_size is None:
                 # TODO: is this problematic at all for streaming? It seems equivalent sliding windows parameters would
                 # lead to the same parameters for the streaming implementation of the transform.
@@ -292,12 +298,6 @@ def find_sliding_window_params_for_transform(
                     f"ones first."
                 )
                 break
-
-        # # FIXME: integrate in parameter search space
-        # seq_size = max(min_in_seq_size, seq_size)
-        # if max_in_seq_size:
-        #     seq_size = min(seq_size, max_in_seq_size)
-        assert min_in_seq_size <= seq_size <= max_in_seq_size, "Internal error: invalid sequence size"
 
         assert (seq_size, in_nan_range) not in prev_nan_trick_params, "Internal error: nan trick parameters repeated"
         prev_nan_trick_params.add((seq_size, in_nan_range))
