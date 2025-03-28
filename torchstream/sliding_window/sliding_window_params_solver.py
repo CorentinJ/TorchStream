@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from z3 import If, Implies, Int, Ints, Or, Solver, sat
 
-from torchstream.sliding_window.nan_trick import check_nan_trick, get_nan_range, set_nan_range
+from torchstream.sliding_window.nan_trick import check_nan_trick, run_nan_trick
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.tensor_provider import TensorProvider
 
@@ -235,26 +235,26 @@ def find_sliding_window_params_for_transform(
     solver = SlidingWindowParamsSolver()
 
     step = 1
-    sols = []
+    hypotheses = []
     prev_nan_trick_params = set()
-    while step == 1 or len(sols) > 1:
+    while step == 1 or len(hypotheses) > 1:
         # Determine an input size
-        if not sols:
+        if not hypotheses:
             # In the absence of any information, use sane defaults
             if step > 3:
                 seq_size = max_in_seq_size
             else:
                 seq_size = int(10 ** (math.log10(min_in_seq_size * max_in_seq_size) / 2))
             in_nan_range = (seq_size // 2, seq_size // 2 + 1)
+            hyps_by_outcome = None
         else:
             # Once we have a couple of hypotheses, we'll use the parameters that yield the best information gain
-            # TODO: return hypotheses, validate that they correspond to the new solutions
-            (seq_size, in_nan_range), _ = find_nan_trick_params_by_infogain(sols)
+            (seq_size, in_nan_range), hyps_by_outcome = find_nan_trick_params_by_infogain(hypotheses)
             if seq_size is None:
                 # TODO: is this problematic at all for streaming? It seems equivalent sliding windows parameters would
                 # lead to the same parameters for the streaming implementation of the transform.
                 logger.info(
-                    f"Got {len(sols)} sliding window parameters that are consistent with the transform, but they "
+                    f"Got {len(hypotheses)} sliding window parameters that are consistent with the transform, but they "
                     f"cannot be discriminated further. All possible parameters will be returned, with the most likely "
                     f"ones first."
                 )
@@ -273,53 +273,32 @@ def find_sliding_window_params_for_transform(
         if max_in_seq_size:
             seq_size = min(seq_size, max_in_seq_size)
 
-        # TODO: nan range lims
-
         assert (seq_size, in_nan_range) not in prev_nan_trick_params, "Internal error: nan trick parameters repeated"
         prev_nan_trick_params.add((seq_size, in_nan_range))
 
-        x = input_provider.get_tensor(seq_size)
-        # TODO: move to TensorProvider?
-        assert x.size(input_provider.dim) == seq_size
+        # Perform the nan trick on the actual transform
+        out_size, out_nan_range = run_nan_trick(trsfm, input_provider, seq_size, in_nan_range)
 
-        set_nan_range(x, in_nan_range, dim=input_provider.dim)
-
-        logger.info(f"Running transform with input size {seq_size} and nans at {in_nan_range}")
-        try:
-            # FIXME: output format
-            y = trsfm(x)
-        except RuntimeError as e:
-            # We'll assume that RuntimeError are conv errors for a too small input size
-            # TODO: more reliable mechanism
-            # TODO: handle errors due to nans
-
+        if out_size == 0:
+            # TODO: better messages
             if seq_size == max_in_seq_size:
-                raise e
+                raise RuntimeError()
             min_in_seq_size = seq_size + 1
-
-            # TODO: better message
             logger.info(
                 f"Transform failed with input size {seq_size}. Increasing min sequence size to {min_in_seq_size}"
             )
 
-            # TODO: this is a hack
-            y = torch.zeros(1, 1, 0)
-
-        # FIXME: dim
-        out_nan_range = get_nan_range(y, dim=-1)
-        logger.info(f"Got a {tuple(y.shape)} shaped output with nans at {out_nan_range}")
-
         # TODO: change signature
-        solver.add_in_out_range_map((seq_size, y.size(-1)), [(in_nan_range, out_nan_range)])
-        sols = solver.get_solutions(max_solutions=max_solutions_per_step)
+        solver.add_in_out_range_map((seq_size, out_size), [(in_nan_range, out_nan_range)])
+        hypotheses = solver.get_solutions(max_solutions=max_solutions_per_step)
 
         # Nan trick verification (TODO: remove/make optional)
-        for params in sols:
-            success, reason = check_nan_trick(params, seq_size, y.size(-1), in_nan_range, out_nan_range)
+        for params in hypotheses:
+            success, reason = check_nan_trick(params, seq_size, out_size, in_nan_range, out_nan_range)
             assert success, f"Internal error: nan trick verification failed: {reason}"
         logger.info(
-            f"Step {step}: got {len(sols)} solutions"
-            + (f" (max is {max_solutions_per_step})" if len(sols) == max_solutions_per_step else "")
+            f"Step {step}: got {len(hypotheses)} hypotheses"
+            + (f" (max is {max_solutions_per_step})" if len(hypotheses) == max_solutions_per_step else "")
         )
 
         step += 1
@@ -335,6 +314,6 @@ def find_sliding_window_params_for_transform(
             return 1
         return 0
 
-    sols = sorted(sols, key=sliding_window_params_simplicity_score, reverse=True)
+    hypotheses = sorted(hypotheses, key=sliding_window_params_simplicity_score, reverse=True)
 
-    return sols
+    return hypotheses

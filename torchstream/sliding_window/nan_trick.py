@@ -1,10 +1,14 @@
-from typing import Tuple, Union
+import logging
+from typing import Callable, Tuple, Union
 
 import numpy as np
 import torch
 
 from torchstream.sliding_window.dummy_sliding_window_transform import DummySlidingWindowTransform
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+from torchstream.tensor_provider import TensorProvider
+
+logger = logging.getLogger(__name__)
 
 
 def set_nan_range(
@@ -35,6 +39,43 @@ def get_nan_range(x: Union[torch.Tensor, np.ndarray], dim: int = -1) -> Tuple[in
     if not len(corrupted_idx):
         return None
     return corrupted_idx[0], corrupted_idx[-1] + 1
+
+
+def run_nan_trick(
+    trsfm: Callable,
+    # TODO: more convenient signature
+    input_provider: TensorProvider,
+    in_seq_size: int,
+    in_nan_range: Tuple[int, int],
+) -> Tuple[int, Tuple[int, int] | None]:
+    if in_seq_size < 1:
+        raise ValueError(f"Input sequence size must be greater than 0, got {in_seq_size}")
+    if not (0 <= in_nan_range[0] < in_nan_range[1] <= in_seq_size):
+        raise ValueError(f"Nan range must be positive and within the input sequence size, got {in_nan_range}")
+
+    x = input_provider.get_tensor(in_seq_size)
+    # TODO: move to TensorProvider
+    assert x.size(input_provider.dim) == in_seq_size
+
+    set_nan_range(x, in_nan_range, dim=input_provider.dim)
+
+    logger.debug(f"Running transform with input size {in_seq_size} and nans at {in_nan_range}")
+    try:
+        # FIXME: output format
+        y = trsfm(x)
+    except RuntimeError:
+        # We'll assume that RuntimeError are conv errors for a too small input size
+        # TODO: more reliable mechanism
+        # TODO: handle errors due to nans
+
+        return 0, None
+
+    # FIXME: dim
+    out_size = y.size(-1)
+    out_nan_range = get_nan_range(y, dim=-1)
+    logger.debug(f"Got a {tuple(y.shape)} shaped output with nans at {out_nan_range}")
+
+    return out_size, out_nan_range
 
 
 def check_nan_trick(
