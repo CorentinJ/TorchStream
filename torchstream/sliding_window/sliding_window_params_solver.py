@@ -4,7 +4,7 @@ from typing import Callable, Iterable, List, Tuple
 
 import numpy as np
 import torch
-from z3 import If, Implies, Int, Ints, Or, Solver, sat
+from z3 import And, If, Implies, Int, Ints, Not, Or, Solver, sat
 
 from torchstream.sliding_window.nan_trick import check_nan_trick, run_nan_trick
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
@@ -119,13 +119,38 @@ class SlidingWindowParamsSolver:
                 # due to windows not lining up. Therefore, the input range is fully contained after the last window.
                 self.solver.add(Implies(c > 0, self.p_l + in_range[0] >= self.k_i + self.s_i * (c - 1)))
 
-    def get_solutions(self, max_solutions: int = 50) -> List[SlidingWindowParams]:
+    def get_solutions(
+        self, known_solutions: List[SlidingWindowParams] | None = None, max_solutions: int = 50
+    ) -> List[SlidingWindowParams]:
         # TODO! doc
         # This context manager will contain the new constraints to the context; they won't be kept upon exiting the
         # context.
         with self.solver as temp_solver:
-            solutions = []
-            while temp_solver.check() == sat:
+            solutions = list(known_solutions or [])
+
+            # Verify that the known solutions provided by the caller satisfy the constraints
+            for known_sol in solutions:
+                known_sol_constraint = And(
+                    self.k_i == known_sol.kernel_size_in,
+                    self.s_i == known_sol.stride_in,
+                    self.p_l == known_sol.left_pad,
+                    self.p_r == known_sol.right_pad,
+                    self.k_o == known_sol.kernel_size_out,
+                    self.s_o == known_sol.stride_out,
+                )
+
+                with temp_solver as known_sol_checker:
+                    known_sol_checker.add(known_sol_constraint)
+                    if known_sol_checker.check() != sat:
+                        raise ValueError(
+                            f"The solution {known_sol} given as a known solution does not satisfy the constraints"
+                        )
+
+                # Exclude that solution from the new solutions
+                temp_solver.add(Not(known_sol_constraint))
+
+            # Find new solutions
+            while len(solutions) < max_solutions and temp_solver.check() == sat:
                 model = temp_solver.model()
 
                 params = SlidingWindowParams(
@@ -136,6 +161,7 @@ class SlidingWindowParamsSolver:
                     kernel_size_out=model[self.k_o].as_long(),
                     stride_out=model[self.s_o].as_long(),
                 )
+                assert params not in solutions
                 solutions.append(params)
 
                 temp_solver.add(
@@ -148,9 +174,6 @@ class SlidingWindowParamsSolver:
                         self.s_o != model[self.s_o],
                     )
                 )
-
-                if len(solutions) >= max_solutions:
-                    break
 
         return solutions
 
@@ -224,6 +247,7 @@ def find_nan_trick_params_by_infogain(hypotheses: List[SlidingWindowParams]):
 # TODO: allow transforms with multiple sequential inputs
 #   -> Or simply call the function multiple times? unsure
 # TODO: handle the case where a model always yields an output even if the input is too small?
+# TODO: either add a couple of verification rounds, either handle the verification through a stream
 @torch.no_grad()
 def find_sliding_window_params_for_transform(
     trsfm: Callable,
@@ -288,9 +312,20 @@ def find_sliding_window_params_for_transform(
                 f"Transform failed with input size {seq_size}. Increasing min sequence size to {min_in_seq_size}"
             )
 
+        # Provide the nan trick results to the solver
         # TODO: change signature
         solver.add_in_out_range_map((seq_size, out_size), [(in_nan_range, out_nan_range)])
-        hypotheses = solver.get_solutions(max_solutions=max_solutions_per_step)
+
+        # Get new hypotheses, keeping the previous ones that are compatible with the new results
+        compatible_prev_hypotheses = hyps_by_outcome.pop((out_size, out_nan_range), []) if hyps_by_outcome else []
+        hypotheses = solver.get_solutions(compatible_prev_hypotheses, max_solutions=max_solutions_per_step)
+
+        # Also verify that the hypotheses that have been eliminated are not in the solver's output
+        if hyps_by_outcome:
+            eliminated_hyps = [hyp for hyps in hyps_by_outcome.values() for hyp in hyps]
+            assert all(hyp not in hypotheses for hyp in eliminated_hyps), (
+                "Internal error: some hypotheses that have been eliminated were found in the solver's output"
+            )
 
         # Nan trick verification (TODO: remove/make optional)
         for params in hypotheses:

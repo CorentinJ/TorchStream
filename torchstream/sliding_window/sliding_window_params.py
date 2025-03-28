@@ -4,7 +4,7 @@ from typing import Tuple
 import numpy as np
 
 
-@dataclass
+@dataclass(frozen=True)
 class SlidingWindowParams:
     """
     This class represents the parameters of a sliding window transform (e.g. a convolution, a moving average, ...).
