@@ -195,7 +195,10 @@ def _get_infogain(category_counts: Iterable[int]) -> float:
 
 
 def find_nan_trick_params_by_infogain(
-    hypotheses: List[SlidingWindowParams], min_in_seq_size: int = 1, max_in_seq_size: int | None = None
+    hypotheses: List[SlidingWindowParams],
+    min_in_seq_size: int = 1,
+    max_in_seq_size: int | None = None,
+    in_nan_size: int = 1,
 ) -> Tuple[int, Tuple[int, int], dict]:
     # TODO: doc
     max_in_seq_size = max_in_seq_size or int(1e100)
@@ -206,8 +209,8 @@ def find_nan_trick_params_by_infogain(
 
     # Take a subset of the sequence size space
     # TODO: are better bounds possible?
-    min_in_seq_size = max(min(sol.get_min_input_size() for sol in hypotheses), min_in_seq_size)
-    max_in_seq_size = min(max(sol.get_min_input_size() + sol.kernel_size_in for sol in hypotheses), max_in_seq_size)
+    min_in_seq_size = max(min(sol.get_min_input_size() for sol in hypotheses), min_in_seq_size, in_nan_size)
+    max_in_seq_size = min(min_in_seq_size + max(sol.kernel_size_in for sol in hypotheses), max_in_seq_size)
 
     best_infogain = 0.0
     best_hyps_by_outcome = None
@@ -230,9 +233,9 @@ def find_nan_trick_params_by_infogain(
             hyps_by_inv_map[inv_maps_idx[key]][1].append(hypothesis)
 
         # TODO: sublinear algo
-        for in_nan_idx in range(in_seq_size):
-            # TODO: algo with nan ranges larger than 1
-            in_nan_range = (in_nan_idx, in_nan_idx + 1)
+        for in_nan_idx in range(in_seq_size - in_nan_size + 1):
+            # TODO: algo with varying nan ranges?
+            in_nan_range = (in_nan_idx, in_nan_idx + in_nan_size)
 
             hyps_by_outcome = {}
             for inv_map, hyp_group in hyps_by_inv_map:
@@ -267,10 +270,33 @@ def find_sliding_window_params_for_transform(
     input_provider: TensorProvider,
     min_in_seq_size: int = 1,
     max_in_seq_size: int = 10_000,
-    max_solutions_per_step: int = 100,
+    max_hypotheses_per_step: int = 100,
+    max_in_kernel_gap: int = 10,
 ) -> List[SlidingWindowParams]:
+    """
+    Given a sequence-to-sequence transform over tensors (neural net, single layer, time series analysis function, ...),
+    this function will empirically determine sliding window parameters that correspond to the transform. That is, if
+    the transform can be decomposed into a sliding window and a kernel applied to each window. This allows for
+    deriving metrics for the transform (time to first output, latency, context size, chunk size needed for
+    streaming, ...) as well as making the transform trivially streamable without approximations.
+
+    This is only possible if the transform can be assimilated to a sliding window operation TODO: describe properties
+    of this operation
+
+    :param max_hypotheses_per_step: the solver finds up to this amount of sliding windows parameters compatible with
+    observations made over the execution of this function. Increasing this value will decrease the number of executions
+    of the transforms, but increase the execution time of the solver. If necessary, tune it according to your model's
+    performances.
+    :param max_in_kernel_gap: some kernels do not use all the elements of the window to compute their output. For
+    instance, dilated convolutions (à trous) have wide kernels but skip some elements of their inputs. This breaks
+    assumptions made by the solver, unless the largest possible such gap in the kernel is known in advance. If you
+    suspect your model has such gaps, set this parameter to a safe higher bound. For reference, a kernel of size 5
+    that returns the sum of the first and last element of the window has a gap of 3. A convolution with dilation
+    greater than 1 has gaps of size <dilation - 1>.
+    """
     solver = SlidingWindowParamsSolver()
 
+    in_nan_size = max(max_in_kernel_gap, 1)
     step = 1
     hypotheses = []
     prev_nan_trick_params = set()
@@ -281,13 +307,19 @@ def find_sliding_window_params_for_transform(
             if step > 3:
                 seq_size = max_in_seq_size
             else:
-                seq_size = int(10 ** (math.log10(min_in_seq_size * max_in_seq_size) / 2))
-            in_nan_range = (seq_size // 2, seq_size // 2 + 1)
+                min_in_seq_size_i = max(min_in_seq_size, in_nan_size)
+                seq_size = int(10 ** (math.log10(min_in_seq_size_i * max_in_seq_size) / 2))
+            in_nan_range = (seq_size // 2 - in_nan_size // 2, seq_size // 2 + (in_nan_size + 1) // 2)
             hyps_by_outcome = None
         else:
-            # Once we have a couple of hypotheses, we'll use the parameters that yield the best information gain
+            # Once we have a couple of hypotheses, we'll determine our nan trick parameters based on them
+            # We might be able to reduce the nan range size if the hypotheses are all compatible with a smaller one
+            if len(hypotheses) < max_hypotheses_per_step:
+                in_nan_size = np.clip(max(hyp.kernel_size_in for hyp in hypotheses) - 1, 1, max_in_kernel_gap)
+
+            # Get the nan trick parameters that will be the most discriminative of the hypotheses
             seq_size, in_nan_range, hyps_by_outcome = find_nan_trick_params_by_infogain(
-                hypotheses, min_in_seq_size, max_in_seq_size
+                hypotheses, min_in_seq_size, max_in_seq_size, in_nan_size
             )
             if seq_size is None:
                 # TODO: is this problematic at all for streaming? It seems equivalent sliding windows parameters would
@@ -322,7 +354,7 @@ def find_sliding_window_params_for_transform(
         compatible_prev_hypotheses = hyps_by_outcome.pop((out_size, out_nan_range), []) if hyps_by_outcome else []
         if hypotheses:
             logger.info(f"{len(hypotheses) - len(compatible_prev_hypotheses)}/{len(hypotheses)} hypotheses eliminated")
-        hypotheses = solver.get_solutions(compatible_prev_hypotheses, max_solutions=max_solutions_per_step)
+        hypotheses = solver.get_solutions(compatible_prev_hypotheses, max_solutions=max_hypotheses_per_step)
 
         # Also verify that the hypotheses that have been eliminated are not in the solver's output
         if hyps_by_outcome:
@@ -333,7 +365,7 @@ def find_sliding_window_params_for_transform(
 
         logger.info(
             f"Step {step}: got {len(hypotheses)} hypotheses"
-            + (f" (max is {max_solutions_per_step})" if len(hypotheses) == max_solutions_per_step else "")
+            + (f" (max is {max_hypotheses_per_step})" if len(hypotheses) == max_hypotheses_per_step else "")
         )
 
         step += 1

@@ -17,11 +17,12 @@ def my_transform(x):
 
 # kernel_size = 17, stride = 1, padding = 0, dilation = 1
 # kernel_size = 5, stride = 1, padding = 0, dilation = 1
+#  k=2, s=1, p=1, d=2
 # 1 0 3 3
 @pytest.mark.parametrize("kernel_size", [1, 2, 3, 4, 5, 10, 17])
 @pytest.mark.parametrize("stride", [1, 2, 3, 4, 5, 10, 17])
 @pytest.mark.parametrize("padding", [0, 1, 2, 3, 4])
-@pytest.mark.parametrize("dilation", [1])  # TODO: , 2, 3])
+@pytest.mark.parametrize("dilation", [1, 2, 3])
 # @pytest.mark.timeout(5)
 def test_conv1d(kernel_size: int, stride: int, padding: int, dilation: int):
     kernel_span = (kernel_size - 1) * dilation + 1
