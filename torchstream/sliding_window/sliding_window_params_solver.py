@@ -364,7 +364,7 @@ def find_sliding_window_params_for_transform(
             )
 
         logger.info(
-            f"Step {step}: got {len(hypotheses)} hypotheses"
+            f"Step {step}: got {len(hypotheses)} hypothes{'es' if len(hypotheses) > 1 else 'is'} "
             + (f" (max is {max_hypotheses_per_step})" if len(hypotheses) == max_hypotheses_per_step else "")
         )
 
