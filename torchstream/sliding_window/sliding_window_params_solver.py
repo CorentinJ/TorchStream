@@ -232,6 +232,9 @@ def find_nan_trick_params_by_infogain(
                 hyps_by_inv_map.append((inv_map, []))
             hyps_by_inv_map[inv_maps_idx[key]][1].append(hypothesis)
 
+        if len(hyps_by_inv_map) == 1:
+            continue
+
         # TODO: sublinear algo
         for in_nan_idx in range(in_seq_size - in_nan_size + 1):
             # TODO: algo with varying nan ranges?
@@ -308,7 +311,7 @@ def find_sliding_window_params_for_transform(
                 seq_size = max_in_seq_size
             else:
                 min_in_seq_size_i = max(min_in_seq_size, in_nan_size)
-                seq_size = int(10 ** (math.log10(min_in_seq_size_i * max_in_seq_size) / 2))
+                seq_size = min(5 * min_in_seq_size_i, max_in_seq_size)
             in_nan_range = (seq_size // 2 - in_nan_size // 2, seq_size // 2 + (in_nan_size + 1) // 2)
             hyps_by_outcome = None
         else:
