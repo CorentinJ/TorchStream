@@ -63,10 +63,12 @@ def run_nan_trick(
     try:
         # FIXME: output format
         y = trsfm(x)
-    except RuntimeError:
+    except RuntimeError as e:
         # We'll assume that RuntimeError are conv errors for a too small input size
         # TODO: more reliable mechanism
         # TODO: handle errors due to nans
+
+        logger.info(f"Transformed failed with {repr(e)}")
 
         return 0, None
 
