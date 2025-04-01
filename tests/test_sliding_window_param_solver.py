@@ -1,5 +1,6 @@
 from typing import Tuple
 
+import numpy as np
 import pytest
 import torch
 from torch import nn
@@ -81,3 +82,11 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, dilation: int):
         sol.kernel_size_out == kernel_span and sol.stride_out == stride and sol.left_pad == sol.right_pad == 0
         for sol in sols
     ), f"Expected solution with {params_str}, but none found in {sols}"
+
+
+def test_infinite_receptive_field():
+    def transform(x: np.ndarray):
+        return np.full_like(x, fill_value=np.mean(x))
+
+    sols = find_sliding_window_params_for_transform(transform, TensorSpec(shape=(-1,), dtype=np.float32))
+    assert not sols

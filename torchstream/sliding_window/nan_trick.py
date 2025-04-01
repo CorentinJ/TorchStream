@@ -55,7 +55,7 @@ def run_nan_trick(
 
     x = input_provider.get_tensor(in_seq_size)
     # TODO: move to TensorProvider
-    assert x.size(input_provider.dim) == in_seq_size
+    assert x.shape[input_provider.dim] == in_seq_size
 
     set_nan_range(x, in_nan_range, dim=input_provider.dim)
 
@@ -73,7 +73,7 @@ def run_nan_trick(
         return 0, None
 
     # FIXME: dim
-    out_size = y.size(-1)
+    out_size = y.shape[-1]
     out_nan_range = get_nan_range(y, dim=-1)
     logger.debug(f"Got a {tuple(y.shape)} shaped output with nans at {out_nan_range}")
 

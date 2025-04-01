@@ -299,19 +299,19 @@ def find_sliding_window_params_for_transform(
     """
     solver = SlidingWindowParamsSolver()
 
+    # Until we have well-formed pairs of input/output examples from the transform, we'll determine the input
+    # parameters based on heuristics.
     in_nan_size = max(max_in_kernel_gap, 1)
+    default_seq_size = min(5 * max(min_in_seq_size, in_nan_size), max_in_seq_size)
+
     step = 1
     hypotheses = []
     prev_nan_trick_params = set()
-    while step == 1 or len(hypotheses) > 1:
+    while len(hypotheses) != 1:
         # Determine an input size and an input nan range
         if not hypotheses:
-            # In the absence of any information, use sane defaults
-            if step > 3:
-                seq_size = max_in_seq_size
-            else:
-                min_in_seq_size_i = max(min_in_seq_size, in_nan_size)
-                seq_size = min(5 * min_in_seq_size_i, max_in_seq_size)
+            # In the absence of input/output information, use sane defaults
+            seq_size = default_seq_size
             in_nan_range = (seq_size // 2 - in_nan_size // 2, seq_size // 2 + (in_nan_size + 1) // 2)
             hyps_by_outcome = None
         else:
@@ -348,16 +348,34 @@ def find_sliding_window_params_for_transform(
             logger.info(
                 f"Transform failed with input size {seq_size}. Increasing min sequence size to {min_in_seq_size}"
             )
+            if not hypotheses:
+                default_seq_size = min(10 * default_seq_size, max_in_seq_size)
 
         # Provide the nan trick results to the solver
         # TODO: change signature
         solver.add_in_out_range_map((seq_size, out_size), [(in_nan_range, out_nan_range)])
 
-        # Get new hypotheses, keeping the previous ones that are compatible with the new results
+        # Track the hypotheses that are compatible with the new results
         compatible_prev_hypotheses = hyps_by_outcome.pop((out_size, out_nan_range), []) if hyps_by_outcome else []
         if hypotheses:
             logger.info(f"{len(hypotheses) - len(compatible_prev_hypotheses)}/{len(hypotheses)} hypotheses eliminated")
-        hypotheses = solver.get_solutions(compatible_prev_hypotheses, max_solutions=max_hypotheses_per_step)
+
+        # Get new hypotheses, keeping the previous ones that are compatible with the new results
+        # TODO: doc
+        if out_nan_range and not hypotheses and out_nan_range[0] == 0 and out_nan_range[1] == out_size:
+            if seq_size == max_in_seq_size:
+                # TODO: offer a course of action
+                logger.warning(
+                    f"Your transform outputs NaNs covering the entire output (size={out_size}) given the "
+                    f"maximum input size (={seq_size}). This likely means that an operation in your transform "
+                    f"broadcasts an input element to all output elements, like a mean, batchnorm, etc... We can't "
+                    f"determine sliding window parameters nor stream exactly these types of transforms as their kernel "
+                    f"size is technically infinite."
+                )
+                break
+            default_seq_size = min(10 * default_seq_size, max_in_seq_size)
+        else:
+            hypotheses = solver.get_solutions(compatible_prev_hypotheses, max_solutions=max_hypotheses_per_step)
 
         # Also verify that the hypotheses that have been eliminated are not in the solver's output
         if hyps_by_outcome:
