@@ -49,6 +49,8 @@ class StreamBuffer:
     def size(self) -> int:
         """
         The available size of the buffer, equivalent to self.shape[self.dim] if any data has been fed.
+        TODO: __len__ override? Might be confusing with equivalent tensor len override that returns the size of the
+        first dimension.
         """
         return self._buff.shape[self.dim] if self._buff is not None else 0
 
