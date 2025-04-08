@@ -11,7 +11,6 @@ requires-python = ">=3.8"
 dependencies = [
     "numpy>=1.23.0",
     "pytest-profiling>=1.8.1",
-    "pytest-timeout>=2.3.1",
     "pytest>=8.3.4",
     "torch>=1.11.0",
     "z3-solver>=4.14.0.0",
@@ -23,7 +22,7 @@ Repository = "https://github.com/CorentinJ/TorchStream"
 [tool.setuptools.packages.find]
 include = ["torchstream*"]
 
-# Defining a build system lets us install the project as a dev package
+# Defining a build system lets us install the project as a dev packagei
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
