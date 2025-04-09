@@ -10,7 +10,7 @@ seqdtype = Union[torch.dtype, np.dtype]
 
 
 # FIXME: name
-class SeqSig:
+class SeqSpec:
     @overload
     def __init__(
         self,
@@ -65,12 +65,19 @@ class SeqSig:
     def is_numpy(self) -> bool:
         return isinstance(self.dtype, np.dtype)
 
-    # FIXME: rewrite
-    def get_tensor(self, sequence_size: int) -> Sequence:
-        shape = list(self.shape)
-        shape[self.dim] = sequence_size
+    def sample_randn(self, sequence_size: int) -> Sequence:
+        """
+        Sample a sequence of the given size from a normal distribution (discretized for integer types).
+        """
+        if self.shape is None or any(dim is None for dim in self.shape):
+            raise ValueError(
+                f"Cannot sample from a sequence specification with unknown dimensions. Shape is {self.shape}"
+            )
 
-        if isinstance(self.dtype, torch.dtype):
+        shape = list(self.shape)
+        shape[self.seq_dim] = sequence_size
+
+        if self.is_torch:
             return torch.randn(shape, dtype=self.dtype, device=self.device)
         else:
             return np.random.randn(*shape).astype(self.dtype)

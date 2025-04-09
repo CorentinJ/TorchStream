@@ -1,14 +1,14 @@
 import logging
 import math
-from typing import Callable, Iterable, List, Tuple
+from typing import Callable, Iterable, List, Optional, Tuple
 
 import numpy as np
 import torch
 from z3 import And, If, Implies, Int, Ints, Not, Or, Solver, sat
 
+from torchstream.sequence_spec import SeqSpec, Sequence
 from torchstream.sliding_window.nan_trick import run_nan_trick
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
-from torchstream.tensor_provider import TensorProvider
 
 logger = logging.getLogger(__name__)
 
@@ -270,14 +270,16 @@ def find_nan_trick_params_by_infogain(
 @torch.no_grad()
 def find_sliding_window_params_for_transform(
     trsfm: Callable,
-    input_provider: TensorProvider,
+    input_spec: SeqSpec,
+    output_spec: Optional[SeqSpec] = None,
+    input_provider: Optional[Callable[[int], Sequence]] = None,
     min_in_seq_size: int = 1,
     max_in_seq_size: int = 10_000,
     max_hypotheses_per_step: int = 100,
     max_in_kernel_gap: int = 10,
 ) -> List[SlidingWindowParams]:
     """
-    Given a sequence-to-sequence transform over tensors (neural net, single layer, time series analysis function, ...),
+    Given a sequence-to-sequence transform (neural net, single layer, time series analysis function, ...),
     this function will empirically determine sliding window parameters that correspond to the transform. That is, if
     the transform can be decomposed into a sliding window and a kernel applied to each window. This allows for
     deriving metrics for the transform (time to first output, latency, context size, chunk size needed for
@@ -286,6 +288,15 @@ def find_sliding_window_params_for_transform(
     This is only possible if the transform can be assimilated to a sliding window operation TODO: describe properties
     of this operation
 
+    TODO: handle multi-input/output
+    :param input_spec: specification for the input format of the transform. The transform must accept the data format
+    described in the input spec as positional arguments.
+    :param output_spec: same as input_spec but for the output of the transform. If the transform has multiple
+    sequential outputs, they must be returned as an iterable matching the output spec. If the output spec is
+    identical to the input spec, it can be omitted, and the input spec will be used instead.
+    :param input_provider: a function that takes an integer representing the sequence size, and returns a sequence of
+    this size matching the input spec. By default, a random normal (rounded for int types) is sampled according to
+    the input specification.
     :param max_hypotheses_per_step: the solver finds up to this amount of sliding windows parameters compatible with
     observations made over the execution of this function. Increasing this value will decrease the number of executions
     of the transforms, but increase the execution time of the solver. If necessary, tune it according to your model's
@@ -297,6 +308,8 @@ def find_sliding_window_params_for_transform(
     that returns the sum of the first and last element of the window has a gap of 3. A convolution with dilation
     greater than 1 has gaps of size <dilation - 1>.
     """
+    output_spec = output_spec or input_spec
+
     solver = SlidingWindowParamsSolver()
 
     # Until we have well-formed pairs of input/output examples from the transform, we'll determine the input

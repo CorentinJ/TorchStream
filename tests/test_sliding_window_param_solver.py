@@ -6,8 +6,8 @@ import torch
 from torch import nn
 
 from tests.rng import set_seed
+from torchstream.sequence_spec import SeqSpec
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params_for_transform
-from torchstream.tensor_provider import TensorSpec
 
 
 @pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])
@@ -39,7 +39,7 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
         x = conv(x)
         return x
 
-    sols = find_sliding_window_params_for_transform(transform, TensorSpec(shape=(1, 1, -1)))
+    sols = find_sliding_window_params_for_transform(transform, SeqSpec((1, 1, -1)))
 
     assert sols, f"Expected solution, but none found for {params_str}"
     assert any(
@@ -75,7 +75,7 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, dilation: int):
         # TODO: handle output padding?
     )
 
-    sols = find_sliding_window_params_for_transform(conv, TensorSpec(shape=(1, 1, -1)))
+    sols = find_sliding_window_params_for_transform(conv, SeqSpec((1, 1, -1)))
 
     assert sols, f"Expected solution, but none found for {params_str}"
     assert any(
@@ -111,7 +111,7 @@ def test_conv_mix(conv_params: List[Tuple[dict]]):
             for params in conv_params
         ]
     )
-    sols = find_sliding_window_params_for_transform(network, TensorSpec(shape=(1, 1, -1)))
+    sols = find_sliding_window_params_for_transform(network, SeqSpec((1, 1, -1)))
 
     # TODO: include expected parameters
     assert sols, f"Expected solution, but none found for {network}"
@@ -125,7 +125,7 @@ def test_infinite_receptive_field():
     def transform(x: np.ndarray):
         return np.full_like(x, fill_value=np.mean(x))
 
-    sols = find_sliding_window_params_for_transform(transform, TensorSpec(shape=(-1,), dtype=np.float32))
+    sols = find_sliding_window_params_for_transform(transform, SeqSpec((-1), dtype=np.float32))
     assert not sols
 
 
@@ -138,7 +138,7 @@ def test_no_receptive_field():
     def transform(x: np.ndarray):
         return np.full_like(x, fill_value=3.0)
 
-    sols = find_sliding_window_params_for_transform(transform, TensorSpec(shape=(-1,), dtype=np.float32))
+    sols = find_sliding_window_params_for_transform(transform, SeqSpec((-1), dtype=np.float32))
     assert not sols
 
 
@@ -168,5 +168,5 @@ def test_variable_receptive_field(variant: str):
 
         return y
 
-    sols = find_sliding_window_params_for_transform(transform, TensorSpec(shape=(-1,), dtype=np.float32))
+    sols = find_sliding_window_params_for_transform(transform, SeqSpec((-1), dtype=np.float32))
     assert not sols
