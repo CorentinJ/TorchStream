@@ -4,12 +4,14 @@ from typing import Tuple, Union, overload
 import numpy as np
 import torch
 
+from torchstream.sequence_dtype import is_similar_dtype, seqdtype
+
 # TODO: include python base numerical types as List
+# TODO: limit to numerical types (i.e. not strings)
 Sequence = Union[torch.Tensor, np.ndarray]
-seqdtype = Union[torch.dtype, np.dtype]
 
 
-# FIXME: name
+# TODO: dtypes test for this class
 class SeqSpec:
     @overload
     def __init__(
@@ -29,6 +31,9 @@ class SeqSpec:
     ) -> None: ...
 
     def __init__(self, *args, dtype: seqdtype = torch.float32, device: str = None):
+        """
+        TODO: doc
+        """
         # Shape overload
         if not isinstance(args[0], numbers.Number):
             self.shape = tuple(int(dim_size) for dim_size in args[0])
@@ -65,7 +70,43 @@ class SeqSpec:
     def is_numpy(self) -> bool:
         return isinstance(self.dtype, np.dtype)
 
-    def sample_randn(self, sequence_size: int) -> Sequence:
+    # TODO: needs heavy testing
+    def matches(self, seq: Sequence) -> Tuple[bool, str]:
+        """
+        Returns whether a sequence matches the specification. If not, returns a string describing the mismatch.
+        """
+        if self.is_torch and not torch.is_tensor(seq):
+            return False, f"not a tensor (got {type(seq)})"
+        elif self.is_numpy and not isinstance(seq, np.ndarray):
+            return False, f"not a numpy array (got {type(seq)})"
+
+        if not is_similar_dtype(self.dtype, seq.dtype):
+            return False, f"dtype mismatch (got {seq.dtype}, expected {self.dtype})"
+
+        if self.shape:
+            if len(seq.shape) != len(self.shape):
+                return False, f"shape ndim mismatch (got {seq.shape}, expected {self.shape})"
+            for i, (dim_size, expected_dim_size) in enumerate(zip(seq.shape, self.shape)):
+                if expected_dim_size is not None and dim_size != expected_dim_size:
+                    return False, f"shape mismatch on dimension {i} (got {seq.shape}, expected {self.shape})"
+
+        if self.device and seq.device != self.device:
+            return False, f"device mismatch (got {seq.device}, expected {self.device})"
+
+        return True, ""
+
+    def get_seq_size(self, seq: Sequence) -> int:
+        """
+        Returns the size of the sequence dimension in the given sequence. If the sequence does not match the
+        specification, raises an error.
+        """
+        matches, msg = self.matches(seq)
+        if not matches:
+            raise ValueError(f"Failed to get sequence size: {msg}")
+
+        return seq.shape[self.seq_dim]
+
+    def randn(self, sequence_size: int) -> Sequence:
         """
         Sample a sequence of the given size from a normal distribution (discretized for integer types).
         """
@@ -81,3 +122,6 @@ class SeqSpec:
             return torch.randn(shape, dtype=self.dtype, device=self.device)
         else:
             return np.random.randn(*shape).astype(self.dtype)
+
+    def __repr__(self) -> str:
+        return f"SeqSpec(shape={self.shape}, dtype={self.dtype}, device={self.device})"
