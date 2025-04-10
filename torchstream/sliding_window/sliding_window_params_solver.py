@@ -309,6 +309,7 @@ def find_sliding_window_params_for_transform(
     greater than 1 has gaps of size <dilation - 1>.
     """
     output_spec = output_spec or input_spec
+    input_provider = input_provider or input_spec.randn
 
     solver = SlidingWindowParamsSolver()
 
@@ -351,7 +352,7 @@ def find_sliding_window_params_for_transform(
         prev_nan_trick_params.add((seq_size, in_nan_range))
 
         # Perform the nan trick on the actual transform
-        out_size, out_nan_range = run_nan_trick(trsfm, input_provider, seq_size, in_nan_range)
+        out_size, out_nan_range = run_nan_trick(trsfm, seq_size, in_nan_range, input_spec, output_spec, input_provider)
 
         if out_size == 0:
             # TODO: better messages

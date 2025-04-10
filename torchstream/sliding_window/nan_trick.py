@@ -1,21 +1,21 @@
 import logging
-from typing import Callable, Tuple, Union
+from typing import Callable, Optional, Tuple, Union
 
 import numpy as np
 import torch
 
+from torchstream.sequence_spec import SeqSpec, Sequence
 from torchstream.sliding_window.dummy_sliding_window_transform import DummySlidingWindowTransform
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
-from torchstream.tensor_provider import TensorProvider
 
 logger = logging.getLogger(__name__)
 
 
 def set_nan_range(
-    x: Union[torch.Tensor, np.ndarray],
+    x: Sequence,
     range: Union[slice, Tuple[int, int]],
     dim: int = -1,
-) -> Union[torch.Tensor, np.ndarray]:
+) -> Sequence:
     # TODO! doc
     if not isinstance(range, slice):
         range = slice(*range)
@@ -26,7 +26,7 @@ def set_nan_range(
     x[tuple(slices)] = float("nan")
 
 
-def get_nan_range(x: Union[torch.Tensor, np.ndarray], dim: int = -1) -> Tuple[int, int] | None:
+def get_nan_range(x: Sequence, dim: int = -1) -> Tuple[int, int] | None:
     # TODO! doc
     if torch.is_tensor(x):
         x = x.detach().cpu().numpy()
@@ -43,22 +43,43 @@ def get_nan_range(x: Union[torch.Tensor, np.ndarray], dim: int = -1) -> Tuple[in
 
 def run_nan_trick(
     trsfm: Callable,
-    # TODO: more convenient signature
-    input_provider: TensorProvider,
     in_seq_size: int,
     in_nan_range: Tuple[int, int],
+    input_spec: SeqSpec,
+    output_spec: Optional[SeqSpec] = None,
+    input_provider: Optional[Callable[[int], Sequence]] = None,
 ) -> Tuple[int, Tuple[int, int] | None]:
+    """
+    TODO: doc
+
+    TODO: handle multi-input/output
+    :param input_spec: specification for the input format of the transform. The transform must accept the data format
+    described in the input spec as positional arguments.
+    :param output_spec: same as input_spec but for the output of the transform. If the transform has multiple
+    sequential outputs, they must be returned as an iterable matching the output spec. If the output spec is
+    identical to the input spec, it can be omitted, and the input spec will be used instead.
+    :param input_provider: a function that takes an integer representing the sequence size, and returns a sequence of
+    this size matching the input spec. By default, a random normal (rounded for int types) is sampled according to
+    the input specification.
+    """
     if in_seq_size < 1:
         raise ValueError(f"Input sequence size must be greater than 0, got {in_seq_size}")
     if not (0 <= in_nan_range[0] < in_nan_range[1] <= in_seq_size):
         raise ValueError(f"Nan range must be positive and within the input sequence size, got {in_nan_range}")
+    output_spec = output_spec or input_spec
+    input_provider = input_provider or input_spec.randn
 
-    x = input_provider.get_tensor(in_seq_size)
-    # TODO: move to TensorProvider
-    assert x.shape[input_provider.dim] == in_seq_size
+    # Get the input sequence of given size
+    x = input_provider(in_seq_size)
+    if not input_spec.get_seq_size(x) == in_seq_size:
+        raise RuntimeError(
+            f"Input provided by {input_provider} was expected to have sequence size {in_seq_size}, got {x.shape}"
+        )
 
-    set_nan_range(x, in_nan_range, dim=input_provider.dim)
+    # Corrupt the given range of the input sequence with NaNs
+    set_nan_range(x, in_nan_range, dim=input_spec.seq_dim)
 
+    # Forward the input through the transform
     logger.debug(f"Running transform with input size {in_seq_size} and nans at {in_nan_range}")
     try:
         # FIXME: output format
@@ -72,9 +93,8 @@ def run_nan_trick(
 
         return 0, None
 
-    # FIXME: dim
-    out_size = y.shape[-1]
-    out_nan_range = get_nan_range(y, dim=-1)
+    out_size = output_spec.get_seq_size(y)
+    out_nan_range = get_nan_range(y, dim=output_spec.seq_dim)
     logger.debug(f"Got a {tuple(y.shape)} shaped output with nans at {out_nan_range}")
 
     return out_size, out_nan_range
