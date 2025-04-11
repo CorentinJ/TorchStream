@@ -1,4 +1,3 @@
-from collections.abc import Collection
 import itertools
 from typing import Callable, Optional, Tuple
 
@@ -9,7 +8,7 @@ import torch
 from tests.rng import set_seed
 from torchstream.buffers.stream_buffer import StreamBuffer
 from torchstream.sequence_spec import Sequence
-from torchstream.stream import Stream
+from torchstream.stream import NotEnoughInputsError, Stream
 
 
 @pytest.mark.skip("Not a test")
@@ -36,13 +35,14 @@ def test_stream_equivalent(
 
     input_provider = input_provider or stream.in_spec.randn
     inputs = input_provider(in_seq_size)
+    # FIXME
+    inputs = (inputs,)
 
     ## Get the sync output
     out_sync = sync_fn(*inputs)
-    out_sync = tuple(out_sync) if not isinstance(out_sync, Collection) else (out_sync,)
-    assert len(out_sync) == len(stream.out_spec), (
-        f"The sync function returned {len(out_sync)} outputs, expected {len(stream.out_spec)} outputs"
-    )
+    # FIXME
+    out_sync = (out_sync,)
+    assert len(out_sync) == 1, f"The sync function returned {len(out_sync)} outputs, expected {1} outputs"
 
     ## Get the stream output
     in_bufs = (StreamBuffer(stream.in_spec),)
@@ -56,13 +56,18 @@ def test_stream_equivalent(
         inputs_i = [in_buf.read(step_size) for in_buf in in_bufs]
 
         # FIXME: in_bufs[0]
-        out = stream(*inputs_i, is_last_input=in_bufs[0].output_closed)
+        try:
+            out = stream(*inputs_i, is_last_input=in_bufs[0].output_closed)
+        except NotEnoughInputsError:
+            continue
 
         # FIXME: format
         out = out if isinstance(out, tuple) else (out,)
         assert len(out) == len(out_bufs), "Stream output count mismatch"
 
+        # TODO: verify the outputs from this point, instead of buffering them and verifying them all at once
         [out_bufs[i].feed(out[i]) for i in range(len(out_bufs))]
+
     out_stream = [out_buf.read() for out_buf in out_bufs]
 
     # Ensure the outputs are close

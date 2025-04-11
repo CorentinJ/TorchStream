@@ -38,10 +38,13 @@ class Stream:
         for in_buff, input_ in zip(self._in_buffs, inputs):
             in_buff.feed(input_, close_input=is_last_input)
 
-        outputs = self._step()
-
-        if self.input_closed:
-            self._output_closed = True
+        try:
+            outputs = self._step()
+        except:
+            raise
+        finally:
+            if self.input_closed:
+                self._output_closed = True
 
         return outputs
 

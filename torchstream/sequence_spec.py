@@ -88,7 +88,7 @@ class SeqSpec:
             if len(seq.shape) != len(self.shape):
                 return False, f"shape ndim mismatch (got {seq.shape}, expected {self.shape})"
             for i, (dim_size, expected_dim_size) in enumerate(zip(seq.shape, self.shape)):
-                if expected_dim_size is not None and dim_size != expected_dim_size:
+                if expected_dim_size is not None and i != self.seq_dim and dim_size != expected_dim_size:
                     return False, f"shape mismatch on dimension {i} (got {seq.shape}, expected {self.shape})"
 
         if self.device and seq.device != self.device:

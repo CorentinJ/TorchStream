@@ -41,17 +41,13 @@ class SlidingWindowParams:
         if self.right_pad < 0 or self.right_pad >= self.kernel_size_in:
             raise ValueError("right_pad must be at least 0 and at most kernel_size_in - 1.")
 
-    def get_num_windows(self, input_size: int) -> int:
+    def get_metrics_for_input(self, input_size: int) -> Tuple[Tuple[int, int], int, int]:
         """
+        FIXME!! cleanup
         Returns the number of sliding windows (!= output size) that would be applied for an input of the given size.
 
         :param input_size: The size of the input tensor, without the sliding window padding applied.
         """
-        if input_size <= 0:
-            return 0
-        return max(0, (self.left_pad + input_size + self.right_pad - self.kernel_size_in) // self.stride_in + 1)
-
-    def get_effective_padding(self, input_size: int) -> Tuple[int, int]:
         """
         Returns the padding that would be applied to the input tensor before applying the sliding window transform.
         Because sliding windows with input stride > 1 might not line up exactly with the end of the padded input, the
@@ -60,28 +56,52 @@ class SlidingWindowParams:
 
         :param input_size: The size of the input tensor, without padding added.
         """
-        num_wins = self.get_num_windows(input_size)
-        if num_wins == 0:
-            # TODO: check if this really makes sense
-            return (0, 0)
-
-        padded_input_size = (num_wins - 1) * self.stride_in + self.kernel_size_in
-        right_pad = padded_input_size - input_size - self.left_pad
-        assert -self.stride_in < right_pad, "Internal error: trimming on the right should be smaller than the stride"
-        assert right_pad <= self.kernel_size_in, "Internal error: padding on either side should not exceed kernel size"
-
-        return (self.left_pad, right_pad)
-
-    def get_output_size(self, input_size: int) -> int:
         """
         Returns the size of the output tensor after applying the sliding window transform.
 
         :param input_size: The size of the input tensor, without padding added.
         """
-        num_wins = self.get_num_windows(input_size)
+        """
+        Returns the size of the output tensor after applying the sliding window transform.
+
+        :param input_size: The size of the input tensor, without padding added.
+        """
+        # Number of windows
+        if input_size <= 0:
+            num_wins = 0
+        else:
+            num_wins = max(0, (self.left_pad + input_size + self.right_pad - self.kernel_size_in) // self.stride_in + 1)
+
+        # Padding
         if num_wins == 0:
-            return 0
-        return (num_wins - 1) * self.stride_out + self.kernel_size_out
+            # TODO: check if this really makes sense
+            padding = (0, 0)
+        else:
+            padded_input_size = (num_wins - 1) * self.stride_in + self.kernel_size_in
+            right_pad = padded_input_size - input_size - self.left_pad
+            assert -self.stride_in < right_pad, (
+                "Internal error: trimming on the right should be smaller than the stride"
+            )
+            assert right_pad <= self.kernel_size_in, (
+                "Internal error: padding on either side should not exceed kernel size"
+            )
+            padding = (self.left_pad, right_pad)
+
+        if num_wins == 0:
+            output_size = 0
+        else:
+            output_size = (num_wins - 1) * self.stride_out + self.kernel_size_out
+
+        return padding, num_wins, output_size
+
+    def get_num_windows(self, input_size: int) -> int:
+        raise NotImplementedError()
+
+    def get_effective_padding(self, input_size: int) -> Tuple[int, int]:
+        raise NotImplementedError()
+
+    def get_output_size(self, input_size: int) -> int:
+        raise NotImplementedError()
 
     def get_min_input_size(self) -> int:
         """

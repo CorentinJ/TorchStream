@@ -115,7 +115,7 @@ class StreamBuffer:
         assert not self._input_closed, f"Trying to feed data into {self.name}, but input is closed"
         is_matching, reason = self._spec.matches(x)
         if not is_matching:
-            raise ValueError(f"Cannot feed {x} to {self.name}: {reason}")
+            raise ValueError(f"Cannot feed {type(x)} to {self.name}: {reason}")
 
         if self._buff is None:
             self._buff = x.clone() if self._spec.is_torch else x.copy()
