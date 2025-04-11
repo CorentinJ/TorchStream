@@ -27,7 +27,7 @@ class StreamBuffer:
     TODO: transform asserts into exceptions
     """
 
-    def __init__(self, *data, spec: SeqSpec, name: str = None):
+    def __init__(self, spec: SeqSpec, name: str = None):
         """
         :param data: optional initial tensors to buffer
         :param dim: data specification for the sequence, containing at the minimum the shape or sequence dimension.
@@ -38,9 +38,6 @@ class StreamBuffer:
         self._input_closed = False
         self._offset = 0
         self._name = name or "Buffer"
-
-        for x in data:
-            self.feed(x)
 
     @property
     def dim(self) -> int:
