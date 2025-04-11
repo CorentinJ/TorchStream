@@ -1,7 +1,9 @@
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple
 
 import numpy as np
 import torch
+
+from torchstream.sequence_spec import SeqSpec, Sequence
 
 
 class StreamBuffer:
@@ -9,10 +11,10 @@ class StreamBuffer:
     Tensor-like class for buffering multidimensional sequential data. Supports both torch tensors and numpy arrays.
 
     The StreamBuffer class is essentially the implementation of queues for multidimensional tensors. Tensors of the
-    same size (aside from the sequence dimension) are queued up into the buffer and can be partially or fully read
-    and dropped in FIFO order.
+    same shape (aside from the sequence dimension) are queued up into the buffer and can be read or dropped in
+    FIFO order.
 
-    >>> buff = StreamBuffer(dim=1)
+    >>> buff = StreamBuffer(spec=SeqSpec(seq_dim=1))
     >>> buff.feed(torch.arange(6).reshape((3, 2)))
     >>> buff.feed(torch.arange(9).reshape((3, 3)))
     >>> buff.read(4)
@@ -21,15 +23,17 @@ class StreamBuffer:
             [4, 5, 6, 7]])
 
     This class simplifies a great deal of sliding window operations.
+
+    TODO: transform asserts into exceptions
     """
 
-    def __init__(self, *data, dim: int = 0, name: str = None):
+    def __init__(self, *data, spec: SeqSpec, name: str = None):
         """
         :param data: optional initial tensors to buffer
-        :param dim: the sequence dimension along which to buffer data e.g. if feeding (1, N, 3), the dim is 1
+        :param dim: data specification for the sequence, containing at the minimum the shape or sequence dimension.
         :param name: a name to give to this instance, useful for debugging
         """
-        self._dim = dim
+        self._spec = spec
         self._buff = None
         self._input_closed = False
         self._offset = 0
@@ -43,7 +47,7 @@ class StreamBuffer:
         """
         The dimension along which this buffer is buffering tensors or arrays
         """
-        return self._dim
+        return self._spec.seq_dim
 
     @property
     def size(self) -> int:
@@ -98,46 +102,46 @@ class StreamBuffer:
             new_shape = list(self._buff.shape)
             new_shape[self.dim] = 0
 
-            if isinstance(self._buff, np.ndarray):
+            if self._spec.is_numpy:
                 self._buff = np.empty_like(self._buff, shape=new_shape)
             else:
                 self._buff = self._buff.new_empty(new_shape)
 
-    def feed(self, x: Union[np.ndarray, torch.Tensor], close_input=False):
+    def feed(self, x: Sequence, close_input=False):
         """
         Feeds data at the end of the buffer. If the buffer is closed for input, this will raise an exception.
 
-        :param x: The data to feed into the buffer. Either a torch of numpy array. Its shape (aside for dimension
-        <self.dim>), type and dtype must match previous calls to feed()
+        :param x: The data to feed into the buffer. Either a torch of numpy array. It must match the specification
+        given in the constructor.
         :param close_input: Whether to close the buffer for input after this call.
         """
         assert not self._input_closed, f"Trying to feed data into {self.name}, but input is closed"
-        assert self._buff is None or (len(x.shape) > self.dim), (
-            f"Trying to feed {x.shape} data into {self.name} which has sequence dimension {self.dim}"
-        )
+        is_matching, reason = self._spec.matches(x)
+        if not is_matching:
+            raise ValueError(f"Cannot feed {x} to {self.name}: {reason}")
 
         if self._buff is None:
-            self._buff = x.clone() if isinstance(x, torch.Tensor) else x.copy()
+            self._buff = x.clone() if self._spec.is_torch else x.copy()
         else:
             assert (
                 self._buff.shape[: self.dim] == x.shape[: self.dim]
                 and self._buff.shape[self.dim + 1 :] == x.shape[self.dim + 1 :]
-            ), f"Trying to feed {x.shape} data into {self.name}, but the buffer already has shape {self._buff.shape}"
-            assert self._buff.dtype == x.dtype, (
-                f"Trying to feed {x.dtype} data into {self.name}, but the buffer already has dtype {self._buff.dtype}"
+            ), (
+                f"Trying to feed {x.shape} data into {self.name}, but the buffer with dim={self.dim} already "
+                f"has shape {self._buff.shape}"
             )
 
-            concat_fn = np.concatenate if isinstance(x, np.ndarray) else torch.cat
+            concat_fn = np.concatenate if self._spec.is_numpy else torch.cat
             self._buff = concat_fn((self._buff, x), axis=self.dim)
 
         if close_input:
             self.close_input()
 
-    def _copy_slice(self, sli: slice) -> Union[np.ndarray, torch.Tensor]:
+    def _copy_slice(self, sli: slice) -> Sequence:
         """
         Copies a slice of the buffer to a new tensor
         """
-        copy_fn = np.copy if isinstance(self._buff, np.ndarray) else torch.clone
+        copy_fn = np.copy if self._spec.is_numpy else torch.clone
         slices = [slice(None)] * self._buff.ndim
         slices[self.dim] = sli
         return copy_fn(self._buff[tuple(slices)])
@@ -175,10 +179,10 @@ class StreamBuffer:
         """
         return self.drop(max(self.size - n, 0))
 
-    def peek(self, n: Optional[int] = None) -> Union[np.ndarray, torch.Tensor]:
+    def peek(self, n: Optional[int] = None) -> Sequence:
         """
-        Reads the first n elements from the buffer without consuming them. If the buffer does not have enough elements,
-        the entire buffer is returned.
+        Reads a sequence of size up to n from the start of buffer without consuming it. If the buffer does not have
+        enough elements, the entire buffer is returned.
 
         :param n: Number of elements to peek at. If None, peeks at the entire buffer. A read of 0 is possible only if
         the buffer has held data in the past.
@@ -189,19 +193,24 @@ class StreamBuffer:
 
         # If we're reading the entire buffer, just return it
         if n >= self.size:
-            assert self._buff is not None, f"Cannot peek from buffer {self._name} because it has never held data before"
+            if self._buff is None:
+                try:
+                    return self._spec.empty()
+                except ValueError:
+                    raise RuntimeError(
+                        f"Cannot peek at {self._name} because it has never held data before and the sequence "
+                        f"specification is not complete enough to create an empty buffer"
+                    )
             return self._buff
 
         # Slice the buffer to make a copy of the first n elements, so as not to hold a view containing the
         # ones we don't need
         return self._copy_slice(slice(0, n))
 
-    def read(self, n: Optional[int] = None) -> Union[np.ndarray, torch.Tensor]:
+    def read(self, n: Optional[int] = None) -> Sequence:
         """
-        Reads and consumes the first n elements from the buffer. If the buffer does not have enough elements,
-        the entire buffer is consumed.
-
-        # FIXME: I think an implementation independent of peek() & drop would be more efficient and elegant
+        Reads a sequence of size up to n from the start of buffer while dropping it from the buffer. If the
+        buffer does not have enough elements, the entire buffer is returned.
         """
         out = self.peek(n)
         self.drop(n)

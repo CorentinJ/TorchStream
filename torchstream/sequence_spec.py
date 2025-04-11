@@ -44,6 +44,7 @@ class SeqSpec:
 
         # Seqdim overload
         else:
+            # TODO: handle negative dims?
             self.seq_dim = args[0]
             self.ndim = args[1] if len(args) > 1 else None
             if self.ndim:
@@ -106,22 +107,37 @@ class SeqSpec:
 
         return seq.shape[self.seq_dim]
 
-    def randn(self, sequence_size: int) -> Sequence:
-        """
-        Sample a sequence of the given size from a normal distribution (discretized for integer types).
-        """
+    def get_shape_for_seq_size(self, seq_size: int) -> Tuple[int, ...]:
+        if seq_size < 0:
+            raise ValueError(f"Sequence size must be non-negative, got {seq_size}")
         if self.shape is None or any(dim is None for dim in self.shape):
             raise ValueError(
                 f"Cannot sample from a sequence specification with unknown dimensions. Shape is {self.shape}"
             )
 
         shape = list(self.shape)
-        shape[self.seq_dim] = sequence_size
+        shape[self.seq_dim] = seq_size
+        return tuple(shape)
 
+    def randn(self, seq_size: int) -> Sequence:
+        """
+        Sample a sequence of the given size from a normal distribution (discretized for integer types).
+        """
+        shape = self.get_shape_for_seq_size(seq_size)
         if self.is_torch:
             return torch.randn(shape, dtype=self.dtype, device=self.device)
         else:
             return np.random.randn(*shape).astype(self.dtype)
+
+    def empty(self, seq_size: int = 0) -> Sequence:
+        """
+        Returns an empty sequence (i.e. uninitialized data) of the given size.
+        """
+        shape = self.get_shape_for_seq_size(seq_size)
+        if self.is_torch:
+            return torch.empty(shape, dtype=self.dtype, device=self.device)
+        else:
+            return np.empty(shape, dtype=self.dtype)
 
     def __repr__(self) -> str:
         return f"SeqSpec(shape={self.shape}, dtype={self.dtype}, device={self.device})"
