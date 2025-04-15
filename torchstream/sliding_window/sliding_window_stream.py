@@ -5,7 +5,7 @@ from torch import Tensor
 
 from torchstream.sequence_spec import SeqSpec
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
-from torchstream.stream import NotEnoughInputsError, Stream
+from torchstream.stream import NotEnoughInputError, Stream
 
 
 class SlidingWindowStream(Stream):
@@ -39,7 +39,7 @@ class SlidingWindowStream(Stream):
 
         (left_pad, right_pad), num_wins, expected_out_size = self.params.get_metrics_for_input(in_buff.size)
         # if not num_wins:
-        #     raise NotEnoughInputsError(
+        #     raise NotEnoughInputError(
         #         f"Need a sequence of size {self.params.get_min_input_size()} to produce any output, "
         #         f"got a sequence of size {in_buff.size}."
         #     )
@@ -59,14 +59,14 @@ class SlidingWindowStream(Stream):
                 if out_trim_start is None:
                     out_trim_start = out_sli.start
 
-                if not in_buff.input_closed and in_sli.start >= left_pad + in_buff.size:
+                if not in_buff.input_closed and in_sli.stop >= left_pad + in_buff.size:
                     out_trim_end = out_sli.start
                     break
 
                 eff_num_wins += 1
 
         if not eff_num_wins:
-            raise NotEnoughInputsError()
+            raise NotEnoughInputError()
 
         assert eff_num_wins
         assert out_trim_end is None or out_trim_start < out_trim_end
@@ -88,4 +88,5 @@ class SlidingWindowStream(Stream):
         # out_buff.drop(self._n_left_wins_to_discard * self.params.stride_out)
         # trimmed_output = out_buff.peek((num_wins - self._n_left_wins_to_discard))
 
-        return tsfm_output[..., out_trim_start:out_trim_end]
+        slices = self.out_spec.get_slices(seq_start=out_trim_start, seq_stop=out_trim_end)
+        return tsfm_output[slices]

@@ -61,5 +61,9 @@ class Stream:
         raise NotImplementedError()
 
 
-class NotEnoughInputsError(Exception):
+class NotEnoughInputError(Exception):
+    """
+    TODO: doc
+    """
+
     pass

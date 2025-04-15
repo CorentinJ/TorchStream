@@ -13,7 +13,7 @@ from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 
 @pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])
 @pytest.mark.parametrize("stride", [1, 2, 3, 10, 17])
-@pytest.mark.parametrize("padding", [(0, 0)])  # , (2, 0), (0, 3), (1, 4)]) TODO: implement
+@pytest.mark.parametrize("padding", [(0, 0), (1, 1), (2, 0), (0, 3), (1, 4)])
 @pytest.mark.parametrize("dilation", [1, 2, 3])
 def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilation: int):
     kernel_span = (kernel_size - 1) * dilation + 1
@@ -52,4 +52,4 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
         SeqSpec((1, 1, -1)),
     )
 
-    test_stream_equivalent(conv_stream, conv)
+    test_stream_equivalent(conv_stream, transform)

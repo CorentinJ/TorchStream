@@ -8,7 +8,7 @@ import torch
 from tests.rng import set_seed
 from torchstream.buffers.stream_buffer import StreamBuffer
 from torchstream.sequence_spec import Sequence
-from torchstream.stream import NotEnoughInputsError, Stream
+from torchstream.stream import NotEnoughInputError, Stream
 
 
 @pytest.mark.skip("Not a test")
@@ -43,38 +43,46 @@ def test_stream_equivalent(
     # FIXME
     out_sync = (out_sync,)
     assert len(out_sync) == 1, f"The sync function returned {len(out_sync)} outputs, expected {1} outputs"
+    out_sync_buffs = (StreamBuffer(stream.out_spec),)
+    for out_sync_i, out_sync_buff in zip(out_sync, out_sync_buffs):
+        out_sync_buff.feed(out_sync_i, close_input=True)
 
-    ## Get the stream output
+    ## Get the stream output & compare it
     in_bufs = (StreamBuffer(stream.in_spec),)
     for in_buf, arg in zip(in_bufs, inputs):
         in_buf.feed(arg, close_input=True)
 
-    out_bufs = (StreamBuffer(stream.out_spec),)
     step_size_iter = iter(itertools.cycle(in_step_sizes))
+    i = 0
     while not stream.output_closed:
         step_size = next(step_size_iter)
         inputs_i = [in_buf.read(step_size) for in_buf in in_bufs]
 
         # FIXME: in_bufs[0]
         try:
-            out = stream(*inputs_i, is_last_input=in_bufs[0].output_closed)
-        except NotEnoughInputsError:
+            out_stream = stream(*inputs_i, is_last_input=in_bufs[0].output_closed)
+        except NotEnoughInputError:
             continue
 
-        # FIXME: format
-        out = out if isinstance(out, tuple) else (out,)
-        assert len(out) == len(out_bufs), "Stream output count mismatch"
+        # TODO: validate using spec
 
-        # TODO: verify the outputs from this point, instead of buffering them and verifying them all at once
-        [out_bufs[i].feed(out[i]) for i in range(len(out_bufs))]
+        # FIXME
+        out_stream = out_stream if isinstance(out_stream, tuple) else (out_stream,)
+        assert len(out_stream) == 1, "Stream output count mismatch"
 
-    out_stream = [out_buf.read() for out_buf in out_bufs]
+        # Ensure the outputs are close
+        for out_sync_buff_i, out_stream_i in zip(out_sync_buffs, out_stream):
+            stream_out_size = out_sync_buff_i.spec.get_seq_size(out_stream_i)
+            out_sync_i = out_sync_buff_i.read(stream_out_size)
 
-    # Ensure the outputs are close
-    for out_sync_i, out_stream_i in zip(out_sync, out_stream):
-        # FIXME: do this in validation
-        assert out_stream_i.shape == out_sync_i.shape, (
-            f"Shape mismatch: sync output is {out_sync_i.shape}-shaped, stream output is {out_stream_i.shape}-shaped"
-        )
-        max_error = np.abs(out_sync_i - out_stream_i).max()
-        assert max_error <= atol, (max_error, atol)
+            assert out_sync_i.shape == out_stream_i.shape, (
+                f"Shape mismatch on step {i} (got {out_stream_i.shape}, expected {out_sync_i.shape})"
+            )
+            diff = np.abs(out_sync_i - out_stream_i)
+            max_error = diff.max()
+            assert max_error <= atol, f"Error too large on step {i} (got {max_error}, expected <= {atol})\n{diff}"
+
+        i += 1
+
+    for out_sync_buff_i in out_sync_buffs:
+        assert out_sync_buff_i.output_closed, f"Stream output is too short, {out_sync_buff_i.size} outputs remain"

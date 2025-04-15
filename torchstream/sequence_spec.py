@@ -125,7 +125,7 @@ class SeqSpec:
         range across the sequence dimension, and the full space across other dimensions.
         """
         slices = [slice(None)] * self.ndim
-        slices[self.dim] = slice(seq_start, seq_stop, seq_step)
+        slices[self.seq_dim] = slice(seq_start, seq_stop, seq_step)
         return tuple(slices)
 
     def randn(self, seq_size: int) -> Sequence:
