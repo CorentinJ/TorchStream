@@ -33,7 +33,7 @@ class StreamBuffer:
         :param dim: data specification for the sequence, containing at the minimum the shape or sequence dimension.
         :param name: a name to give to this instance, useful for debugging
         """
-        self._spec = spec
+        self.spec = spec
         self._buff = None
         self._input_closed = False
         self._offset = 0
@@ -44,7 +44,7 @@ class StreamBuffer:
         """
         The dimension along which this buffer is buffering tensors or arrays
         """
-        return self._spec.seq_dim
+        return self.spec.seq_dim
 
     @property
     def size(self) -> int:
@@ -99,7 +99,7 @@ class StreamBuffer:
             new_shape = list(self._buff.shape)
             new_shape[self.dim] = 0
 
-            if self._spec.is_numpy:
+            if self.spec.is_numpy:
                 self._buff = np.empty_like(self._buff, shape=new_shape)
             else:
                 self._buff = self._buff.new_empty(new_shape)
@@ -113,12 +113,12 @@ class StreamBuffer:
         :param close_input: Whether to close the buffer for input after this call.
         """
         assert not self._input_closed, f"Trying to feed data into {self.name}, but input is closed"
-        is_matching, reason = self._spec.matches(x)
+        is_matching, reason = self.spec.matches(x)
         if not is_matching:
             raise ValueError(f"Cannot feed {type(x)} to {self.name}: {reason}")
 
         if self._buff is None:
-            self._buff = x.clone() if self._spec.is_torch else x.copy()
+            self._buff = x.clone() if self.spec.is_torch else x.copy()
         else:
             assert (
                 self._buff.shape[: self.dim] == x.shape[: self.dim]
@@ -128,20 +128,19 @@ class StreamBuffer:
                 f"has shape {self._buff.shape}"
             )
 
-            concat_fn = np.concatenate if self._spec.is_numpy else torch.cat
+            concat_fn = np.concatenate if self.spec.is_numpy else torch.cat
             self._buff = concat_fn((self._buff, x), axis=self.dim)
 
         if close_input:
             self.close_input()
 
-    def _copy_slice(self, sli: slice) -> Sequence:
+    def _copy_slice(self, start: Optional[int], stop: Optional[int]) -> Sequence:
         """
         Copies a slice of the buffer to a new tensor
         """
-        copy_fn = np.copy if self._spec.is_numpy else torch.clone
-        slices = [slice(None)] * self._buff.ndim
-        slices[self.dim] = sli
-        return copy_fn(self._buff[tuple(slices)])
+        copy_fn = np.copy if self.spec.is_numpy else torch.clone
+        slices = self.spec.get_slices(start, stop)
+        return copy_fn(self._buff[slices])
 
     def drop(self, n: Optional[int] = None) -> int:
         """
@@ -166,7 +165,7 @@ class StreamBuffer:
 
         # Slice the buffer to make a copy of the remaining elements, so as not to hold a view containing the
         # dropped ones
-        self._buff = self._copy_slice(slice(n, None))
+        self._buff = self._copy_slice(n, None)
 
         return n
 
@@ -192,7 +191,7 @@ class StreamBuffer:
         if n >= self.size:
             if self._buff is None:
                 try:
-                    return self._spec.empty()
+                    return self.spec.empty()
                 except ValueError:
                     raise RuntimeError(
                         f"Cannot peek at {self._name} because it has never held data before and the sequence "
@@ -202,7 +201,7 @@ class StreamBuffer:
 
         # Slice the buffer to make a copy of the first n elements, so as not to hold a view containing the
         # ones we don't need
-        return self._copy_slice(slice(0, n))
+        return self._copy_slice(0, n)
 
     def read(self, n: Optional[int] = None) -> Sequence:
         """

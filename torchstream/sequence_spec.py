@@ -119,6 +119,15 @@ class SeqSpec:
         shape[self.seq_dim] = seq_size
         return tuple(shape)
 
+    def get_slices(self, seq_start: int = None, seq_stop: int = None, seq_step: int = None) -> Tuple[slice, ...]:
+        """
+        Returns a tuple of slices suitable for indexing a numpy or torch tensor in order to obtain the given
+        range across the sequence dimension, and the full space across other dimensions.
+        """
+        slices = [slice(None)] * self.ndim
+        slices[self.dim] = slice(seq_start, seq_stop, seq_step)
+        return tuple(slices)
+
     def randn(self, seq_size: int) -> Sequence:
         """
         Sample a sequence of the given size from a normal distribution (discretized for integer types).
