@@ -24,6 +24,7 @@ class SlidingWindowStream(Stream):
 
         # Number of windows that are wasted on the left solely due to padding. "wasted" here means that we recompute
         # these windows on each step despite them being unnecessary, where proper streaming would not recompute them.
+        # Note that right padding also wastes windows, but it is implemented differently.
         self._n_left_wins_wasted = int(math.ceil(self.params.left_pad / self.params.stride_in))
         self._n_extra_wins_to_buffer = self._n_left_wins_wasted
 
@@ -38,21 +39,20 @@ class SlidingWindowStream(Stream):
         first_eff_win_idx = self._n_left_wins_wasted - self._n_extra_wins_to_buffer
         out_trim_start = first_eff_win_idx * self.params.stride_out
 
+        # Likewise, get the index of the last window with valid output
         # If the input is closed, there is no output trimming that needs to occur on the right side
         if in_buff.input_closed:
             out_trim_end = None
             eff_num_wins = num_wins - first_eff_win_idx
         # Otherwise, we need to trim the output where it would start being incorrect due to the right input padding
         else:
-            last_eff_win_idx = int(
-                math.ceil(max(0, left_pad + in_buff.size - self.params.kernel_size_in) / self.params.stride_in)
-            )
+            last_eff_win_idx = num_wins - 1 - int(max(0, math.ceil((right_pad / self.params.stride_in))))
             out_trim_end = last_eff_win_idx * self.params.stride_out
             eff_num_wins = last_eff_win_idx - first_eff_win_idx
 
         if eff_num_wins <= 0:
             # TODO: breakdown current state & display how much more data is needed
-            raise NotEnoughInputError(f"Sequence of size {in_buff.size} is not enough to produce any output.")
+            raise NotEnoughInputError(f"Input sequence of size {in_buff.size} is not enough to produce any output.")
 
         # Forward the input
         tsfm_input = in_buff.peek()
