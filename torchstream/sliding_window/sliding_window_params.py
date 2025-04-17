@@ -12,17 +12,17 @@ class SlidingWindowParams:
 
     # TODO: does default_factory actually cast?
     # The kernel size of the input. For dilated (à trous) convolutions, this is the span of the entire kernel.
-    kernel_size_in: int = field(default_factory=int)
-    stride_in: int = field(default_factory=int)
+    kernel_size_in: int = field(default=1)
+    stride_in: int = field(default=1)
     # The static number of elements to pad on the left side of the input.
-    left_pad: int = field(default_factory=int)
+    left_pad: int = field(default=0)
     # This value represents the number of extra windows that are produced as a result of the left and right padding
     # combined. It is a proxy for right padding, because right padding is not necessarily constant, but this
     # value typically is. A few examples:
     #   - For a conv1d layer with no padding, alpha = 0.
     #   - For a conv1d layer with stride=1 and "same" padding (input size = output size), alpha = kernel_size_in - 1.
     # FIXME!! change doc repo wide
-    right_pad: int = field(default_factory=int)
+    right_pad: int = field(default=0)
     # The kernel size of the output. It is 1 for normal convolutions, but can be larger for transposed convolutions.
     kernel_size_out: int = field(default=1)
     stride_out: int = field(default=1)

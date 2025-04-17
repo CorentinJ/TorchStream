@@ -5,7 +5,6 @@ import numpy as np
 import pytest
 import torch
 
-from tests.rng import set_seed
 from torchstream.buffers.stream_buffer import StreamBuffer
 from torchstream.sequence_spec import Sequence
 from torchstream.stream import NotEnoughInputError, Stream
@@ -20,7 +19,6 @@ def test_stream_equivalent(
     in_step_sizes: Tuple[int, ...] = (7, 4, 12, 1, 17),
     in_seq_size: int = 50,
     atol: float = 1e-5,
-    seed=None,
 ):
     """
     Tests if a stream implementation gives outputs close or equivalent to its synchronous counterpart.
@@ -30,9 +28,6 @@ def test_stream_equivalent(
     TODO: better doc
 
     """
-    if seed:
-        set_seed(seed)
-
     input_provider = input_provider or stream.in_spec.randn
     inputs = input_provider(in_seq_size)
     # FIXME

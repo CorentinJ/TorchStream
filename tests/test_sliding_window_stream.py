@@ -53,3 +53,37 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
     )
 
     test_stream_equivalent(conv_stream, transform)
+
+
+@pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])
+@pytest.mark.parametrize("stride", [1, 2, 3, 10, 17])
+@pytest.mark.parametrize("dilation", [1, 2, 3])
+def test_conv_transpose_1d(kernel_size: int, stride: int, dilation: int):
+    kernel_span = (kernel_size - 1) * dilation + 1
+    if stride > kernel_span:
+        pytest.skip("Stride should be smaller than the kernel span")
+
+    set_seed(0x5EED)
+
+    conv = nn.ConvTranspose1d(
+        in_channels=1,
+        out_channels=1,
+        kernel_size=kernel_size,
+        stride=stride,
+        dilation=dilation,
+        # TODO: (input) padding as explained in https://pytorch.org/docs/stable/generated/torch.nn.ConvTranspose1d.html
+        # seems completely wrong. Note that transposed convolutions have an input kernel size of 1, so it makes no
+        # sense to have any input padding at all.
+        # TODO: handle grouping?
+        # TODO: handle output padding?
+    )
+
+    sliding_window_params = SlidingWindowParams(kernel_size_out=kernel_span, stride_out=stride)
+
+    conv_stream = SlidingWindowStream(
+        conv,
+        sliding_window_params,
+        SeqSpec((1, 1, -1)),
+    )
+
+    test_stream_equivalent(conv_stream, conv)
