@@ -73,9 +73,11 @@ def test_stream_equivalent(
             assert out_sync_i.shape == out_stream_i.shape, (
                 f"Shape mismatch on step {i} (got {out_stream_i.shape}, expected {out_sync_i.shape})"
             )
-            diff = np.abs(out_sync_i - out_stream_i)
-            max_error = diff.max()
-            assert max_error <= atol, f"Error too large on step {i} (got {max_error}, expected <= {atol})\n{diff}"
+            max_error = np.abs(out_sync_i - out_stream_i).max()
+            assert max_error <= atol, (
+                f"Error too large on step {i} (got {max_error}, expected <= {atol})\n"
+                f"Sync: {out_sync_i}\nStream: {out_stream_i}"
+            )
 
         i += 1
 

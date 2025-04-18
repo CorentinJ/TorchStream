@@ -26,7 +26,14 @@ class SlidingWindowStream(Stream):
         # these windows on each step despite them being unnecessary, where proper streaming would not recompute them.
         # Note that right padding also wastes windows, but it is implemented differently.
         self._n_left_wins_wasted = int(math.ceil(self.params.left_pad / self.params.stride_in))
-        self._n_extra_wins_to_buffer = self._n_left_wins_wasted
+        # For a given output window, the number of other output windows that overlap it. Only >0 when the out stride
+        # is smaller than the out kernel size.
+        # Note that we need to buffer enough past context in order to have the overlapping windows neccessary in
+        # computing a given output. This induces redundant compute that could be avoided if the reduce operation on
+        # overlapping windows (e.g. a vector sum) is known. (TODO? implement)
+        self._n_overlapping_out_wins = int(math.ceil(self.params.kernel_size_out / self.params.stride_out)) - 1
+        self._n_wins_left_context = max(self._n_left_wins_wasted, self._n_overlapping_out_wins)
+        self._n_wins_to_buffer_left = self._n_wins_left_context
 
     # FIXME: signature
     def _step(self) -> Union[Tensor, np.ndarray, Tuple[Tensor, np.ndarray]]:
@@ -36,7 +43,7 @@ class SlidingWindowStream(Stream):
         (left_pad, right_pad), num_wins, expected_out_size = self.params.get_metrics_for_input(in_buff.size)
 
         # Get the index of the first window that will compute valid output that we'll return
-        first_eff_win_idx = self._n_left_wins_wasted - self._n_extra_wins_to_buffer
+        first_eff_win_idx = self._n_wins_left_context - self._n_wins_to_buffer_left
         out_trim_start = first_eff_win_idx * self.params.stride_out
 
         # Likewise, get the index of the last window with valid output
@@ -44,11 +51,11 @@ class SlidingWindowStream(Stream):
         if in_buff.input_closed:
             out_trim_end = None
             eff_num_wins = num_wins - first_eff_win_idx
-        # Otherwise, we need to trim the output where it would start being incorrect due to the right input padding
+        # Otherwise, we may need to trim output on the right due to erroneous inputs incurred by right padding
         else:
-            last_eff_win_idx = num_wins - 1 - int(max(0, math.ceil((right_pad / self.params.stride_in))))
-            out_trim_end = last_eff_win_idx * self.params.stride_out
-            eff_num_wins = last_eff_win_idx - first_eff_win_idx
+            num_wins_before_right_trim = num_wins - max(0, int(math.ceil((right_pad / self.params.stride_in))))
+            out_trim_end = num_wins_before_right_trim * self.params.stride_out
+            eff_num_wins = num_wins_before_right_trim - first_eff_win_idx
 
         if eff_num_wins <= 0:
             # TODO: breakdown current state & display how much more data is needed
@@ -68,14 +75,9 @@ class SlidingWindowStream(Stream):
         # Drop input that won't be necessary in the future
         if in_buff.input_closed:
             in_buff._clear_buf()
-        elif eff_num_wins > self._n_extra_wins_to_buffer:
-            in_buff.drop((eff_num_wins - self._n_extra_wins_to_buffer) * self.params.stride_in)
-        self._n_extra_wins_to_buffer = max(0, self._n_extra_wins_to_buffer - eff_num_wins)
-
-        # # We need to discard outputs on the left and right since this is a naive implementation
-        # out_buff = StreamBuffer(tsfm_output, dim=-1)
-        # out_buff.drop(self._n_left_wins_to_discard * self.params.stride_out)
-        # trimmed_output = out_buff.peek((num_wins - self._n_left_wins_to_discard))
+        elif eff_num_wins > self._n_wins_to_buffer_left:
+            in_buff.drop((eff_num_wins - self._n_wins_to_buffer_left) * self.params.stride_in)
+        self._n_wins_to_buffer_left = max(0, self._n_wins_to_buffer_left - eff_num_wins)
 
         slices = self.out_spec.get_slices(seq_start=out_trim_start, seq_stop=out_trim_end)
         return tsfm_output[slices]
