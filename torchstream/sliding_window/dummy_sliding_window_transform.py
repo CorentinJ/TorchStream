@@ -4,6 +4,12 @@ from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 
 
 class DummySlidingWindowTransform:
+    """
+    This class is a trivial implementation of a sliding window transform. It's a moving average with a sum reduction
+    for overlapping output windows.
+    The class is used for empirical verification of sliding window related implementations.
+    """
+
     def __init__(self, params: SlidingWindowParams):
         self.params = params
 
