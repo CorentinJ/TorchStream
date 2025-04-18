@@ -43,28 +43,18 @@ class SlidingWindowParams:
 
     def get_metrics_for_input(self, input_size: int) -> Tuple[Tuple[int, int], int, int]:
         """
-        FIXME!! cleanup
-        Returns the number of sliding windows (!= output size) that would be applied for an input of the given size.
+        Computes the padding, number of windows and output size for an input to the transform with a given size.
 
         :param input_size: The size of the input tensor, without the sliding window padding applied.
-        """
-        """
-        Returns the padding that would be applied to the input tensor before applying the sliding window transform.
-        Because sliding windows with input stride > 1 might not line up exactly with the end of the padded input, the
-        right padding for a given input size might be effectively less than <self.right_pad>. There are also cases
-        where inputs on the right go unused, and therefore the effective right padding returned will be negative.
-
-        :param input_size: The size of the input tensor, without padding added.
-        """
-        """
-        Returns the size of the output tensor after applying the sliding window transform.
-
-        :param input_size: The size of the input tensor, without padding added.
-        """
-        """
-        Returns the size of the output tensor after applying the sliding window transform.
-
-        :param input_size: The size of the input tensor, without padding added.
+        :return:
+            - (left_pad, right_pad): A tuple of integers of the padding that is applied to the input tensor before
+            applying the sliding window transform. Because sliding windows with input stride > 1 might not line up
+            exactly with the end of the padded input, the right padding for a given input size might be effectively
+            less than <self.right_pad>. There are also cases where inputs on the right go unused, and therefore the
+            effective right padding returned will be negative. This is to ensure that the padded input always lines
+            up with the last window.
+            - num_wins: The number of windows that are computed for the given input size.
+            - out_size: The size of the output tensor.
         """
         # Number of windows
         if input_size <= 0:
@@ -75,6 +65,7 @@ class SlidingWindowParams:
         # Padding
         if num_wins == 0:
             # TODO: check if this really makes sense
+            #   -> Maybe return negative right padding??
             padding = (0, 0)
         else:
             padded_input_size = (num_wins - 1) * self.stride_in + self.kernel_size_in
@@ -93,15 +84,6 @@ class SlidingWindowParams:
             output_size = (num_wins - 1) * self.stride_out + self.kernel_size_out
 
         return padding, num_wins, output_size
-
-    def get_num_windows(self, input_size: int) -> int:
-        raise NotImplementedError()
-
-    def get_effective_padding(self, input_size: int) -> Tuple[int, int]:
-        raise NotImplementedError()
-
-    def get_output_size(self, input_size: int) -> int:
-        raise NotImplementedError()
 
     def get_min_input_size(self) -> int:
         """

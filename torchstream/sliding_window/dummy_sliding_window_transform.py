@@ -8,9 +8,7 @@ class DummySlidingWindowTransform:
         self.params = params
 
     def __call__(self, x: np.ndarray):
-        left_pad, right_pad = self.params.get_effective_padding(x.shape[-1])
-        out_size = self.params.get_output_size(x.shape[-1])
-        num_wins = self.params.get_num_windows(x.shape[-1])
+        (left_pad, right_pad), num_wins, out_size = self.params.get_metrics_for_input(x.shape[-1])
 
         x = np.concatenate([np.zeros(left_pad), x])
         if right_pad < 0:
