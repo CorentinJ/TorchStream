@@ -4,7 +4,7 @@ from typing import Tuple, Union, overload
 import numpy as np
 import torch
 
-from torchstream.sequence_dtype import is_similar_dtype, seqdtype
+from torchstream.sequence_dtype import SeqDTypeLike, dtypes_compatible, seqdtype, to_seqdtype
 
 # TODO: include python base numerical types as List
 # TODO: limit to numerical types (i.e. not strings)
@@ -17,7 +17,7 @@ class SeqSpec:
     def __init__(
         self,
         shape: Tuple[int, ...],
-        dtype: seqdtype = torch.float32,
+        dtype: SeqDTypeLike = torch.float32,
         device: str = None,
     ) -> None: ...
 
@@ -26,7 +26,7 @@ class SeqSpec:
         self,
         seq_dim: int,
         ndims: int = None,
-        dtype: seqdtype = torch.float32,
+        dtype: SeqDTypeLike = torch.float32,
         device: str = None,
     ) -> None: ...
 
@@ -55,7 +55,7 @@ class SeqSpec:
             else:
                 self.shape = None
 
-        self.dtype = dtype
+        self.dtype = to_seqdtype(dtype)
 
         if self.is_torch and not device:
             self.device = "cpu"
@@ -81,7 +81,7 @@ class SeqSpec:
         elif self.is_numpy and not isinstance(seq, np.ndarray):
             return False, f"not a numpy array (got {type(seq)})"
 
-        if not is_similar_dtype(self.dtype, seq.dtype):
+        if not dtypes_compatible(self.dtype, seq.dtype):
             return False, f"dtype mismatch (got {seq.dtype}, expected {self.dtype})"
 
         if self.shape:
