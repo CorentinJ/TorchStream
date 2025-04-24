@@ -8,6 +8,7 @@ from torchstream.sequence_dtype import SeqDTypeLike, dtypes_compatible, seqdtype
 
 # TODO: include python base numerical types as List
 # TODO: limit to numerical types (i.e. not strings)
+#   -> Why though? For the NaN trick?
 Sequence = Union[torch.Tensor, np.ndarray]
 
 

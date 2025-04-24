@@ -16,7 +16,7 @@ class Stream:
 
         self._output_closed = False
 
-        self._in_buffs = (StreamBuffer(input_spec),)
+        self._in_buffs = (StreamBuffer(input_spec, name=f"{type(self)} input buffer"),)
 
     @property
     def input_closed(self) -> bool:
@@ -39,6 +39,7 @@ class Stream:
             in_buff.feed(input_, close_input=is_last_input)
 
         try:
+            # TODO! validate this output with the spec
             outputs = self._step()
         except:
             raise

@@ -7,18 +7,20 @@ import torch
 
 from torchstream.buffers.stream_buffer import StreamBuffer
 from torchstream.sequence_spec import Sequence
+from torchstream.sliding_window.nan_trick import get_nan_range, set_nan_range
 from torchstream.stream import NotEnoughInputError, Stream
 
 
 @pytest.mark.skip("Not a test")
 @torch.no_grad()
 def test_stream_equivalent(
-    stream: Stream,
     sync_fn: Callable,
+    stream: Stream,
     input_provider: Optional[Callable[[int], Sequence]] = None,
     in_step_sizes: Tuple[int, ...] = (7, 4, 12, 1, 17),
     in_seq_size: int = 50,
     atol: float = 1e-5,
+    check_throughput_with_nan_trick: bool = False,
 ):
     """
     Tests if a stream implementation gives outputs close or equivalent to its synchronous counterpart.
@@ -27,59 +29,71 @@ def test_stream_equivalent(
     Outputs must be sequential data of the same shape.
     TODO: better doc
 
+    :param check_throughput_with_nan_trick: TODO
     """
     input_provider = input_provider or stream.in_spec.randn
-    inputs = input_provider(in_seq_size)
-    # FIXME
-    inputs = (inputs,)
+    sync_input = input_provider(in_seq_size)
 
     ## Get the sync output
-    out_sync = sync_fn(*inputs)
-    # FIXME
-    out_sync = (out_sync,)
-    assert len(out_sync) == 1, f"The sync function returned {len(out_sync)} outputs, expected {1} outputs"
-    out_sync_buffs = (StreamBuffer(stream.out_spec),)
-    for out_sync_i, out_sync_buff in zip(out_sync, out_sync_buffs):
-        out_sync_buff.feed(out_sync_i, close_input=True)
+    out_sync = sync_fn(sync_input)
+    out_sync_buff = StreamBuffer(stream.out_spec)
+    out_sync_buff.feed(out_sync, close_input=True)
+    out_size = out_sync_buff.size
 
     ## Get the stream output & compare it
-    in_bufs = (StreamBuffer(stream.in_spec),)
-    for in_buf, arg in zip(in_bufs, inputs):
-        in_buf.feed(arg, close_input=True)
+    in_buff = StreamBuffer(stream.in_spec)
+    in_buff.feed(sync_input, close_input=True)
+    in_size = in_buff.size
 
     step_size_iter = iter(itertools.cycle(in_step_sizes))
     i = 0
+    # TODO: cleaner implementation of the throughput trick
+    stream_fed_seq_size = 0
     while not stream.output_closed:
         step_size = next(step_size_iter)
-        inputs_i = [in_buf.read(step_size) for in_buf in in_bufs]
+        stream_input_i = in_buff.read(step_size)
 
-        # FIXME: in_bufs[0]
         try:
-            out_stream = stream(*inputs_i, is_last_input=in_bufs[0].output_closed)
+            out_stream_i = stream(stream_input_i, is_last_input=in_buff.output_closed)
         except NotEnoughInputError:
             continue
 
-        # TODO: validate using spec
+        stream_fed_seq_size += step_size
 
-        # FIXME
-        out_stream = out_stream if isinstance(out_stream, tuple) else (out_stream,)
-        assert len(out_stream) == 1, "Stream output count mismatch"
+        stream_out_size = out_sync_buff.spec.get_seq_size(out_stream_i)
+        out_sync_i = out_sync_buff.read(stream_out_size)
 
         # Ensure the outputs are close
-        for out_sync_buff_i, out_stream_i in zip(out_sync_buffs, out_stream):
-            stream_out_size = out_sync_buff_i.spec.get_seq_size(out_stream_i)
-            out_sync_i = out_sync_buff_i.read(stream_out_size)
+        assert out_sync_i.shape == out_stream_i.shape, (
+            f"Shape mismatch on step {i} (got {out_stream_i.shape}, expected {out_sync_i.shape})"
+        )
+        max_error = np.abs(out_sync_i - out_stream_i).max()
+        assert max_error <= atol, (
+            f"Error too large on step {i} (got {max_error}, expected <= {atol})\n"
+            f"Sync: {out_sync_i}\nStream: {out_stream_i}"
+        )
 
-            assert out_sync_i.shape == out_stream_i.shape, (
-                f"Shape mismatch on step {i} (got {out_stream_i.shape}, expected {out_sync_i.shape})"
+        # Check throughput with the NaN trick
+        if check_throughput_with_nan_trick and stream_fed_seq_size < in_size:
+            copy_fn = np.copy if stream.in_spec.is_numpy else torch.clone
+            sync_input_i = copy_fn(sync_input)
+            set_nan_range(sync_input_i, (stream_fed_seq_size, in_size), dim=stream.in_spec.seq_dim)
+            out_sync_i = sync_fn(sync_input_i)
+            nan_range = get_nan_range(out_sync_i, dim=stream.out_spec.seq_dim)
+
+            assert nan_range[1] == out_size, (
+                f"Transform is not suitable for NaN trick, NaNs set at {(stream_fed_seq_size, in_size)} in the input "
+                f"propagated up to {nan_range}, when the output is {out_size} long. NaNs should have propagated to "
+                f"the end."
             )
-            max_error = np.abs(out_sync_i - out_stream_i).max()
-            assert max_error <= atol, (
-                f"Error too large on step {i} (got {max_error}, expected <= {atol})\n"
-                f"Sync: {out_sync_i}\nStream: {out_stream_i}"
+
+            current_output_size = out_size - out_sync_buff.size
+            assert nan_range[0] >= current_output_size, "Internal error"
+            assert nan_range[0] == current_output_size, (
+                f"The stream has output less than what's possible to output based on the NaN trick's output. "
+                f"Expected {nan_range[0]} outputs total at step {i}, got {current_output_size}."
             )
 
         i += 1
 
-    for out_sync_buff_i in out_sync_buffs:
-        assert out_sync_buff_i.output_closed, f"Stream output is too short, {out_sync_buff_i.size} outputs remain"
+    assert out_sync_buff.output_closed, f"Stream output is too short, {out_sync_buff.size} outputs remain"
