@@ -54,7 +54,12 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
         SeqSpec((1, 1, -1)),
     )
 
-    test_stream_equivalent(transform, conv_stream, check_throughput_with_nan_trick=True)
+    test_stream_equivalent(
+        transform,
+        conv_stream,
+        check_throughput_with_nan_trick=True,
+        nan_trick_max_in_kernel_gap=dilation - 1,
+    )
 
 
 @pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])

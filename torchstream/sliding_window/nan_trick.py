@@ -47,6 +47,7 @@ def run_nan_trick(
     in_nan_range: Tuple[int, int],
     input_spec: SeqSpec,
     output_spec: Optional[SeqSpec] = None,
+    # TODO!: much easier to provide a Sequence instead of seq size + spec + provider?
     input_provider: Optional[Callable[[int], Sequence]] = None,
 ) -> Tuple[int, Tuple[int, int] | None]:
     """
