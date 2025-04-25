@@ -4,7 +4,7 @@ from typing import Callable, Optional, Tuple, Union
 import numpy as np
 from torch import Tensor
 
-from torchstream.sequence_spec import SeqSpec
+from torchstream.sequence.seq_specs import SeqSpec
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.stream import NotEnoughInputError, Stream
 

@@ -6,7 +6,8 @@ import numpy as np
 import torch
 from z3 import And, If, Implies, Int, Ints, Not, Or, Solver, sat
 
-from torchstream.sequence_spec import SeqSpec, Sequence
+from torchstream.sequence.seq_specs import SeqSpec
+from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.nan_trick import run_nan_trick
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 

@@ -1,4 +1,5 @@
 import itertools
+from pathlib import Path
 from typing import Callable, Tuple
 
 import numpy as np
@@ -8,6 +9,8 @@ import torch
 from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.nan_trick import get_nan_range
 from torchstream.stream import Stream
+
+Path
 
 
 @pytest.mark.skip("Not a test")

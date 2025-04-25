@@ -1,7 +1,7 @@
 from typing import Optional, Tuple
 
-from torchstream.buffers.stream_buffer import StreamBuffer
-from torchstream.sequence_spec import SeqSpec, Sequence
+from torchstream.sequence.sequence import Sequence
+from torchstream.sequence.seq_specs import SeqSpec
 
 
 class Stream:
@@ -16,8 +16,9 @@ class Stream:
 
         self._output_closed = False
 
-        self._in_buffs = (StreamBuffer(input_spec, name=f"{type(self)} input buffer"),)
+        self._in_buffs = (Sequence(input_spec, name=f"{type(self)} input buffer"),)
 
+    # FIXME: settle on the names for both these properties
     @property
     def input_closed(self) -> bool:
         return all(in_buff.input_closed for in_buff in self._in_buffs)

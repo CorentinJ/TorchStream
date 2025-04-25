@@ -3,11 +3,15 @@ from typing import Optional, Tuple
 import numpy as np
 import torch
 
-from torchstream.sequence_spec import SeqSpec, Sequence
+from torchstream.sequence.seq_specs import SeqSpec
+
+# TODO: include python base numerical types as List
+from pathlib import Path
 
 
-class StreamBuffer:
+class Sequence:
     """
+    FIXME!! rewrite this doc
     Tensor-like class for buffering multidimensional sequential data. Supports both torch tensors and numpy arrays.
 
     The StreamBuffer class is essentially the implementation of queues for multidimensional tensors. Tensors of the
@@ -27,6 +31,12 @@ class StreamBuffer:
     TODO: transform asserts into exceptions
     """
 
+    # Sigs:
+    #   - Spec
+    #   - Spec + data (+close) -> check data
+    #   - dim + data (+close) -> derive spec
+    #   - Seq (possibly multiple) -> copy data
+
     def __init__(self, spec: SeqSpec, name: str = None):
         """
         :param data: optional initial tensors to buffer
@@ -36,7 +46,6 @@ class StreamBuffer:
         self.spec = spec
         self._buff = None
         self._input_closed = False
-        self._offset = 0
         self._name = name or "Buffer"
 
     @property
