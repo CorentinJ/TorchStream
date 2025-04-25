@@ -58,7 +58,6 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
         transform,
         conv_stream,
         check_throughput_with_nan_trick=True,
-        nan_trick_max_in_kernel_gap=dilation - 1,
     )
 
 
@@ -93,7 +92,11 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, dilation: int):
         SeqSpec((1, 1, -1)),
     )
 
-    test_stream_equivalent(conv, conv_stream)
+    test_stream_equivalent(
+        conv,
+        conv_stream,
+        check_throughput_with_nan_trick=True,
+    )
 
 
 @pytest.mark.parametrize("kernel_size_in", [1, 2, 5, 10])
@@ -129,4 +132,8 @@ def test_moving_average(
         SeqSpec((-1,), dtype=np.float32),
     )
 
-    test_stream_equivalent(tsfm, tsfm_stream)
+    test_stream_equivalent(
+        tsfm,
+        tsfm_stream,
+        check_throughput_with_nan_trick=True,
+    )

@@ -12,6 +12,7 @@ class SlidingWindowParams:
 
     # TODO: does default_factory actually cast?
     # The kernel size of the input. For dilated (à trous) convolutions, this is the span of the entire kernel.
+    # TODO: clarify these params are not only for convs
     kernel_size_in: int = field(default=1)
     stride_in: int = field(default=1)
     # The static number of elements to pad on the left side of the input.

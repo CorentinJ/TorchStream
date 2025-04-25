@@ -21,7 +21,6 @@ def test_stream_equivalent(
     in_seq_size: int = 50,
     atol: float = 1e-5,
     check_throughput_with_nan_trick: bool = False,
-    nan_trick_max_in_kernel_gap: int = 0,
 ):
     """
     Tests if a stream implementation gives outputs close or equivalent to its synchronous counterpart.
@@ -30,7 +29,7 @@ def test_stream_equivalent(
     Outputs must be sequential data of the same shape.
     TODO: better doc
 
-    :param check_throughput_with_nan_trick: TODO
+    :param check_throughput_with_nan_trick: TODO: doc
     """
     input_provider = input_provider or stream.in_spec.randn
     sync_input = input_provider(in_seq_size)
@@ -46,10 +45,18 @@ def test_stream_equivalent(
     in_buff.feed(sync_input, close_input=True)
     in_size = in_buff.size
 
-    step_size_iter = iter(itertools.cycle(in_step_sizes))
-    i = 0
     # TODO: cleaner implementation of the throughput trick
     stream_fed_seq_size = 0
+    nan_trick_in_buff = StreamBuffer(stream.in_spec)
+    nan_trick_in_buff.feed(sync_input)
+    # FIXME: this is a trivial hack that assumes that the input size at least the kernel size, ideally we'd only
+    # add the kernel size - 1 NaNs to the input.
+    nan_trick_in_buff.feed(sync_input, close_input=True)
+    nan_trick_in = nan_trick_in_buff.read()
+    set_nan_range(nan_trick_in, (in_size, None), dim=stream.in_spec.seq_dim)
+
+    step_size_iter = iter(itertools.cycle(in_step_sizes))
+    i = 0
     while not stream.output_closed:
         step_size = next(step_size_iter)
         stream_input_i = in_buff.read(step_size)
@@ -59,7 +66,7 @@ def test_stream_equivalent(
         except NotEnoughInputError:
             out_stream_i = stream.out_spec.empty()
 
-        stream_fed_seq_size += step_size
+        stream_fed_seq_size += in_buff.spec.get_seq_size(stream_input_i)
 
         stream_out_size = out_sync_buff.spec.get_seq_size(out_stream_i)
         out_sync_i = out_sync_buff.read(stream_out_size)
@@ -76,22 +83,20 @@ def test_stream_equivalent(
             )
 
         # Check throughput with the NaN trick
-        # Note that the NaN trick is not guaranteed to work if the kernel has gaps larger than the number of
-        # consecutive NaNs; in that case we skip the check.
-        if check_throughput_with_nan_trick and in_size - stream_fed_seq_size > nan_trick_max_in_kernel_gap:
+        if check_throughput_with_nan_trick and not stream.output_closed:
+            # TODO: this api is terrible, let's improve it
             copy_fn = np.copy if stream.in_spec.is_numpy else torch.clone
-            sync_input_i = copy_fn(sync_input)
-            set_nan_range(sync_input_i, (stream_fed_seq_size, in_size), dim=stream.in_spec.seq_dim)
-            out_sync_i = sync_fn(sync_input_i)
-            nan_range = get_nan_range(out_sync_i, dim=stream.out_spec.seq_dim)
+            nan_trick_in_i = copy_fn(nan_trick_in)
+            set_nan_range(nan_trick_in_i, (stream_fed_seq_size, in_size), dim=stream.in_spec.seq_dim)
+            out_nan_trick_i = sync_fn(nan_trick_in_i)
+            out_nan_size = out_sync_buff.spec.get_seq_size(out_nan_trick_i)
+            nan_range = get_nan_range(out_nan_trick_i, dim=stream.out_spec.seq_dim)
+            assert nan_range, "Internal error: kernel size must be greater than the input sequence size"
 
-            # FIXME
-            nan_range = nan_range or (out_size, out_size)
-
-            assert nan_range[1] == out_size, (
-                f"Transform is not suitable for NaN trick, NaNs set at {(stream_fed_seq_size, in_size)} in the input "
-                f"propagated up to {nan_range}, when the output is {out_size} long. NaNs should have propagated to "
-                f"the end."
+            assert nan_range[1] == out_nan_size, (
+                f"Transform is not suitable for NaN trick, NaNs set at {(stream_fed_seq_size, 2 * in_size)} in the "
+                f"input propagated up to {nan_range}, when the output is {out_nan_size} long. NaNs should have "
+                f"propagated to the end."
             )
 
             current_output_size = out_size - out_sync_buff.size
@@ -103,4 +108,4 @@ def test_stream_equivalent(
 
         i += 1
 
-    assert out_sync_buff.output_closed, f"Stream output is too short, {out_sync_buff.size} outputs remain"
+    assert out_sync_buff.output_closed, f"Stream output is too short, {out_sync_buff.size} more outputs expected"

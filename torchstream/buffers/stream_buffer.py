@@ -180,8 +180,7 @@ class StreamBuffer:
         Reads a sequence of size up to n from the start of buffer without consuming it. If the buffer does not have
         enough elements, the entire buffer is returned.
 
-        :param n: Number of elements to peek at. If None, peeks at the entire buffer. A read of 0 is possible only if
-        the buffer has held data in the past.
+        :param n: Number of elements to peek at. If None, peeks at the entire buffer.
         :return: The first n elements of the buffer
         """
         n = self.size if n is None else n
