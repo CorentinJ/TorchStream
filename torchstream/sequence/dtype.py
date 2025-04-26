@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from numpy.typing import DTypeLike
+from numpy.typing import ArrayLike, DTypeLike
 
 """
 Notes on typing:
@@ -10,21 +10,26 @@ a similar scalar type but also memory layout information, byte encoding order, e
 
 # Used for argument typing. Supports a broad range of types.
 SeqDTypeLike = torch.dtype | DTypeLike
+SeqArrayLike = torch.Tensor | ArrayLike
+
 # Used for normalized types (e.g. class attributes)
 seqdtype = torch.dtype | np.dtype
 
 
-def to_seqdtype(dtype: SeqDTypeLike) -> seqdtype:
+# TODO: clean overload for type vs array
+def to_seqdtype(obj: SeqDTypeLike | SeqArrayLike) -> seqdtype:
     """
-    Normalizes a dtype to a torch.dtype or a numpy dtype.
+    Normalizes a dtype to a torch.dtype or a numpy dtype. Can also extract the dtype from an array-like object.
     """
-    if isinstance(dtype, torch.dtype):
-        return dtype
+    if isinstance(obj, torch.dtype):
+        return obj
+    elif torch.is_tensor(obj):
+        return obj.dtype
     try:
-        return np.dtype(dtype)
+        return np.dtype(obj)
     except TypeError:
         raise TypeError(
-            f"Cannot convert {dtype} to a sequence dtype. Please use a torch.dtype or a numpy dtype."
+            f"Cannot convert {obj} to a sequence dtype. Please use a torch.dtype or a numpy dtype."
         ) from None
 
 
