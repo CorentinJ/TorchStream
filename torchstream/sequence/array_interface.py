@@ -84,6 +84,12 @@ class ArrayInterface(ABC, Generic[SeqArray]):
         """
         raise NotImplementedError()
 
+    def new_zeros(self, *shape: int | Tuple[int, ...]) -> SeqArray:
+        """
+        Returns an array of the given shape, filled with zeros.
+        """
+        return self.new_empty(*shape).zero_()
+
     def new_randn(self, *shape: int | Tuple[int, ...]) -> SeqArray:
         """
         Sample a sequence of the given size from a normal distribution (discretized for integer types).
@@ -108,6 +114,9 @@ class NumpyArrayInterface(ArrayInterface[np.ndarray]):
 
     def new_empty(self, *shape: int | Tuple[int, ...]) -> np.ndarray:
         return np.empty(shape, dtype=self.dtype)
+
+    def new_zeros(self, *shape: int | Tuple[int, ...]) -> np.ndarray:
+        return np.zeros(shape, dtype=self.dtype)
 
     def new_randn(self, *shape: int | Tuple[int, ...]) -> np.ndarray:
         return np.random.randn(*shape).astype(self.dtype)
@@ -158,6 +167,9 @@ class TensorInterface(ArrayInterface[torch.Tensor]):
 
     def new_empty(self, *shape: int | Tuple[int, ...]) -> torch.Tensor:
         return torch.empty(shape, dtype=self.dtype, device=self.device)
+
+    def new_zeros(self, *shape: int | Tuple[int, ...]) -> torch.Tensor:
+        return torch.zeros(shape, dtype=self.dtype, device=self.device)
 
     def new_randn(self, *shape: int | Tuple[int, ...]) -> torch.Tensor:
         return torch.randn(shape, dtype=self.dtype, device=self.device)
