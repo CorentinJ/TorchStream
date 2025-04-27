@@ -93,6 +93,8 @@ class ArrayInterface(ABC, Generic[SeqArray]):
 
 class NumpyArrayInterface(ArrayInterface[np.ndarray]):
     def __init__(self, dtype_like: DTypeLike | ArrayLike):
+        # TODO: limit to numerical types (i.e. not strings)
+        #   -> Why though? For the NaN trick?
         self.dtype = np.dtype(dtype_like)
 
     def get(self, arr: np.ndarray, *idx) -> np.ndarray:
@@ -148,6 +150,11 @@ class TensorInterface(ArrayInterface[torch.Tensor]):
 
     def get_shape(self, arr: torch.Tensor) -> Tuple[int, ...]:
         return tuple(arr.shape)
+
+    def matches(self, arr: SeqArray | SeqDTypeLike) -> bool:
+        if super().matches(arr):
+            return arr.device == self.device
+        return False
 
     def new_empty(self, *shape: int | Tuple[int, ...]) -> torch.Tensor:
         return torch.empty(shape, dtype=self.dtype, device=self.device)

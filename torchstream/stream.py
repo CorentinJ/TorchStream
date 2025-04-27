@@ -1,7 +1,7 @@
 from typing import Optional, Tuple
 
 from torchstream.sequence.sequence import Sequence
-from torchstream.sequence.seq_specs import SeqSpec
+from torchstream.sequence.seq_spec import SeqSpec
 
 
 class Stream:

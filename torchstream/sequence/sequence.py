@@ -3,7 +3,7 @@ from typing import Optional, Tuple
 import numpy as np
 import torch
 
-from torchstream.sequence.seq_specs import SeqSpec
+from torchstream.sequence.seq_spec import SeqSpec
 
 # TODO: include python base numerical types as List
 from pathlib import Path
