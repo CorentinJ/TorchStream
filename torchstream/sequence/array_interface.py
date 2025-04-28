@@ -19,6 +19,7 @@ def _to_slice(*idx):
 class ArrayInterface(ABC, Generic[SeqArray]):
     dtype: seqdtype
 
+    # TODO: overloads
     def __new__(cls, dtype_like: SeqDTypeLike | SeqArrayLike, device: str | torch.device = None):
         if cls is ArrayInterface:
             dtype = to_seqdtype(dtype_like)

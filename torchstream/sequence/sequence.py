@@ -1,12 +1,67 @@
+import numbers
 from typing import Optional, Tuple
 
 import numpy as np
 import torch
 
-from torchstream.sequence.seq_spec import SeqSpec
+from torchstream.sequence.array_interface import ArrayInterface
+from torchstream.sequence.dtype import SeqArrayLike, SeqDTypeLike
 
-# TODO: include python base numerical types as List
-from pathlib import Path
+
+class SeqSpec:
+    # TODO! overloads in pyi
+    def __init__(self, *shape_args, dtype_like: SeqDTypeLike | SeqArrayLike, device: str | torch.device = None):
+        """
+        TODO: doc
+        """
+        # Shape overload
+        if not isinstance(shape_args[0], numbers.Number):
+            self.shape = tuple(int(dim_size) for dim_size in shape_args[0])
+            if not self.shape.count(-1) == 1:
+                raise ValueError(f"Shape must have a single -1, got {self.shape}")
+            self.seq_dim = self.shape.index(-1)
+            self.ndim = len(self.shape)
+
+        # Seqdim overload
+        else:
+            # TODO: handle negative dims?
+            self.seq_dim = shape_args[0]
+            self.ndim = shape_args[1] if len(shape_args) > 1 else None
+            if self.ndim:
+                if self.seq_dim >= self.ndim:
+                    raise ValueError(f"seq_dim {self.seq_dim} must be less than ndims {self.ndim}")
+                self.shape = (None,) * self.ndim
+                self.shape[self.seq_dim] = -1
+            else:
+                self.shape = None
+
+        self._arr_if = ArrayInterface(dtype_like, device)
+
+    # TODO: needs heavy testing
+    def matches(self, arr: SeqArrayLike) -> bool:
+        """
+        Returns whether a given array is compatible with the sequence specification. Compatible in this context means
+        that, at least, the array:
+            - is from the same library as the specification (torch, numpy, ...)
+            - has the same number representation type (floating point, integer, complex, ...) as the sequence dtype
+            - matches the shape of the specification (except for the sequence dimension, which is -1), or the number of
+            dimensions when the shape is not specified.
+        """
+        if not self._arr_if.matches(arr):
+            return False
+
+        # f"dtype mismatch (got {arr.dtype}, expected {self.dtype})"
+
+        if self.shape:
+            if len(arr.shape) != len(self.shape):
+                return False  # , f"shape ndim mismatch (got {arr.shape}, expected {self.shape})"
+            for i, (dim_size, expected_dim_size) in enumerate(zip(arr.shape, self.shape)):
+                if expected_dim_size is not None and i != self.arr_dim and dim_size != expected_dim_size:
+                    return False  # , f"shape mismatch on dimension {i} (got {arr.shape}, expected {self.shape})"
+        else:
+            pass  # TODO!!
+
+        return True
 
 
 class Sequence:
@@ -35,18 +90,53 @@ class Sequence:
     #   - Spec
     #   - Spec + data (+close) -> check data
     #   - dim + data (+close) -> derive spec
-    #   - Seq (possibly multiple) -> copy data
+    #   - Seq (possibly multiple +close) -> copy data
+    # close & name forced in kwarg
 
-    def __init__(self, spec: SeqSpec, name: str = None):
+    def __init__(self, *args, **kwargs):
         """
+        TODO! rewrite doc
+
         :param data: optional initial tensors to buffer
         :param dim: data specification for the sequence, containing at the minimum the shape or sequence dimension.
         :param name: a name to give to this instance, useful for debugging
         """
-        self.spec = spec
+        # TODO: verify compatible types when multiple inputs provided
+        if isinstance(args[0], SeqSpec) or "spec" in kwargs:
+            # Case 1 & 2
+            self.spec = kwargs.get("spec", args[0])
+            arrays = args[1:]
+        elif isinstance(args[0], numbers.Number) and len(args) > 1:
+            # Case 3
+            # TODO: implement that same overload for SeqSpec
+            shape = ArrayInterface(args[1]).get_shape(args[1])
+            shape[args[0]] = -1
+            self.spec = SeqSpec(shape, args[1])
+            arrays = args[1:]
+        elif isinstance(args[0], Sequence):
+            # Case 4
+            self.spec = args[0].spec
+            arrays = args
+        else:
+            raise TypeError(f"Cannot infer a SeqSpec from positional arguments Sequence{args}")
+
+        self._arr_if = self.spec._arr_if
         self._buff = None
         self._input_closed = False
-        self._name = name or "Buffer"
+        # TODO: better default name, or just default to none and handle in repr?
+        self._name = kwargs.get("name", "Sequence")
+
+        for arr in arrays:
+            self.feed(arr)
+        if kwargs.get("close_input", False):
+            self.close_input()
+
+    @property
+    def data(self) -> SeqArrayLike:
+        """
+        The data currently in the buffer. None if no data has been fed.
+        """
+        return self._buff
 
     @property
     def dim(self) -> int:

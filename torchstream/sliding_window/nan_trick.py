@@ -4,8 +4,7 @@ from typing import Callable, Optional, Tuple, Union
 import numpy as np
 import torch
 
-from torchstream.sequence.seq_spec import SeqSpec
-from torchstream.sequence.sequence import Sequence
+from torchstream.sequence.sequence import SeqSpec, Sequence
 from torchstream.sliding_window.dummy_sliding_window_transform import DummySlidingWindowTransform
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 
