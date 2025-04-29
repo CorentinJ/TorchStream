@@ -6,7 +6,7 @@ import torch
 from torch import nn
 
 from tests.rng import set_seed
-from torchstream.sequence.sequence import SeqSpec
+from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params_for_transform
 
 

@@ -30,7 +30,7 @@ def test_stream_equivalent(
     :param check_throughput_with_nan_trick: TODO: doc
     """
     if not in_seq:
-        in_seq = stream.in_spec.new_randn(seq_size=50)
+        in_seq = Sequence.randn(stream.in_spec, seq_size=50)
 
     # Get the sync output
     # FIXME!: how's this gonna work for multiple inputs?

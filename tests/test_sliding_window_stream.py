@@ -7,7 +7,7 @@ from torch import nn
 
 from tests.rng import set_seed
 from tests.stream_equivalency import test_stream_equivalent
-from torchstream.sequence.sequence import SeqSpec
+from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.dummy_sliding_window_transform import DummySlidingWindowTransform
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
