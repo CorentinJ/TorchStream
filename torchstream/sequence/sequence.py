@@ -1,5 +1,5 @@
 import numbers
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 from torchstream.sequence.array_interface import ArrayInterface
 from torchstream.sequence.dtype import SeqArrayLike
@@ -248,6 +248,16 @@ class Sequence:
         out = self.peek(n)
         self.drop(n)
         return out
+
+    # TODO: multiple inputs/outputs support
+    @classmethod
+    def apply(cls, trsfm: Callable, in_seq: "Sequence", out_spec: SeqSpec | None = None) -> "Sequence":
+        out_spec = out_spec or in_seq
+        out_spec = out_spec.spec if isinstance(out_spec, Sequence) else out_spec
+
+        out_arr = trsfm(in_seq.peek())
+        out_seq = cls(out_spec, out_arr, close_input=True)
+        return out_seq
 
     def __repr__(self) -> str:
         return f"<Sequence shape={self.shape} dim={self.dim}>"
