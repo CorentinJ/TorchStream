@@ -1,7 +1,6 @@
 import numbers
 from typing import Optional, Tuple
 
-import numpy as np
 import torch
 
 from torchstream.sequence.array_interface import ArrayInterface
@@ -63,17 +62,40 @@ class SeqSpec:
 
         return True
 
+    def get_shape_for_size(self, size: int) -> Tuple[int, ...]:
+        shape = list(self.shape)
+        shape[self.seq_dim] = size
+        return tuple(shape)
+
+    def new_empty(self, size: int = 0) -> "Sequence":
+        """
+        Returns an empty Sequence of the given shape. The array's values are uninitialized.
+        """
+        return Sequence(self, self._arr_if.new_empty(self.get_shape_for_size(size)))
+
+    def new_zeros(self, size: int) -> "Sequence":
+        """
+        Returns a Sequence of the given size, filled with zeros.
+        """
+        return Sequence(self, self._arr_if.new_zeros(self.get_shape_for_size(size)))
+
+    def new_randn(self, size: int) -> "Sequence":
+        """
+        Sample a Sequence of the given size from a normal distribution (discretized for integer types).
+        """
+        return Sequence(self, self._arr_if.new_randn(self.get_shape_for_size(size)))
+
 
 class Sequence:
     """
     FIXME!! rewrite this doc
     Tensor-like class for buffering multidimensional sequential data. Supports both torch tensors and numpy arrays.
 
-    The StreamBuffer class is essentially the implementation of queues for multidimensional tensors. Tensors of the
+    The Sequence class is essentially the implementation of queues for multidimensional tensors. Tensors of the
     same shape (aside from the sequence dimension) are queued up into the buffer and can be read or dropped in
     FIFO order.
 
-    >>> buff = StreamBuffer(spec=SeqSpec(seq_dim=1))
+    >>> buff = Sequence(spec=SeqSpec(seq_dim=1))
     >>> buff.feed(torch.arange(6).reshape((3, 2)))
     >>> buff.feed(torch.arange(9).reshape((3, 3)))
     >>> buff.read(4)
@@ -95,7 +117,7 @@ class Sequence:
 
     def __init__(self, *args, **kwargs):
         """
-        TODO! rewrite doc
+        TODO! rewrite all the docs for this class
 
         :param data: optional initial tensors to buffer
         :param dim: data specification for the sequence, containing at the minimum the shape or sequence dimension.
@@ -148,18 +170,18 @@ class Sequence:
     @property
     def size(self) -> int:
         """
-        The available size of the buffer, equivalent to self.shape[self.dim] if any data has been fed.
+        The available size of the buffer, equivalent to self.shape[self.dim] if the spec is complete.
         TODO: __len__ override? Might be confusing with equivalent tensor len override that returns the size of the
         first dimension.
         """
-        return self._buff.shape[self.dim] if self._buff is not None else 0
+        return self.shape[self.dim] if self._buff is not None else 0
 
     @property
     def shape(self) -> Optional[Tuple[int]]:
         """
         The shape of the buffer. None if no data has been fed.
         """
-        return self._buff.shape if self._buff is not None else None
+        return self._arr_if.get_shape(self._buff) if self._buff is not None else None
 
     @property
     def name(self) -> str:
@@ -195,15 +217,9 @@ class Sequence:
 
     def _clear_buf(self):
         if self._buff is not None:
-            new_shape = list(self._buff.shape)
-            new_shape[self.dim] = 0
+            self._buff = self.spec.new_empty()
 
-            if self.spec.is_numpy:
-                self._buff = np.empty_like(self._buff, shape=new_shape)
-            else:
-                self._buff = self._buff.new_empty(new_shape)
-
-    def feed(self, x: Sequence, close_input=False):
+    def feed(self, x: SeqArrayLike | "Sequence", close_input=False):
         """
         Feeds data at the end of the buffer. If the buffer is closed for input, this will raise an exception.
 
@@ -212,34 +228,20 @@ class Sequence:
         :param close_input: Whether to close the buffer for input after this call.
         """
         assert not self._input_closed, f"Trying to feed data into {self.name}, but input is closed"
-        is_matching, reason = self.spec.matches(x)
+
+        x = x.data if isinstance(x, Sequence) else x
+        is_matching = self.spec.matches(x)
         if not is_matching:
-            raise ValueError(f"Cannot feed {type(x)} to {self.name}: {reason}")
+            # TODO!
+            raise ValueError(f"Cannot feed {type(x)} to {self.name}: reason")
 
         if self._buff is None:
-            self._buff = x.clone() if self.spec.is_torch else x.copy()
+            self._buff = self._arr_if.copy(x)
         else:
-            assert (
-                self._buff.shape[: self.dim] == x.shape[: self.dim]
-                and self._buff.shape[self.dim + 1 :] == x.shape[self.dim + 1 :]
-            ), (
-                f"Trying to feed {x.shape} data into {self.name}, but the buffer with dim={self.dim} already "
-                f"has shape {self._buff.shape}"
-            )
-
-            concat_fn = np.concatenate if self.spec.is_numpy else torch.cat
-            self._buff = concat_fn((self._buff, x), axis=self.dim)
+            self._buff = self._arr_if.concat(self._buff, x, dim=self.dim)
 
         if close_input:
             self.close_input()
-
-    def _copy_slice(self, start: Optional[int], stop: Optional[int]) -> Sequence:
-        """
-        Copies a slice of the buffer to a new tensor
-        """
-        copy_fn = np.copy if self.spec.is_numpy else torch.clone
-        slices = self.spec.get_slices(start, stop)
-        return copy_fn(self._buff[slices])
 
     def drop(self, n: Optional[int] = None) -> int:
         """
@@ -264,7 +266,7 @@ class Sequence:
 
         # Slice the buffer to make a copy of the remaining elements, so as not to hold a view containing the
         # dropped ones
-        self._buff = self._copy_slice(n, None)
+        self._buff = self._arr_if.copy(self._arr_if.get_along_dim(self._buff, n, dim=self.dim))
 
         return n
 
@@ -274,7 +276,7 @@ class Sequence:
         """
         return self.drop(max(self.size - n, 0))
 
-    def peek(self, n: Optional[int] = None) -> Sequence:
+    def peek(self, n: Optional[int] = None) -> "Sequence":
         """
         Reads a sequence of size up to n from the start of buffer without consuming it. If the buffer does not have
         enough elements, the entire buffer is returned.
@@ -287,21 +289,16 @@ class Sequence:
 
         # If we're reading the entire buffer, just return it
         if n >= self.size:
+            # TODO! sort this empty buff thing...
             if self._buff is None:
-                try:
-                    return self.spec.empty()
-                except ValueError:
-                    raise RuntimeError(
-                        f"Cannot peek at {self._name} because it has never held data before and the sequence "
-                        f"specification is not complete enough to create an empty buffer"
-                    )
+                return self.spec.empty()
             return self._buff
 
         # Slice the buffer to make a copy of the first n elements, so as not to hold a view containing the
         # ones we don't need
-        return self._copy_slice(0, n)
+        return self._arr_if.copy(self._arr_if.get_along_dim(self._buff, 0, n, dim=self.dim))
 
-    def read(self, n: Optional[int] = None) -> Sequence:
+    def read(self, n: Optional[int] = None) -> "Sequence":
         """
         Reads a sequence of size up to n from the start of buffer while dropping it from the buffer. If the
         buffer does not have enough elements, the entire buffer is returned.
@@ -311,4 +308,4 @@ class Sequence:
         return out
 
     def __repr__(self) -> str:
-        return f"<buffer shape={self.shape} dim={self.dim}>"
+        return f"<Sequence shape={self.shape} dim={self.dim}>"
