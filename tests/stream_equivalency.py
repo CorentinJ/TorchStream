@@ -33,8 +33,7 @@ def test_stream_equivalent(
         in_seq = Sequence.randn(stream.in_spec, seq_size=50)
 
     # Get the sync output
-    # FIXME!: how's this gonna work for multiple inputs?
-    out_seq_ref = in_seq.apply(sync_fn, stream.out_spec)
+    out_seq_ref = Sequence.apply(sync_fn, in_seq, stream.out_spec)
 
     # FIXME: this is a trivial hack that assumes that the input size at least the kernel size, ideally we'd only
     # add the kernel size - 1 NaNs to the input.
@@ -66,8 +65,7 @@ def test_stream_equivalent(
         if check_throughput_with_nan_trick and not stream.output_closed:
             in_nan_trick_seq_i = in_nan_trick_seq.copy()
             in_nan_trick_seq_i[in_seq.consumed :] = float("nan")
-            # FIXME!: same as above
-            out_nan_trick_seq_i = in_nan_trick_seq_i.apply(sync_fn, stream.out_spec)
+            out_nan_trick_seq_i = Sequence.apply(sync_fn, in_nan_trick_seq_i, stream.out_spec)
             nan_range = get_nan_range(out_nan_trick_seq_i)
             assert nan_range, "Internal error: kernel size must be greater than the input sequence size"
 

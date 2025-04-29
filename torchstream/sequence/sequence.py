@@ -1,5 +1,5 @@
 import numbers
-from typing import Callable, Optional, Tuple
+from typing import Callable, Optional, Tuple, overload
 
 from torchstream.sequence.array_interface import ArrayInterface
 from torchstream.sequence.dtype import SeqArrayLike
@@ -94,6 +94,12 @@ class Sequence:
         Sample a Sequence of the given size from a normal distribution (discretized for integer types).
         """
         return cls(seq_spec, seq_spec.new_randn(seq_size))
+
+    def copy(self) -> "Sequence":
+        """
+        Returns a deep copy of this Sequence.
+        """
+        return Sequence(self.spec, self._arr_if.copy(self._buff), name=self._name)
 
     @property
     def data(self) -> SeqArrayLike:
@@ -218,7 +224,34 @@ class Sequence:
         """
         return self.drop(max(self.size - n, 0))
 
-    def peek(self, n: Optional[int] = None) -> "Sequence":
+    # TODO: overload getitem instead
+    @overload
+    def peek(self) -> "Sequence":
+        """
+        Reads the entire buffer without consuming it.
+        """
+        ...
+
+    @overload
+    def peek(self, n: int) -> "Sequence":
+        """
+        Reads up to n elements from the start of the buffer without consuming them.
+
+        :param n: Number of elements to read.
+        """
+        ...
+
+    @overload
+    def peek(self, start: int, end: int) -> "Sequence":
+        """
+        Reads a slice of elements from the buffer without consuming them.
+
+        :param start: Starting index of the slice.
+        :param end: Ending index of the slice (exclusive).
+        """
+        ...
+
+    def peek(self, *args) -> "Sequence":
         """
         Reads a sequence of size up to n from the start of buffer without consuming it. If the buffer does not have
         enough elements, the entire buffer is returned.
@@ -226,21 +259,27 @@ class Sequence:
         :param n: Number of elements to peek at. If None, peeks at the entire buffer.
         :return: The first n elements of the buffer
         """
-        n = self.size if n is None else n
-        assert n >= 0, f"Trying to peek at {n} elements from {self._name}, n must be positive"
+        assert len(args) <= 2
+        if len(args) == 0:
+            start, end = 0, None
+        elif len(args) == 1:
+            start, end = 0, args[0]
+        else:
+            start, end = args
+        end = self.size if end is None else end
+        assert end >= start, f"Trying to peek at {end - start} elements from {self._name}, n must be positive"
 
         # If we're reading the entire buffer, just return it
-        if n >= self.size:
+        if end - start >= self.size:
             # TODO! sort this empty buff thing...
             if self._buff is None:
                 return self.spec.empty()
             return self._buff
 
-        # Slice the buffer to make a copy of the first n elements, so as not to hold a view containing the
-        # ones we don't need
-        return self._arr_if.copy(self._arr_if.get_along_dim(self._buff, 0, n, dim=self.dim))
+        # Slice the buffer to make a copy of the elements, so as not to hold a view containing the ones we don't need
+        return self._arr_if.copy(self._arr_if.get_along_dim(self._buff, start, end, dim=self.dim))
 
-    def read(self, n: Optional[int] = None) -> "Sequence":
+    def consume(self, n: Optional[int] = None) -> "Sequence":
         """
         Reads a sequence of size up to n from the start of buffer while dropping it from the buffer. If the
         buffer does not have enough elements, the entire buffer is returned.

@@ -31,7 +31,12 @@ class Stream:
         for in_buff in self._in_buffs:
             in_buff.close_input()
 
-    def __call__(self, *inputs: Sequence, is_last_input: bool = False) -> Sequence | Tuple[Sequence]:
+    def __call__(
+        self,
+        *inputs: Sequence,
+        is_last_input: bool = False,
+        on_starve="raise",
+    ) -> Sequence | Tuple[Sequence]:
         # TODO: asserts -> exceptions
         assert not self.input_closed
         assert len(inputs) == len(self._in_buffs)
@@ -41,7 +46,13 @@ class Stream:
 
         try:
             # TODO! validate this output with the spec
-            outputs = self._step()
+            outputs = self._step(*self._in_buffs)
+            outputs = Sequence(self.out_spec, outputs)
+        except NotEnoughInputError:
+            if on_starve == "raise":
+                raise
+            elif on_starve == "empty":
+                outputs = self.out_spec.empty()
         except:
             raise
         finally:
@@ -50,9 +61,8 @@ class Stream:
 
         return outputs
 
-    # FIXME: might be better to provide buffers as arguments actually, so we can let users unpack the buffers with
-    # meaningful names in the function signature.
-    def _step(self) -> Sequence | Tuple[Sequence]:
+    # TODO: settle on return seq vs arrays
+    def _step(self, *in_seqs: Sequence) -> Sequence | Tuple[Sequence]:
         """
         :raises NotEnoughInputsError: if the stream cannot perform a step because it does not have enough inputs. This
         is typically a low severity error that can be caught by the caller in order to wait for more inputs before

@@ -5,6 +5,7 @@ import numpy as np
 from torch import Tensor
 
 from torchstream.sequence.seq_spec import SeqSpec
+from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.stream import NotEnoughInputError, Stream
 
@@ -42,11 +43,8 @@ class SlidingWindowStream(Stream):
         self._prev_trimmed_output = None
 
     # FIXME: signature
-    def _step(self) -> Union[Tensor, np.ndarray, Tuple[Tensor, np.ndarray]]:
-        # TODO: multi input support
-        in_buff = self._in_buffs[0]
-
-        (left_pad, right_pad), num_wins, expected_out_size = self.params.get_metrics_for_input(in_buff.size)
+    def _step(self, in_seq: Sequence) -> Union[Tensor, np.ndarray, Tuple[Tensor, np.ndarray]]:
+        (left_pad, right_pad), num_wins, expected_out_size = self.params.get_metrics_for_input(in_seq.size)
 
         # Get the index of the first window that will compute valid output that we'll return
         first_eff_win_idx = self._n_wins_left_context - self._n_wins_to_buffer_left
@@ -54,7 +52,7 @@ class SlidingWindowStream(Stream):
 
         # Likewise, get the index of the last window with valid output
         # If the input is closed, there is no output trimming that needs to occur on the right side
-        if in_buff.input_closed:
+        if in_seq.input_closed:
             out_trim_end = None
             eff_num_wins = num_wins - first_eff_win_idx
         # Otherwise, we may need to trim output on the right due to erroneous inputs incurred by right padding
@@ -68,33 +66,29 @@ class SlidingWindowStream(Stream):
                 return self._prev_trimmed_output
 
             # TODO: breakdown current state & display how much more data is needed
-            raise NotEnoughInputError(f"Input sequence of size {in_buff.size} is not enough to produce any output.")
+            raise NotEnoughInputError(f"Input sequence of size {in_seq.size} is not enough to produce any output.")
 
         # Forward the input
-        tsfm_input = in_buff.peek()
-        tsfm_output = self.transform(tsfm_input)
-        actual_out_size = self.out_spec.get_seq_size(tsfm_output)
-        if actual_out_size != expected_out_size:
+        tsfm_out = Sequence.apply(self.transform, in_seq, self.out_spec)
+        if tsfm_out.size != expected_out_size:
             raise ValueError(
-                f"Sliding window parameters are not matching {self.transform}, got a {actual_out_size} sized "
-                f"sequence instead of {expected_out_size} for {in_buff.size} sized input. Sliding window params: "
+                f"Sliding window parameters are not matching {self.transform}, got a {tsfm_out.size} sized "
+                f"sequence instead of {expected_out_size} for {in_seq.size} sized input. Sliding window params: "
                 f"{self.params}"
             )
 
         # Drop input that won't be necessary in the future
-        if in_buff.input_closed:
-            in_buff._clear_buf()
+        if in_seq.input_closed:
+            in_seq.drop()
         elif eff_num_wins > self._n_wins_to_buffer_left:
-            in_buff.drop((eff_num_wins - self._n_wins_to_buffer_left) * self.params.stride_in)
+            in_seq.drop((eff_num_wins - self._n_wins_to_buffer_left) * self.params.stride_in)
         self._n_wins_to_buffer_left = max(0, self._n_wins_to_buffer_left - eff_num_wins)
 
         # If we're trimming on the right, save the trim in case the stream closes before we can compute any
         # new sliding window output.
-        if out_trim_end and out_trim_end < actual_out_size:
-            slices = self.out_spec.get_slices(seq_start=out_trim_end, seq_stop=None)
-            self._prev_trimmed_output = tsfm_output[slices]
+        if out_trim_end and out_trim_end < tsfm_out.size:
+            self._prev_trimmed_output = tsfm_out.peek(out_trim_end, None)
         else:
             self._prev_trimmed_output = None
 
-        slices = self.out_spec.get_slices(seq_start=out_trim_start, seq_stop=out_trim_end)
-        return tsfm_output[slices]
+        return tsfm_out.peek(out_trim_start, out_trim_end)

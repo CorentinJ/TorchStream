@@ -105,10 +105,10 @@ class NumpyArrayInterface(ArrayInterface[np.ndarray]):
         self.dtype = np.dtype(dtype_like)
 
     def get(self, arr: np.ndarray, *idx) -> np.ndarray:
-        return arr[idx]
+        return arr.__getitem__(*idx)
 
     def set(self, arr: np.ndarray, *idx, value) -> None:
-        arr[idx] = value
+        arr.__setitem__(*idx, value)
 
     def get_shape(self, arr: np.ndarray) -> Tuple[int, ...]:
         return arr.shape
@@ -153,10 +153,10 @@ class TensorInterface(ArrayInterface[torch.Tensor]):
             self.device = torch.device(device or "cpu")
 
     def get(self, arr: torch.Tensor, *idx) -> torch.Tensor:
-        return arr[idx]
+        return arr.__getitem__(*idx)
 
     def set(self, arr: torch.Tensor, *idx, value) -> None:
-        arr[idx] = value
+        arr.__setitem__(*idx, value)
 
     def get_shape(self, arr: torch.Tensor) -> Tuple[int, ...]:
         return tuple(arr.shape)
