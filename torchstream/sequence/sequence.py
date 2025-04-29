@@ -9,7 +9,12 @@ from torchstream.sequence.dtype import SeqArrayLike, SeqDTypeLike
 
 class SeqSpec:
     # TODO! overloads in pyi
-    def __init__(self, *shape_args, dtype_like: SeqDTypeLike | SeqArrayLike, device: str | torch.device = None):
+    def __init__(
+        self,
+        *shape_args,
+        dtype_like: SeqDTypeLike | SeqArrayLike = torch.float32,
+        device: str | torch.device = None,
+    ):
         """
         TODO: doc
         """
@@ -55,7 +60,7 @@ class SeqSpec:
             if len(arr.shape) != len(self.shape):
                 return False  # , f"shape ndim mismatch (got {arr.shape}, expected {self.shape})"
             for i, (dim_size, expected_dim_size) in enumerate(zip(arr.shape, self.shape)):
-                if expected_dim_size is not None and i != self.arr_dim and dim_size != expected_dim_size:
+                if expected_dim_size is not None and i != self.seq_dim and dim_size != expected_dim_size:
                     return False  # , f"shape mismatch on dimension {i} (got {arr.shape}, expected {self.shape})"
         else:
             pass  # TODO!!
@@ -67,23 +72,23 @@ class SeqSpec:
         shape[self.seq_dim] = size
         return tuple(shape)
 
-    def new_empty(self, size: int = 0) -> "Sequence":
+    def new_empty(self, seq_size: int = 0) -> "Sequence":
         """
         Returns an empty Sequence of the given shape. The array's values are uninitialized.
         """
-        return Sequence(self, self._arr_if.new_empty(self.get_shape_for_size(size)))
+        return Sequence(self, self._arr_if.new_empty(self.get_shape_for_size(seq_size)))
 
-    def new_zeros(self, size: int) -> "Sequence":
+    def new_zeros(self, seq_size: int) -> "Sequence":
         """
         Returns a Sequence of the given size, filled with zeros.
         """
-        return Sequence(self, self._arr_if.new_zeros(self.get_shape_for_size(size)))
+        return Sequence(self, self._arr_if.new_zeros(self.get_shape_for_size(seq_size)))
 
-    def new_randn(self, size: int) -> "Sequence":
+    def new_randn(self, seq_size: int) -> "Sequence":
         """
         Sample a Sequence of the given size from a normal distribution (discretized for integer types).
         """
-        return Sequence(self, self._arr_if.new_randn(self.get_shape_for_size(size)))
+        return Sequence(self, self._arr_if.new_randn(self.get_shape_for_size(seq_size)))
 
 
 class Sequence:

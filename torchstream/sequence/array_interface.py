@@ -114,10 +114,10 @@ class NumpyArrayInterface(ArrayInterface[np.ndarray]):
         return arr.shape
 
     def new_empty(self, *shape: int | Tuple[int, ...]) -> np.ndarray:
-        return np.empty(shape, dtype=self.dtype)
+        return np.empty(shape[0] if isinstance(shape[0], tuple) else shape, dtype=self.dtype)
 
     def new_zeros(self, *shape: int | Tuple[int, ...]) -> np.ndarray:
-        return np.zeros(shape, dtype=self.dtype)
+        return np.zeros(shape[0] if isinstance(shape[0], tuple) else shape, dtype=self.dtype)
 
     def new_randn(self, *shape: int | Tuple[int, ...]) -> np.ndarray:
         return np.random.randn(*shape).astype(self.dtype)
@@ -167,13 +167,13 @@ class TensorInterface(ArrayInterface[torch.Tensor]):
         return False
 
     def new_empty(self, *shape: int | Tuple[int, ...]) -> torch.Tensor:
-        return torch.empty(shape, dtype=self.dtype, device=self.device)
+        return torch.empty(*shape, dtype=self.dtype, device=self.device)
 
     def new_zeros(self, *shape: int | Tuple[int, ...]) -> torch.Tensor:
-        return torch.zeros(shape, dtype=self.dtype, device=self.device)
+        return torch.zeros(*shape, dtype=self.dtype, device=self.device)
 
     def new_randn(self, *shape: int | Tuple[int, ...]) -> torch.Tensor:
-        return torch.randn(shape, dtype=self.dtype, device=self.device)
+        return torch.randn(*shape, dtype=self.dtype, device=self.device)
 
     def concat(self, *arrays: torch.Tensor, dim: int) -> torch.Tensor:
         return torch.cat(arrays, dim=dim)

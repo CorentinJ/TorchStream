@@ -1,5 +1,4 @@
 import itertools
-from pathlib import Path
 from typing import Callable, Tuple
 
 import numpy as np
@@ -9,8 +8,6 @@ import torch
 from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.nan_trick import get_nan_range
 from torchstream.stream import Stream
-
-Path
 
 
 @pytest.mark.skip("Not a test")
@@ -33,7 +30,7 @@ def test_stream_equivalent(
     :param check_throughput_with_nan_trick: TODO: doc
     """
     if not in_seq:
-        in_seq = stream.in_spec.randn(seq_size=50)
+        in_seq = stream.in_spec.new_randn(seq_size=50)
 
     # Get the sync output
     # FIXME!: how's this gonna work for multiple inputs?
