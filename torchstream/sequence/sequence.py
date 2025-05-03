@@ -64,6 +64,7 @@ class Sequence:
 
         self._arr_if = self.spec._arr_if
         self._buff = None
+        self._n_consumed = 0
         self._input_closed = False
         # TODO: better default name, or just default to none and handle in repr?
         self._name = kwargs.get("name", "Sequence")
@@ -108,6 +109,70 @@ class Sequence:
         """
         return self._buff
 
+    @overload
+    def __getitem__(self, idx: int) -> SeqArrayLike: ...
+
+    @overload
+    def __getitem__(self, sli: slice) -> SeqArrayLike: ...
+
+    def __getitem__(self, sli: int | slice) -> SeqArrayLike:
+        """
+        TODO: doc
+        Reads a sequence of size up to n from the start of buffer without consuming it. If the buffer does not have
+        enough elements, the entire buffer is returned.
+
+        :param n: Number of elements to peek at. If None, peeks at the entire buffer.
+        :return: The first n elements of the buffer
+        """
+        if not isinstance(sli, slice):
+            sli = slice(sli, sli + 1)
+        sli = slice(*sli.indices(self.size))
+        assert sli.stop >= sli.start, (
+            f"Trying to read {sli.stop - sli.start} elements from {self._name}, n must be positive"
+        )
+
+        # If we're reading the entire buffer, just return it
+        if sli.stop - sli.start >= self.size:
+            # TODO! sort this empty buff thing...
+            if self._buff is None:
+                return self.spec.empty()
+            return self._buff
+
+        # Slice the buffer to make a copy of the elements, so as not to hold a view containing the ones we don't need
+        # TODO: settle on copying or not
+        return self._arr_if.copy(self._arr_if.get_along_dim(self._buff, sli, dim=self.dim))
+
+    @overload
+    def __setitem__(self, idx: int, value: SeqArrayLike) -> None: ...
+
+    @overload
+    def __setitem__(self, sli: slice, value: SeqArrayLike) -> None: ...
+
+    def __setitem__(self, sli: int | slice, value: SeqArrayLike) -> None:
+        """
+        TODO: doc
+        Reads a sequence of size up to n from the start of buffer without consuming it. If the buffer does not have
+        enough elements, the entire buffer is returned.
+
+        :param n: Number of elements to peek at. If None, peeks at the entire buffer.
+        :return: The first n elements of the buffer
+        """
+        if not isinstance(sli, slice):
+            sli = slice(sli, sli + 1)
+        sli = slice(*sli.indices(self.size))
+        assert sli.stop >= sli.start, (
+            f"Trying to set {sli.stop - sli.start} elements from {self._name}, n must be positive"
+        )
+
+        self._arr_if.set_along_dim(self._buff, sli, self.dim, value)
+
+    @property
+    def consumed(self) -> int:
+        """
+        Number of elements consumed from the buffer alongside the sequence dimension.
+        """
+        return self._n_consumed
+
     @property
     def dim(self) -> int:
         """
@@ -130,6 +195,10 @@ class Sequence:
         The shape of the buffer. None if no data has been fed.
         """
         return self._arr_if.get_shape(self._buff) if self._buff is not None else None
+
+    @property
+    def ndim(self) -> int:
+        return self.spec.ndim
 
     @property
     def name(self) -> str:
@@ -209,12 +278,15 @@ class Sequence:
         # If we're dropping the entire buffer, just clear it
         if n >= self.size:
             out_size = self.size
+            self._n_consumed += out_size
             self._clear_buf()
             return out_size
 
         # Slice the buffer to make a copy of the remaining elements, so as not to hold a view containing the
         # dropped ones
-        self._buff = self._arr_if.copy(self._arr_if.get_along_dim(self._buff, n, dim=self.dim))
+        # TODO: copy
+        self._buff = self._arr_if.copy(self[n:])
+        self._n_consumed += n
 
         return n
 
@@ -224,67 +296,12 @@ class Sequence:
         """
         return self.drop(max(self.size - n, 0))
 
-    # TODO: overload getitem instead
-    @overload
-    def peek(self) -> "Sequence":
-        """
-        Reads the entire buffer without consuming it.
-        """
-        ...
-
-    @overload
-    def peek(self, n: int) -> "Sequence":
-        """
-        Reads up to n elements from the start of the buffer without consuming them.
-
-        :param n: Number of elements to read.
-        """
-        ...
-
-    @overload
-    def peek(self, start: int, end: int) -> "Sequence":
-        """
-        Reads a slice of elements from the buffer without consuming them.
-
-        :param start: Starting index of the slice.
-        :param end: Ending index of the slice (exclusive).
-        """
-        ...
-
-    def peek(self, *args) -> "Sequence":
-        """
-        Reads a sequence of size up to n from the start of buffer without consuming it. If the buffer does not have
-        enough elements, the entire buffer is returned.
-
-        :param n: Number of elements to peek at. If None, peeks at the entire buffer.
-        :return: The first n elements of the buffer
-        """
-        assert len(args) <= 2
-        if len(args) == 0:
-            start, end = 0, None
-        elif len(args) == 1:
-            start, end = 0, args[0]
-        else:
-            start, end = args
-        end = self.size if end is None else end
-        assert end >= start, f"Trying to peek at {end - start} elements from {self._name}, n must be positive"
-
-        # If we're reading the entire buffer, just return it
-        if end - start >= self.size:
-            # TODO! sort this empty buff thing...
-            if self._buff is None:
-                return self.spec.empty()
-            return self._buff
-
-        # Slice the buffer to make a copy of the elements, so as not to hold a view containing the ones we don't need
-        return self._arr_if.copy(self._arr_if.get_along_dim(self._buff, start, end, dim=self.dim))
-
     def consume(self, n: Optional[int] = None) -> "Sequence":
         """
         Reads a sequence of size up to n from the start of buffer while dropping it from the buffer. If the
         buffer does not have enough elements, the entire buffer is returned.
         """
-        out = self.peek(n)
+        out = self[:n]
         self.drop(n)
         return out
 
@@ -294,7 +311,7 @@ class Sequence:
         out_spec = out_spec or in_seq
         out_spec = out_spec.spec if isinstance(out_spec, Sequence) else out_spec
 
-        out_arr = trsfm(in_seq.peek())
+        out_arr = trsfm(in_seq.data)
         out_seq = cls(out_spec, out_arr, close_input=True)
         return out_seq
 

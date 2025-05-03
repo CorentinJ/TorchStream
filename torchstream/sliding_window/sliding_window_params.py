@@ -95,12 +95,9 @@ class SlidingWindowParams:
         return max(1, self.kernel_size_in - self.right_pad - self.left_pad)
 
     def get_inverse_map(self, input_size: int) -> np.ndarray:
-        # TODO! doc
-        out_size = self.get_output_size(input_size)
+        (left_pad, right_pad), num_wins, out_size = self.params.get_metrics_for_input(input_size)
         if not out_size:
             return np.zeros((0, 2), dtype=np.int64)
-        left_pad, right_pad = self.get_effective_padding(input_size)
-        num_wins = self.get_num_windows(input_size)
 
         padded_in_size = left_pad + input_size + right_pad
 

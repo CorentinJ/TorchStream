@@ -10,10 +10,10 @@ from torchstream.sequence.dtype import SeqArrayLike, SeqDTypeLike, dtypes_compat
 SeqArray = TypeVar("SeqArray", torch.Tensor, np.ndarray)
 
 
-def _to_slice(*idx):
-    if isinstance(idx[0], slice):
-        return idx[0]
-    return slice(*idx)
+def _to_slice(idx):
+    if isinstance(idx, slice):
+        return idx
+    return slice(idx, idx + 1)
 
 
 class ArrayInterface(ABC, Generic[SeqArray]):
@@ -35,25 +35,26 @@ class ArrayInterface(ABC, Generic[SeqArray]):
     def get(self, arr: SeqArray, *idx) -> SeqArray:
         raise NotImplementedError()
 
-    def get_along_dim(self, array: SeqArray, *idx, dim: int) -> SeqArray:
+    def get_along_dim(self, array: SeqArray, idx, dim: int) -> SeqArray:
         """
         Convenience method to index along a single dimension, returning the full space across all other dimensions.
         """
         slices = [slice(None)] * len(self.get_shape(array))
-        slices[dim] = _to_slice(*idx)
+        slices[dim] = _to_slice(idx)
         return self.get(array, tuple(slices))
 
     def set(self, arr: SeqArray, *idx, value) -> None:
         raise NotImplementedError()
 
-    def set_along_dim(self, array: SeqArray, *idx, dim: int, value) -> None:
+    def set_along_dim(self, array: SeqArray, idx, dim: int, value) -> None:
         """
         Convenience method to set values across a slice of a given dimension, including the full space across all other
         dimensions.
+        FIXME: not suited for setting a single element atm
         """
         slices = [slice(None)] * len(self.get_shape(array))
-        slices[dim] = _to_slice(*idx)
-        self.set(array, tuple(slices), value)
+        slices[dim] = _to_slice(idx)
+        self.set(array, tuple(slices), value=value)
 
     def get_shape(self, arr: SeqArray) -> Tuple[int, ...]:
         raise NotImplementedError()

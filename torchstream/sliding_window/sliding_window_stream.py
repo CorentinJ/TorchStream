@@ -87,8 +87,8 @@ class SlidingWindowStream(Stream):
         # If we're trimming on the right, save the trim in case the stream closes before we can compute any
         # new sliding window output.
         if out_trim_end and out_trim_end < tsfm_out.size:
-            self._prev_trimmed_output = tsfm_out.peek(out_trim_end, None)
+            self._prev_trimmed_output = tsfm_out[out_trim_end:]
         else:
             self._prev_trimmed_output = None
 
-        return tsfm_out.peek(out_trim_start, out_trim_end)
+        return tsfm_out[out_trim_start:out_trim_end]

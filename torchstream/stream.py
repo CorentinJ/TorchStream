@@ -52,7 +52,7 @@ class Stream:
             if on_starve == "raise":
                 raise
             elif on_starve == "empty":
-                outputs = self.out_spec.empty()
+                outputs = Sequence.empty(self.out_spec)
         except:
             raise
         finally:

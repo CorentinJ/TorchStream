@@ -12,7 +12,7 @@ class SeqSpec:
     def __init__(
         self,
         *shape_args,
-        dtype_like: SeqDTypeLike | SeqArrayLike = torch.float32,
+        dtype: SeqDTypeLike | SeqArrayLike = torch.float32,
         device: str | torch.device = None,
     ):
         """
@@ -39,7 +39,7 @@ class SeqSpec:
             else:
                 self.shape = None
 
-        self._arr_if = ArrayInterface(dtype_like, device)
+        self._arr_if = ArrayInterface(dtype, device)
 
     # TODO: needs heavy testing
     def matches(self, arr: SeqArrayLike) -> bool:

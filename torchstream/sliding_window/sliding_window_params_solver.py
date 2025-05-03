@@ -1,5 +1,6 @@
 import logging
 import math
+from functools import partial
 from typing import Callable, Iterable, List, Optional, Tuple
 
 import numpy as np
@@ -271,9 +272,8 @@ def find_nan_trick_params_by_infogain(
 @torch.no_grad()
 def find_sliding_window_params_for_transform(
     trsfm: Callable,
-    input_spec: SeqSpec,
+    input_provider: Callable[[int], Sequence] | SeqSpec,
     output_spec: Optional[SeqSpec] = None,
-    input_provider: Optional[Callable[[int], Sequence]] = None,
     min_in_seq_size: int = 1,
     max_in_seq_size: int = 10_000,
     max_hypotheses_per_step: int = 100,
@@ -289,15 +289,16 @@ def find_sliding_window_params_for_transform(
     This is only possible if the transform can be assimilated to a sliding window operation TODO: describe properties
     of this operation
 
+    TODO: rewrite docs
+
     TODO: handle multi-input/output
     :param input_spec: specification for the input format of the transform. The transform must accept the data format
     described in the input spec as positional arguments.
     :param output_spec: same as input_spec but for the output of the transform. If the transform has multiple
     sequential outputs, they must be returned as an iterable matching the output spec. If the output spec is
     identical to the input spec, it can be omitted, and the input spec will be used instead.
-    :param input_provider: a function that takes an integer representing the sequence size, and returns a sequence of
-    this size matching the input spec. By default, a random normal (rounded for int types) is sampled according to
-    the input specification.
+    :param input_provider: a function that takes an integer representing the sequence size, and returns a Sequence of
+    this size.
     :param max_hypotheses_per_step: the solver finds up to this amount of sliding windows parameters compatible with
     observations made over the execution of this function. Increasing this value will decrease the number of executions
     of the transforms, but increase the execution time of the solver. If necessary, tune it according to your model's
@@ -309,8 +310,9 @@ def find_sliding_window_params_for_transform(
     that returns the sum of the first and last element of the window has a gap of 3. A convolution with dilation
     greater than 1 has gaps of size <dilation - 1>.
     """
-    output_spec = output_spec or input_spec
-    input_provider = input_provider or input_spec.randn
+    if isinstance(input_provider, SeqSpec):
+        seq_spec = input_provider
+        input_provider = partial(Sequence.randn, seq_spec)
 
     solver = SlidingWindowParamsSolver()
 
@@ -352,8 +354,15 @@ def find_sliding_window_params_for_transform(
         assert (seq_size, in_nan_range) not in prev_nan_trick_params, "Internal error: nan trick parameters repeated"
         prev_nan_trick_params.add((seq_size, in_nan_range))
 
+        # Get an input of said size
+        in_seq = input_provider(seq_size)
+        if not isinstance(in_seq, Sequence):
+            raise TypeError(
+                f"The input_provider function {input_provider} returned a {type(in_seq)} when a Sequence was expected"
+            )
+
         # Perform the nan trick on the actual transform
-        out_size, out_nan_range = run_nan_trick(trsfm, seq_size, in_nan_range, input_spec, output_spec, input_provider)
+        out_size, out_nan_range = run_nan_trick(trsfm, in_seq, in_nan_range, output_spec=(output_spec or in_seq.spec))
 
         if out_size == 0:
             # TODO: better messages

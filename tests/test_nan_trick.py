@@ -4,21 +4,39 @@ import numpy as np
 import pytest
 import torch
 
-from torchstream.sliding_window.nan_trick import get_nan_range, set_nan_range
+from torchstream.sequence.dtype import SeqDTypeLike
+from torchstream.sequence.seq_spec import SeqSpec
+from torchstream.sequence.sequence import Sequence
+from torchstream.sliding_window.nan_trick import get_nan_range
 
 
 @pytest.mark.parametrize(
-    "shape, dim, nan_range",
+    "shape, nan_range",
     [
-        ((1, 1, 1), -1, None),
+        # TODO: add more cases
+        ((1, 1, -1), None),
+    ],
+)
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        torch.float32,
+        torch.float64,
+        torch.int32,
+        torch.int64,
+        np.float32,
+        np.float64,
+        np.int32,
+        np.int64,
     ],
 )
 def test_get_nan_range(
     shape: Tuple[int],
-    dim: int,
+    dtype: SeqDTypeLike,
     nan_range: Tuple[int, int] | None,
 ):
-    for tensor in [torch.randn(shape), np.random.randn(*shape)]:
-        if nan_range is not None:
-            set_nan_range(tensor, range=nan_range, dim=dim)
-        assert get_nan_range(tensor, dim=dim) == nan_range
+    seq = Sequence.zeros(SeqSpec(shape, dtype=dtype), seq_size=20)
+
+    if nan_range is not None:
+        seq[nan_range] = float("nan")
+    assert get_nan_range(seq) == nan_range

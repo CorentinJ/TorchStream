@@ -1,3 +1,4 @@
+from functools import partial
 from typing import List, Tuple
 
 import numpy as np
@@ -7,6 +8,7 @@ from torch import nn
 
 from tests.rng import set_seed
 from torchstream.sequence.seq_spec import SeqSpec
+from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params_for_transform
 
 
