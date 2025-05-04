@@ -25,11 +25,13 @@ def to_seqdtype(obj: SeqDTypeLike | SeqArrayLike) -> seqdtype:
         return obj
     elif torch.is_tensor(obj):
         return obj.dtype
+    elif isinstance(obj, np.ndarray):
+        return obj.dtype
     try:
         return np.dtype(obj)
     except TypeError:
         raise TypeError(
-            f"Cannot convert {obj} to a sequence dtype. Please use a torch.dtype or a numpy dtype."
+            f"Cannot convert {type(obj)} to a sequence dtype. Please use a torch.dtype or a numpy dtype."
         ) from None
 
 

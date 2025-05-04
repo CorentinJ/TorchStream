@@ -100,7 +100,9 @@ class ArrayInterface(ABC, Generic[SeqArray]):
 
 
 class NumpyArrayInterface(ArrayInterface[np.ndarray]):
-    def __init__(self, dtype_like: DTypeLike | ArrayLike):
+    def __init__(self, dtype_like: DTypeLike | ArrayLike, device=None):
+        # TODO: cleaner design
+        assert not device
         # TODO: limit to numerical types (i.e. not strings)
         #   -> Why though? For the NaN trick?
         self.dtype = np.dtype(dtype_like)
@@ -121,7 +123,7 @@ class NumpyArrayInterface(ArrayInterface[np.ndarray]):
         return np.zeros(shape[0] if isinstance(shape[0], tuple) else shape, dtype=self.dtype)
 
     def new_randn(self, *shape: int | Tuple[int, ...]) -> np.ndarray:
-        return np.random.randn(*shape).astype(self.dtype)
+        return np.random.randn(*(shape[0] if isinstance(shape[0], tuple) else shape)).astype(self.dtype)
 
     def concat(self, *arrays: np.ndarray, dim: int) -> np.ndarray:
         return np.concatenate(arrays, axis=dim)
