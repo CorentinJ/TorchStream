@@ -1,4 +1,3 @@
-from functools import partial
 from typing import List, Tuple
 
 import numpy as np
@@ -8,7 +7,6 @@ from torch import nn
 
 from tests.rng import set_seed
 from torchstream.sequence.seq_spec import SeqSpec
-from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params_for_transform
 
 
@@ -127,7 +125,7 @@ def test_infinite_receptive_field():
     def transform(x: np.ndarray):
         return np.full_like(x, fill_value=np.mean(x))
 
-    sols = find_sliding_window_params_for_transform(transform, SeqSpec((-1), dtype=np.float32))
+    sols = find_sliding_window_params_for_transform(transform, SeqSpec((-1,), dtype=np.float32))
     assert not sols
 
 
@@ -140,7 +138,7 @@ def test_no_receptive_field():
     def transform(x: np.ndarray):
         return np.full_like(x, fill_value=3.0)
 
-    sols = find_sliding_window_params_for_transform(transform, SeqSpec((-1), dtype=np.float32))
+    sols = find_sliding_window_params_for_transform(transform, SeqSpec((-1,), dtype=np.float32))
     assert not sols
 
 
@@ -170,5 +168,5 @@ def test_variable_receptive_field(variant: str):
 
         return y
 
-    sols = find_sliding_window_params_for_transform(transform, SeqSpec((-1), dtype=np.float32))
+    sols = find_sliding_window_params_for_transform(transform, SeqSpec((-1,), dtype=np.float32))
     assert not sols

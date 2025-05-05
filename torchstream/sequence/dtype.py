@@ -43,14 +43,14 @@ def dtypes_compatible(dtype1: SeqDTypeLike, dtype2: SeqDTypeLike) -> bool:
     dtype1, dtype2 = to_seqdtype(dtype1), to_seqdtype(dtype2)
 
     if isinstance(dtype1, torch.dtype) and isinstance(dtype2, torch.dtype):
-        return _is_similar_torch_dtype(dtype1, dtype2)
+        return _is_compatible_torch_dtype(dtype1, dtype2)
     elif isinstance(dtype1, np.dtype) and isinstance(dtype2, np.dtype):
         return dtype1.kind == dtype2.kind
     else:
         return False
 
 
-def _is_similar_torch_dtype(dtype1: torch.dtype, dtype2: torch.dtype) -> bool:
+def _is_compatible_torch_dtype(dtype1: torch.dtype, dtype2: torch.dtype) -> bool:
     t1 = torch.empty((), dtype=dtype1)
     t2 = torch.empty((), dtype=dtype2)
 

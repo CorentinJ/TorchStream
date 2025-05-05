@@ -315,6 +315,7 @@ def find_sliding_window_params_for_transform(
         input_provider = partial(Sequence.randn, seq_spec)
 
     solver = SlidingWindowParamsSolver()
+    solver_was_run = False
 
     # Until we have well-formed pairs of input/output examples from the transform, we'll determine the input
     # parameters based on heuristics.
@@ -324,7 +325,7 @@ def find_sliding_window_params_for_transform(
     step = 1
     hypotheses = []
     prev_nan_trick_params = set()
-    while len(hypotheses) != 1:
+    while len(hypotheses) > 1 or not solver_was_run:
         # Determine an input size and an input nan range
         if not hypotheses:
             # In the absence of input/output information, use sane defaults
@@ -400,6 +401,7 @@ def find_sliding_window_params_for_transform(
             default_seq_size = min(10 * default_seq_size, max_in_seq_size)
         else:
             hypotheses = solver.get_solutions(compatible_prev_hypotheses, max_solutions=max_hypotheses_per_step)
+            solver_was_run = True
 
         # Also verify that the hypotheses that have been eliminated are not in the solver's output
         if hyps_by_outcome:
