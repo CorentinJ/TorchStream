@@ -1,7 +1,7 @@
 # Copyright (c) 2024 NVIDIA CORPORATION.
 #   Licensed under the MIT license.
 
-# Adapted from https://github.com/jik876/hifi-gan under the MIT license.
+# Adapted from https://github.com/NVIDIA/BigVGAN/ under the MIT license.
 #   LICENSE is in incl_licenses directory.
 
 import json
@@ -11,11 +11,16 @@ from typing import Dict, Optional, Union
 
 import torch
 import torch.nn as nn
-from env import AttrDict
 from torch.nn import Conv1d, ConvTranspose1d
 from torch.nn.utils import remove_weight_norm, weight_norm
 
 from .activations import Activation1d, Snake
+
+
+class AttrDict(dict):
+    def __init__(self, *args, **kwargs):
+        super(AttrDict, self).__init__(*args, **kwargs)
+        self.__dict__ = self
 
 
 def get_padding(kernel_size, dilation=1):
@@ -32,6 +37,18 @@ def load_hparams_from_json(path) -> AttrDict:
     with open(path) as f:
         data = f.read()
     return AttrDict(json.loads(data))
+
+
+def load_uninit_bigvgan(config_name: str, device="cpu") -> "BigVGAN":
+    # FIXME: relative path
+    config_file = (Path("examples/bigvgan") / config_name).with_suffix(".json")
+    hparams = AttrDict(json.loads(config_file.read_text()))
+
+    bigvgan = BigVGAN(hparams).to(device)
+    bigvgan.eval()
+    bigvgan.remove_weight_norm()
+
+    return bigvgan
 
 
 class AMPBlock1(torch.nn.Module):
@@ -289,7 +306,6 @@ class BigVGAN(torch.nn.Module):
 
     def remove_weight_norm(self):
         try:
-            print("Removing weight norm...")
             for layer in self.ups:
                 for l_i in layer:
                     remove_weight_norm(l_i)
@@ -298,7 +314,6 @@ class BigVGAN(torch.nn.Module):
             remove_weight_norm(self.conv_pre)
             remove_weight_norm(self.conv_post)
         except ValueError:
-            print("[INFO] Model already removed weight norm. Skipping!")
             pass
 
     # Additional methods for huggingface_hub support
