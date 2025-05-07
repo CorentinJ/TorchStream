@@ -324,7 +324,7 @@ def find_sliding_window_params_for_transform(
 
     step = 1
     hypotheses = []
-    prev_nan_trick_params = set()
+    seen_nan_trick_params = set()
     while len(hypotheses) > 1 or not solver_was_run:
         # Determine an input size and an input nan range
         if not hypotheses:
@@ -352,8 +352,8 @@ def find_sliding_window_params_for_transform(
                 )
                 break
 
-        assert (seq_size, in_nan_range) not in prev_nan_trick_params, "Internal error: nan trick parameters repeated"
-        prev_nan_trick_params.add((seq_size, in_nan_range))
+        assert (seq_size, in_nan_range) not in seen_nan_trick_params, "Internal error: nan trick parameters repeated"
+        seen_nan_trick_params.add((seq_size, in_nan_range))
 
         # Get an input of said size
         in_seq = input_provider(seq_size)
@@ -411,8 +411,8 @@ def find_sliding_window_params_for_transform(
             )
 
         logger.info(
-            f"Step {step}: got {len(hypotheses)} hypothes{'es' if len(hypotheses) > 1 else 'is'} "
-            + (f" (max is {max_hypotheses_per_step})" if len(hypotheses) == max_hypotheses_per_step else "")
+            f"Step {step}: got {len(hypotheses)} hypothes{'es' if len(hypotheses) != 1 else 'is'} "
+            + (f"(max is {max_hypotheses_per_step})" if len(hypotheses) == max_hypotheses_per_step else "")
         )
 
         step += 1

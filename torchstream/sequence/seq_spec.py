@@ -34,8 +34,9 @@ class SeqSpec:
             if self.ndim:
                 if self.seq_dim >= self.ndim:
                     raise ValueError(f"seq_dim {self.seq_dim} must be less than ndims {self.ndim}")
-                self.shape = (None,) * self.ndim
-                self.shape[self.seq_dim] = -1
+                shape = [None] * self.ndim
+                shape[self.seq_dim] = -1
+                self.shape = tuple(shape)
             else:
                 self.shape = None
 

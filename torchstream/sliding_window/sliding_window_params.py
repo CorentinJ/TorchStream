@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass, field
 from typing import Tuple
 
@@ -27,6 +28,12 @@ class SlidingWindowParams:
     # The kernel size of the output. It is 1 for normal convolutions, but can be larger for transposed convolutions.
     kernel_size_out: int = field(default=1)
     stride_out: int = field(default=1)
+    # This parameter is for trimming both sides of the output. It is rare to trim the output in practice, typically
+    # it's for getting rid of non-fully overlapping windows of the output when the output kernel size is larger than 1.
+    # Transposed convolutions expose this parameter through the "padding" parameter for example.
+    # So far I haven't met a model that had different left/right values, output padding or trimming larger than the
+    # kernel size.
+    out_trim: int = field(default=0)
 
     def __post_init__(self):
         if self.kernel_size_in < 1:
@@ -41,6 +48,8 @@ class SlidingWindowParams:
             raise ValueError("left_pad must be at least 0 and at most kernel_size_in - 1.")
         if self.right_pad < 0 or self.right_pad >= self.kernel_size_in:
             raise ValueError("right_pad must be at least 0 and at most kernel_size_in - 1.")
+        if self.out_trim < 0 or self.out_trim >= self.kernel_size_out:
+            raise ValueError("out_trim must be at least 0 and at most kernel_size_out - 1.")
 
     def get_metrics_for_input(self, input_size: int) -> Tuple[Tuple[int, int], int, int]:
         """
@@ -82,17 +91,20 @@ class SlidingWindowParams:
         if num_wins == 0:
             output_size = 0
         else:
-            output_size = (num_wins - 1) * self.stride_out + self.kernel_size_out
+            output_size = max(0, (num_wins - 1) * self.stride_out + self.kernel_size_out - 2 * self.out_trim)
 
         return padding, num_wins, output_size
 
+    # TODO: test this function with a bunch of edge cases
     def get_min_input_size(self) -> int:
         """
-        Returns the minimum input size necessary to have any output.
-        This class considers that running a sliding window on an empty input is pointless and therefore the returned
-        value is always at least one.
+        Returns the minimum input size necessary to have any output element (i.e. length>0). The returned value is
+        always at least one.
         """
-        return max(1, self.kernel_size_in - self.right_pad - self.left_pad)
+        out_needed = 1 + self.out_trim * 2
+        num_wins_needed = int(math.ceil(max(0, out_needed - self.kernel_size_out) / self.stride_out)) + 1
+        non_padded_min_input_size = (num_wins_needed - 1) * self.stride_in + self.kernel_size_in
+        return max(1, non_padded_min_input_size - self.right_pad - self.left_pad)
 
     def get_inverse_map(self, input_size: int) -> np.ndarray:
         (left_pad, right_pad), num_wins, out_size = self.get_metrics_for_input(input_size)
@@ -107,7 +119,10 @@ class SlidingWindowParams:
         for i in range(num_wins):
             start_in_idx = i * self.stride_in - left_pad
             end_in_idx = i * self.stride_in + self.kernel_size_in - left_pad
-            out_sli = slice(i * self.stride_out, i * self.stride_out + self.kernel_size_out)
+            out_sli = slice(
+                i * self.stride_out - self.out_trim,
+                i * self.stride_out + self.kernel_size_out - self.out_trim,
+            )
             out[out_sli, 0] = np.minimum(out[out_sli, 0], start_in_idx)
             out[out_sli, 1] = np.maximum(out[out_sli, 1], end_in_idx)
 
@@ -119,5 +134,6 @@ class SlidingWindowParams:
             + f"    kernel_size_in={self.kernel_size_in}, stride_in={self.stride_in},\n"
             + f"    left_pad={self.left_pad}, right_pad={self.right_pad},\n"
             + f"    kernel_size_out={self.kernel_size_out}, stride_out={self.stride_out},\n"
+            + f"    out_trim={self.out_trim},\n"
             + ")"
         )
