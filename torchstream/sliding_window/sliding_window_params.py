@@ -120,8 +120,8 @@ class SlidingWindowParams:
             start_in_idx = i * self.stride_in - left_pad
             end_in_idx = i * self.stride_in + self.kernel_size_in - left_pad
             out_sli = slice(
-                i * self.stride_out - self.out_trim,
-                i * self.stride_out + self.kernel_size_out - self.out_trim,
+                max(0, i * self.stride_out - self.out_trim),
+                max(0, i * self.stride_out + self.kernel_size_out - self.out_trim),
             )
             out[out_sli, 0] = np.minimum(out[out_sli, 0], start_in_idx)
             out[out_sli, 1] = np.maximum(out[out_sli, 1], end_in_idx)
