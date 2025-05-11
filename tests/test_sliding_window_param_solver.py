@@ -1,3 +1,4 @@
+import logging
 from typing import List, Tuple
 
 import numpy as np
@@ -53,24 +54,33 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
 
 @pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])
 @pytest.mark.parametrize("stride", [1, 2, 3, 10, 17])
+@pytest.mark.parametrize("padding", [1, 2, 5])  # FIXME!!
 @pytest.mark.parametrize("dilation", [1, 2, 3])
-def test_conv_transpose_1d(kernel_size: int, stride: int, dilation: int):
+def test_conv_transpose_1d(kernel_size: int, stride: int, padding: int, dilation: int):
     kernel_span = (kernel_size - 1) * dilation + 1
     if stride > kernel_span:
         pytest.skip("Stride should be smaller than the kernel span")
+    if padding >= kernel_span:
+        pytest.skip(
+            "Output trimming (named padding for transposed convs) should be smaller than the output kernel span"
+        )
 
+    # FIXME
     params_str = f"k={kernel_span} (kernel {kernel_size} with d={dilation}), s={stride}"
     set_seed(0x5EED)
 
+    # The torch docs poorly explain the mechanism of transposed convolutions. Here's my take:
+    # Each input element multiplies the kernel (element-wise). That output is offset by the stride on each step, and
+    # all resulting vectors are summed.
     conv = nn.ConvTranspose1d(
         in_channels=1,
         out_channels=1,
         kernel_size=kernel_size,
         stride=stride,
+        # "padding" is poorly explained in https://pytorch.org/docs/stable/generated/torch.nn.ConvTranspose1d.html
+        # A better explanation of the parameter is that it trims the output on both sides by the given amount.
+        padding=padding,
         dilation=dilation,
-        # TODO: (input) padding as explained in https://pytorch.org/docs/stable/generated/torch.nn.ConvTranspose1d.html
-        # seems completely wrong. Note that transposed convolutions have an input kernel size of 1, so it makes no
-        # sense to have any input padding at all.
         # TODO: handle grouping?
         # TODO: handle output padding?
     )
@@ -79,7 +89,10 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, dilation: int):
 
     assert sols, f"Expected solution, but none found for {params_str}"
     assert any(
-        sol.kernel_size_out == kernel_span and sol.stride_out == stride and sol.left_pad == sol.right_pad == 0
+        sol.kernel_size_out == kernel_span
+        and sol.stride_out == stride
+        and sol.left_pad == sol.right_pad == 0
+        and sol.out_trim == padding
         for sol in sols
     ), f"Expected solution with {params_str}, but none found in {sols}"
 
@@ -87,11 +100,15 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, dilation: int):
 @pytest.mark.parametrize(
     "conv_params",
     [
+        # (
+        #     {"transposed": False, "kernel_size": 7, "stride": 1, "padding": 3, "dilation": 1},
+        #     {"transposed": False, "kernel_size": 3, "stride": 1, "padding": 2, "dilation": 2},
+        #     {"transposed": True, "kernel_size": 2, "stride": 2},
+        #     {"transposed": True, "kernel_size": 3, "stride": 3},
+        # ),
         (
-            {"transposed": False, "kernel_size": 7, "stride": 1, "padding": 3, "dilation": 1},
-            {"transposed": False, "kernel_size": 3, "stride": 1, "padding": 2, "dilation": 2},
-            {"transposed": True, "kernel_size": 2, "stride": 2},
-            {"transposed": True, "kernel_size": 3, "stride": 3},
+            {"transposed": False, "kernel_size": 7, "stride": 1, "padding": 3},
+            {"transposed": True, "kernel_size": 16, "stride": 8, "padding": 4},
         ),
     ],
 )
@@ -112,6 +129,7 @@ def test_conv_mix(conv_params: List[Tuple[dict]]):
         ]
     )
     sols = find_sliding_window_params_for_transform(network, SeqSpec((1, 1, -1)))
+    logging.info(sols)
 
     # TODO: include expected parameters
     assert sols, f"Expected solution, but none found for {network}"

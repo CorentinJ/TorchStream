@@ -58,6 +58,9 @@ class SlidingWindowParamsSolver:
         # TODO doc
         self.p_r = Int("p_r")
         self.solver.add(0 <= self.p_r, self.p_r < self.k_i)
+        # Output trimming. See SlidingWindowParams for details.
+        self.t_o = Int("t_o")
+        self.solver.add(0 <= self.t_o, self.t_o < self.k_o)
 
         # Number of sliding windows for constraints
         # TODO?: remove
@@ -77,14 +80,14 @@ class SlidingWindowParamsSolver:
         if out_len < 0:
             raise ValueError("The output length must be a non-negative integer")
 
-        # Input to output size relation with the number of windows
+        # Model the input to output size relation with the number of windows
         constraint_idx = len(self.cs)
         c = Int(f"c_{constraint_idx}")
         self.cs.append(c)
         padded_in_len = self.p_l + in_len + self.p_r
         self.solver.add(
             c == If(padded_in_len >= self.k_i, (padded_in_len - self.k_i) / self.s_i + 1, 0),
-            out_len == If(c > 0, (c - 1) * self.s_o + self.k_o, 0),
+            out_len == If(c > 0, (c - 1) * self.s_o + self.k_o - 2 * self.t_o, 0),
         )
 
         for range_idx, (in_range, out_range) in enumerate(in_out_ranges):
@@ -104,14 +107,14 @@ class SlidingWindowParamsSolver:
                 crs, cre = Ints(f"c_{constraint_idx}_rs{range_idx} c_{constraint_idx}_re{range_idx}")
                 self.solver.add(0 <= crs, crs <= cre, cre < c)
 
-                self.solver.add(out_range[0] == crs * self.s_o)
+                self.solver.add(out_range[0] == crs * self.s_o - self.t_o)
                 self.solver.add(
                     crs
                     == (If(self.p_l + in_range[0] >= self.k_i, self.p_l + in_range[0] - self.k_i + 1, 0) + self.s_i - 1)
                     / self.s_i
                 )
 
-                self.solver.add(out_range[1] == cre * self.s_o + self.k_o)
+                self.solver.add(out_range[1] == cre * self.s_o + self.k_o - self.t_o)
                 self.solver.add(
                     cre
                     == If(self.p_l + in_range[1] > (c - 1) * self.s_i, c - 1, (self.p_l + in_range[1] - 1) / self.s_i)
@@ -130,6 +133,7 @@ class SlidingWindowParamsSolver:
                 self.p_r == solution.right_pad,
                 self.k_o == solution.kernel_size_out,
                 self.s_o == solution.stride_out,
+                self.t_o == solution.out_trim,
             )
             return temp_solver.check() == sat
 
@@ -155,6 +159,7 @@ class SlidingWindowParamsSolver:
                     self.p_r == known_sol.right_pad,
                     self.k_o == known_sol.kernel_size_out,
                     self.s_o == known_sol.stride_out,
+                    self.t_o == known_sol.out_trim,
                 )
 
                 # Exclude that solution from the new solutions
@@ -171,6 +176,7 @@ class SlidingWindowParamsSolver:
                     right_pad=model[self.p_r].as_long(),
                     kernel_size_out=model[self.k_o].as_long(),
                     stride_out=model[self.s_o].as_long(),
+                    out_trim=model[self.t_o].as_long(),
                 )
                 solutions.append(params)
 
@@ -182,6 +188,7 @@ class SlidingWindowParamsSolver:
                         self.p_r != model[self.p_r],
                         self.k_o != model[self.k_o],
                         self.s_o != model[self.s_o],
+                        self.t_o != model[self.t_o],
                     )
                 )
 
@@ -194,6 +201,26 @@ def _get_infogain(category_counts: Iterable[int]) -> float:
     for category_count in category_counts:
         infogain -= (category_count * math.log(category_count)) / sum(category_counts)
     return infogain
+
+
+def group_sli_params_by_inv_map(params: List[SlidingWindowParams], seq_size: int) -> List:
+    # TODO: doc
+    inv_maps_idx = {}
+    hyps_by_inv_map = []
+    for params_i in params:
+        inv_map = params_i.get_inverse_map(seq_size)
+
+        # FIXME
+        inv_map = np.maximum(inv_map, 0)
+        inv_map = np.minimum(inv_map, seq_size)
+
+        key = inv_map.tobytes()
+        if key not in inv_maps_idx:
+            inv_maps_idx[key] = len(hyps_by_inv_map)
+            hyps_by_inv_map.append((inv_map, []))
+        hyps_by_inv_map[inv_maps_idx[key]][1].append(params_i)
+
+    return hyps_by_inv_map
 
 
 def find_nan_trick_params_by_infogain(
@@ -219,21 +246,7 @@ def find_nan_trick_params_by_infogain(
     best_parameters = (None, None)
     for in_seq_size in range(min_in_seq_size, max_in_seq_size + 1):
         # Group hypotheses by their inverse map
-        inv_maps_idx = {}
-        hyps_by_inv_map = []
-        for hypothesis in hypotheses:
-            inv_map = hypothesis.get_inverse_map(in_seq_size)
-
-            # FIXME
-            inv_map = np.maximum(inv_map, 0)
-            inv_map = np.minimum(inv_map, in_seq_size)
-
-            key = inv_map.tobytes()
-            if key not in inv_maps_idx:
-                inv_maps_idx[key] = len(hyps_by_inv_map)
-                hyps_by_inv_map.append((inv_map, []))
-            hyps_by_inv_map[inv_maps_idx[key]][1].append(hypothesis)
-
+        hyps_by_inv_map = group_sli_params_by_inv_map(hypotheses, in_seq_size)
         if len(hyps_by_inv_map) == 1:
             continue
 
@@ -343,6 +356,12 @@ def find_sliding_window_params_for_transform(
                 hypotheses, min_in_seq_size, max_in_seq_size, in_nan_size
             )
             if seq_size is None:
+                # # TODO:
+                # min_in_size = hypotheses[0].get_min_input_size()
+                # assert all(
+                #     hyp.get_min_input_size() == min_in_size for hyp in hypotheses[1:] if hyp.get_min_input_size() > 0
+                # ), "Internal error: inconsistent minimum input sizes"
+
                 # TODO: is this problematic at all for streaming? It seems equivalent sliding windows parameters would
                 # lead to the same parameters for the streaming implementation of the transform.
                 logger.info(
