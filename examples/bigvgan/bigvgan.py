@@ -14,7 +14,7 @@ import torch.nn as nn
 from torch.nn import Conv1d, ConvTranspose1d
 from torch.nn.utils import remove_weight_norm, weight_norm
 
-from .activations import Activation1d, Snake
+from examples.bigvgan.activations import Activation1d, Snake
 
 
 class AttrDict(dict):
