@@ -42,8 +42,52 @@ class SlidingWindowStream(Stream):
         # being to compute any new window, and some previous output has not been returned yet.
         self._prev_trimmed_output = None
 
+        self._out_idx = 0
+
     # FIXME: signature
     def _step(self, in_seq: Sequence) -> Union[Tensor, np.ndarray, Tuple[Tensor, np.ndarray]]:
+        if in_seq.input_closed:
+            inv_map = self.params.get_inverse_map(in_seq.size)
+            eff_stop = None
+        else:
+            # NOTE: the kernel size here is the kernel span
+            inv_map = self.params.get_inverse_map(
+                input_size=in_seq.size + self.params.kernel_size_in - 1,
+                limit_to_input_bounds=False,
+            )
+            eff_stop = np.searchsorted(inv_map[:, 1], in_seq.size, side="right")
+
+        out_trim_start, out_trim_end, _ = slice.indices(slice(self._out_idx, eff_stop), len(inv_map))
+        self._out_idx = out_trim_end
+
+        # if eff_num_wins <= 0:
+        # if self.input_closed and self._prev_trimmed_output is not None:
+        # return self._prev_trimmed_output
+        if out_trim_start == out_trim_end:
+            # TODO: breakdown current state & display how much more data is needed
+            raise NotEnoughInputError(f"Input sequence of size {in_seq.size} is not enough to produce any output.")
+
+        # Forward the input
+        tsfm_out = Sequence.apply(self.transform, in_seq, self.out_spec)
+
+        # # Drop input that won't be necessary in the future
+        # if in_seq.input_closed:
+        #     in_seq.drop()
+        # elif eff_num_wins > self._n_wins_to_buffer_left:
+        #     in_seq.drop((eff_num_wins - self._n_wins_to_buffer_left) * self.params.stride_in)
+        # self._n_wins_to_buffer_left = max(0, self._n_wins_to_buffer_left - eff_num_wins)
+
+        # # If we're trimming on the right, save the trim in case the stream closes before we can compute any
+        # # new sliding window output.
+        # if out_trim_end and out_trim_end < tsfm_out.size:
+        #     self._prev_trimmed_output = tsfm_out[out_trim_end:]
+        # else:
+        #     self._prev_trimmed_output = None
+
+        return tsfm_out[out_trim_start:out_trim_end]
+
+    # FIXME: signature
+    def _step2(self, in_seq: Sequence) -> Union[Tensor, np.ndarray, Tuple[Tensor, np.ndarray]]:
         (left_pad, right_pad), num_wins, expected_out_size = self.params.get_metrics_for_input(in_seq.size)
 
         # Get the index of the first window that will compute valid output that we'll return
