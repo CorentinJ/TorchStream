@@ -106,7 +106,26 @@ class SlidingWindowParams:
         non_padded_min_input_size = (num_wins_needed - 1) * self.stride_in + self.kernel_size_in
         return max(1, non_padded_min_input_size - self.right_pad - self.left_pad)
 
+    def get_kernel_map(self, input_size: int) -> Tuple[Tuple[slice, slice], ...]:
+        # TODO: doc
+        (left_pad, right_pad), num_wins, out_size = self.get_metrics_for_input(input_size)
+
+        return tuple(
+            (
+                slice(
+                    i * self.stride_in - left_pad,
+                    i * self.stride_in + self.kernel_size_in - left_pad,
+                ),
+                slice(
+                    max(0, i * self.stride_out - self.out_trim),
+                    max(0, i * self.stride_out + self.kernel_size_out - self.out_trim),
+                ),
+            )
+            for i in range(num_wins)
+        )
+
     def get_inverse_map(self, input_size: int) -> np.ndarray:
+        # TODO: doc
         (left_pad, right_pad), num_wins, out_size = self.get_metrics_for_input(input_size)
         if not out_size:
             return np.zeros((0, 2), dtype=np.int64)
@@ -116,15 +135,9 @@ class SlidingWindowParams:
         out = np.zeros((out_size, 2), dtype=np.int64)
         out[:, 0] = padded_in_size
         out[:, 1] = -left_pad
-        for i in range(num_wins):
-            start_in_idx = i * self.stride_in - left_pad
-            end_in_idx = i * self.stride_in + self.kernel_size_in - left_pad
-            out_sli = slice(
-                max(0, i * self.stride_out - self.out_trim),
-                max(0, i * self.stride_out + self.kernel_size_out - self.out_trim),
-            )
-            out[out_sli, 0] = np.minimum(out[out_sli, 0], start_in_idx)
-            out[out_sli, 1] = np.maximum(out[out_sli, 1], end_in_idx)
+        for in_sli, out_sli in self.get_kernel_map(input_size):
+            out[out_sli, 0] = np.minimum(out[out_sli, 0], in_sli.start)
+            out[out_sli, 1] = np.maximum(out[out_sli, 1], in_sli.stop)
 
         return out
 

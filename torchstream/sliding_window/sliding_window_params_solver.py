@@ -1,5 +1,6 @@
 import logging
 import math
+from collections import Counter
 from functools import partial
 from typing import Callable, Iterable, List, Optional, Tuple
 
@@ -223,6 +224,47 @@ def group_sli_params_by_inv_map(params: List[SlidingWindowParams], seq_size: int
     return hyps_by_inv_map
 
 
+def _simulate_hypothesis(hypothesis: SlidingWindowParams, input_size: int, nan_idx: dict):
+    nan_out_ranges = []
+    out_range = slice(0, 0)
+    for in_range, out_range in hypothesis.get_kernel_map(input_size):
+        if any(idx in nan_idx for idx in range(in_range.start, in_range.stop)):
+            if not nan_out_ranges or nan_out_ranges[-1][1] < in_range.start:
+                nan_out_ranges.append((out_range.start, out_range.stop))
+            else:
+                nan_out_ranges[-1] = (
+                    min(nan_out_ranges[-1][0], out_range.start),
+                    max(nan_out_ranges[-1][1], out_range.stop),
+                )
+
+    return out_range.stop, tuple(nan_out_ranges)
+
+
+def _get_infogain_for_hypotheses(hypotheses: List[SlidingWindowParams], input_size: int, nan_idx: dict):
+    outcomes_count = Counter(_simulate_hypothesis(hyp, input_size, nan_idx) for hyp in hypotheses)
+    return outcomes_count, _get_infogain(outcomes_count.values())
+
+
+# TODO
+def divide(hypotheses: List[SlidingWindowParams], input_info: dict, best_infogain: float):
+    # Generate different input parameters to try
+    sub_inputs = []
+    if "in_seq_size" not in input_info:
+        for in_seq_size in range(input_info["min_in_seq_size"], input_info["max_in_seq_size"] + 1):
+            sub_input = input_info.copy()
+            sub_input["in_seq_size"] = in_seq_size
+            sub_inputs.append(sub_input)
+    else:
+        remaining_idx = [idx for idx in range(input_info["in_seq_size"]) if idx not in input_info["nan_idx"]]
+        for nan_idx in remaining_idx:
+            sub_input = input_info.copy()
+            sub_input["nan_idx"] = sub_input["nan_idx"].copy().union({nan_idx})
+            sub_inputs.append(sub_input)
+
+    # Greedily pick the parameters that give the best information gain
+    best_params = input_info
+
+
 def find_nan_trick_params_by_infogain(
     hypotheses: List[SlidingWindowParams],
     min_in_seq_size: int = 1,
@@ -241,41 +283,10 @@ def find_nan_trick_params_by_infogain(
     min_in_seq_size = max(min(sol.get_min_input_size() for sol in hypotheses), min_in_seq_size, in_nan_size)
     max_in_seq_size = min(min_in_seq_size + max(sol.kernel_size_in for sol in hypotheses), max_in_seq_size)
 
-    best_infogain = 0.0
-    best_hyps_by_outcome = None
-    best_parameters = (None, None)
-    for in_seq_size in range(min_in_seq_size, max_in_seq_size + 1):
-        # Group hypotheses by their inverse map
-        hyps_by_inv_map = group_sli_params_by_inv_map(hypotheses, in_seq_size)
-        if len(hyps_by_inv_map) == 1:
-            continue
-
-        # TODO: sublinear algo
-        for in_nan_idx in range(in_seq_size - in_nan_size + 1):
-            # TODO: algo with varying nan ranges?
-            in_nan_range = (in_nan_idx, in_nan_idx + in_nan_size)
-
-            hyps_by_outcome = {}
-            for inv_map, hyp_group in hyps_by_inv_map:
-                out_nan_range = (
-                    np.searchsorted(inv_map[:, 1], in_nan_range[0], side="right"),
-                    np.searchsorted(inv_map[:, 0], in_nan_range[1], side="left"),
-                )
-                if out_nan_range[1] <= out_nan_range[0]:
-                    out_nan_range = None
-                hyps_by_outcome.setdefault((len(inv_map), out_nan_range), []).extend(hyp_group)
-
-            infogain = _get_infogain(map(len, hyps_by_outcome.values()))
-            if infogain > best_infogain:
-                best_infogain = infogain
-                best_hyps_by_outcome = hyps_by_outcome
-                best_parameters = (in_seq_size, in_nan_range)
-
-            # Break early if the solution is optimal
-            if len(hyps_by_outcome) == len(hypotheses):
-                return *best_parameters, best_hyps_by_outcome
-
-    return *best_parameters, best_hyps_by_outcome
+    out = divide(
+        hypotheses, {"max_in_seq_size": max_in_seq_size, "min_in_seq_size": min_in_seq_size, "nan_idx": set()}, 0.0
+    )
+    print(out)
 
 
 # TODO: allow transforms with multiple sequential inputs
@@ -356,12 +367,6 @@ def find_sliding_window_params_for_transform(
                 hypotheses, min_in_seq_size, max_in_seq_size, in_nan_size
             )
             if seq_size is None:
-                # # TODO:
-                # min_in_size = hypotheses[0].get_min_input_size()
-                # assert all(
-                #     hyp.get_min_input_size() == min_in_size for hyp in hypotheses[1:] if hyp.get_min_input_size() > 0
-                # ), "Internal error: inconsistent minimum input sizes"
-
                 # TODO: is this problematic at all for streaming? It seems equivalent sliding windows parameters would
                 # lead to the same parameters for the streaming implementation of the transform.
                 logger.info(
