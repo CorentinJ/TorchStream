@@ -331,7 +331,7 @@ def find_sliding_window_params_for_transform(
     solver_converged = False
     step = 1
     hypotheses, incompat_hypotheses = [], set()
-    while len(hypotheses) != 1 or not solver_converged:
+    while len(hypotheses) > 1 or not solver_converged:
         # Determine an input size and an input nan range
         if not hypotheses:
             # In the absence of input/output information, use sane defaults

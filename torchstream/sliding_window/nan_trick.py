@@ -95,6 +95,10 @@ def get_nan_map(
 
     for in_sli, out_sli in params.get_kernel_map(in_len):
         if nan_in_range[0] < in_sli.stop and in_sli.start < nan_in_range[1]:
+            out_sli = slice(
+                max(0, out_sli.start),
+                min(out_sli.stop, output_size),
+            )
             nan_map[out_sli] = np.maximum(nan_map[out_sli], 1)
             if nan_in_range[0] <= in_sli.start < nan_in_range[1] or nan_in_range[0] < in_sli.stop <= nan_in_range[1]:
                 nan_map[out_sli.start] = 2

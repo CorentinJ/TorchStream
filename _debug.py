@@ -17,7 +17,8 @@ logging.basicConfig(level=logging.DEBUG)
 # hyps = solver.get_solutions()
 # sols = find_nan_trick_params_by_infogain(hyps)
 
-a = Conv1d(1, 1, kernel_size=4, stride=4)
+# if False:
+a = Conv1d(1, 1, kernel_size=3, stride=4)
 sol = find_sliding_window_params_for_transform(a, SeqSpec((1, 1, -1)))  # , max_hypotheses_per_step=10)
 print(sol)
 quit()
