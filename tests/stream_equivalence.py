@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from torchstream.sequence.sequence import Sequence
-from torchstream.sliding_window.nan_trick import get_nan_range
+from torchstream.sliding_window.nan_trick import get_out_nan_idx
 from torchstream.stream import Stream
 
 
@@ -66,7 +66,8 @@ def test_stream_equivalent(
             in_nan_trick_seq_i = in_nan_trick_seq.copy()
             in_nan_trick_seq_i[in_seq.consumed :] = float("nan")
             out_nan_trick_seq_i = Sequence.apply(sync_fn, in_nan_trick_seq_i, stream.out_spec)
-            nan_range = get_nan_range(out_nan_trick_seq_i)
+            # FIXME!!
+            nan_range = get_out_nan_idx(out_nan_trick_seq_i)
             assert nan_range, "Internal error: kernel size must be greater than the input sequence size"
 
             assert nan_range[1] == out_nan_trick_seq_i.size, (

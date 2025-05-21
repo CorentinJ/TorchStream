@@ -23,7 +23,7 @@ class SlidingWindowParams:
     # value typically is. A few examples:
     #   - For a conv1d layer with no padding, alpha = 0.
     #   - For a conv1d layer with stride=1 and "same" padding (input size = output size), alpha = kernel_size_in - 1.
-    # FIXME!! change doc repo wide
+    # FIXME! change doc repo wide
     right_pad: int = field(default=0)
     # The kernel size of the output. It is 1 for normal convolutions, but can be larger for transposed convolutions.
     kernel_size_out: int = field(default=1)

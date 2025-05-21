@@ -8,7 +8,7 @@ from torchstream.sequence.seq_spec import SeqSpec
 
 class Sequence:
     """
-    FIXME!! rewrite this doc
+    FIXME! rewrite this doc
     Tensor-like class for buffering multidimensional sequential data. Supports both torch tensors and numpy arrays.
 
     The Sequence class is essentially the implementation of queues for multidimensional tensors. Tensors of the

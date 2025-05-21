@@ -8,6 +8,7 @@ from torch import nn
 
 from tests.rng import set_seed
 from torchstream.sequence.seq_spec import SeqSpec
+from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params_for_transform
 
 
@@ -22,8 +23,14 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
     if padding[0] >= kernel_span or padding[1] >= kernel_span:
         pytest.skip("Padding should be smaller than the kernel span")
 
-    params_str = f"k={kernel_span} (kernel {kernel_size} with d={dilation}), s={stride}, p={padding}"
     set_seed(0x5EED)
+
+    expected_sol = SlidingWindowParams(
+        kernel_size_in=kernel_span,
+        stride_in=stride,
+        left_pad=padding[0],
+        right_pad=padding[1],
+    )
 
     conv = nn.Conv1d(
         in_channels=1,
@@ -40,16 +47,8 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
         x = conv(x)
         return x
 
-    sols = find_sliding_window_params_for_transform(transform, SeqSpec((1, 1, -1)))
-
-    assert sols, f"Expected solution, but none found for {params_str}"
-    assert any(
-        sol.kernel_size_in == kernel_span
-        and sol.stride_in == stride
-        and sol.left_pad == padding[0]
-        and sol.right_pad == padding[1]
-        for sol in sols
-    ), f"Expected solution with {params_str}, but none found in {sols}"
+    sol = find_sliding_window_params_for_transform(transform, SeqSpec((1, 1, -1)))
+    assert sol == expected_sol
 
 
 @pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])
@@ -65,13 +64,17 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, padding: int, dilation
             "Output trimming (named padding for transposed convs) should be smaller than the output kernel span"
         )
 
-    # FIXME
-    params_str = f"k={kernel_span} (kernel {kernel_size} with d={dilation}), s={stride}"
     set_seed(0x5EED)
 
+    expected_sol = SlidingWindowParams(
+        kernel_size_out=kernel_span,
+        stride_out=stride,
+        out_trim=padding,
+    )
+
     # The torch docs poorly explain the mechanism of transposed convolutions. Here's my take:
-    # Each input element multiplies the kernel (element-wise). That output is offset by the stride on each step, and
-    # all resulting vectors are summed.
+    # Each individual input element multiplies the kernel (element-wise). That output is offset by the stride on each
+    # step, and all resulting vectors are summed.
     conv = nn.ConvTranspose1d(
         in_channels=1,
         out_channels=1,
@@ -85,16 +88,8 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, padding: int, dilation
         # TODO: handle output padding?
     )
 
-    sols = find_sliding_window_params_for_transform(conv, SeqSpec((1, 1, -1)))
-
-    assert sols, f"Expected solution, but none found for {params_str}"
-    assert any(
-        sol.kernel_size_out == kernel_span
-        and sol.stride_out == stride
-        and sol.left_pad == sol.right_pad == 0
-        and sol.out_trim == padding
-        for sol in sols
-    ), f"Expected solution with {params_str}, but none found in {sols}"
+    sol = find_sliding_window_params_for_transform(conv, SeqSpec((1, 1, -1)))
+    assert sol == expected_sol
 
 
 @pytest.mark.parametrize(
@@ -128,11 +123,11 @@ def test_conv_mix(conv_params: List[Tuple[dict]]):
             for params in conv_params
         ]
     )
-    sols = find_sliding_window_params_for_transform(network, SeqSpec((1, 1, -1)))
-    logging.info(sols)
+    sol = find_sliding_window_params_for_transform(network, SeqSpec((1, 1, -1)))
+    logging.info(sol)
 
     # TODO: include expected parameters
-    assert sols, f"Expected solution, but none found for {network}"
+    assert sol is not None, f"Expected solution, but none found for {network}"
 
 
 def test_infinite_receptive_field():
@@ -143,8 +138,8 @@ def test_infinite_receptive_field():
     def transform(x: np.ndarray):
         return np.full_like(x, fill_value=np.mean(x))
 
-    sols = find_sliding_window_params_for_transform(transform, SeqSpec((-1,), dtype=np.float32))
-    assert not sols
+    sol = find_sliding_window_params_for_transform(transform, SeqSpec((-1,), dtype=np.float32))
+    assert sol is None
 
 
 def test_no_receptive_field():
@@ -156,8 +151,8 @@ def test_no_receptive_field():
     def transform(x: np.ndarray):
         return np.full_like(x, fill_value=3.0)
 
-    sols = find_sliding_window_params_for_transform(transform, SeqSpec((-1,), dtype=np.float32))
-    assert not sols
+    sol = find_sliding_window_params_for_transform(transform, SeqSpec((-1,), dtype=np.float32))
+    assert sol is None
 
 
 @pytest.mark.parametrize("variant", ["prefix_mean", "suffix_mean", "mod7"])
@@ -186,5 +181,5 @@ def test_variable_receptive_field(variant: str):
 
         return y
 
-    sols = find_sliding_window_params_for_transform(transform, SeqSpec((-1,), dtype=np.float32))
-    assert not sols
+    sol = find_sliding_window_params_for_transform(transform, SeqSpec((-1,), dtype=np.float32))
+    assert sol is None

@@ -5,31 +5,26 @@ import numpy as np
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
-from torchstream.sliding_window.dummy_sliding_window_transform import DummySlidingWindowTransform
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 
 logger = logging.getLogger(__name__)
 
 
-def get_nan_range(x: Sequence) -> Tuple[int, int] | None:
+def get_out_nan_idx(x: Sequence) -> np.ndarray:
     # TODO! doc
     # TODO: numpy() function
     # TODO: is_nan -> any reduction instead
     x = x.data.mean(axis=tuple(i for i in range(x.ndim) if i != x.dim))
 
-    corrupted_idx = np.where(np.isnan(x))[0]
-
-    if not len(corrupted_idx):
-        return None
-    return corrupted_idx[0], corrupted_idx[-1] + 1
+    return np.where(np.isnan(x))[0]
 
 
 def run_nan_trick(
     trsfm: Callable,
     in_seq: Sequence,
-    in_nan_range: Tuple[int, int],
+    in_nan_range: Tuple[int, int] | None,
     output_spec: Optional[SeqSpec] = None,
-) -> Tuple[int, Tuple[int, int] | None]:
+) -> Tuple[int, np.ndarray]:
     """
     TODO: doc
 
@@ -37,12 +32,13 @@ def run_nan_trick(
     """
     if not in_seq.size:
         raise ValueError(f"Input sequence size must be greater than 0, got {in_seq.size}")
-    if not (0 <= in_nan_range[0] < in_nan_range[1] <= in_seq.size):
+    if in_nan_range and not (0 <= in_nan_range[0] < in_nan_range[1] <= in_seq.size):
         raise ValueError(f"Nan range must be positive and within the input sequence size, got {in_nan_range}")
     output_spec = output_spec or in_seq.spec
 
     # Corrupt the given range of the input sequence with NaNs
-    in_seq[slice(*in_nan_range)] = float("nan")
+    if in_nan_range:
+        in_seq[slice(*in_nan_range)] = float("nan")
 
     # Forward the input through the transform
     logger.debug(f"Running transform with input size {in_seq.size} and nans at {in_nan_range}")
@@ -55,33 +51,53 @@ def run_nan_trick(
 
         logger.info(f"Transformed failed with {repr(e)}")
 
-        return 0, None
+        return 0, np.empty(0, dtype=np.int64)
 
-    out_nan_range = get_nan_range(out_seq)
-    logger.debug(f"Got a {tuple(out_seq.shape)} shaped output with nans at {out_nan_range}")
+    out_nan_idx = get_out_nan_idx(out_seq)
+    logger.debug(f"Got a {tuple(out_seq.shape)} shaped output with nans at {out_nan_idx}")
 
-    return out_seq.size, out_nan_range
+    return out_seq.size, out_nan_idx
 
 
 def check_nan_trick(
-    sliding_window_params: SlidingWindowParams,
+    params: SlidingWindowParams,
     in_len: int,
     out_len: int,
-    nan_in_range: Tuple[int, int],
-    nan_out_range: Tuple[int, int] | None,
+    nan_in_range: Tuple[int, int] | None,
+    out_nan_idx: np.ndarray,
+) -> bool:
+    # TODO! doc
+    nan_map = get_nan_map(params, in_len, nan_in_range)
+    if out_len != len(nan_map):
+        return False
+
+    if (nan_map[out_nan_idx] == 0).any():
+        return False
+
+    nan_map[out_nan_idx] = 3
+    if (nan_map == 2).any():
+        return False
+
+    return True
+
+
+def get_nan_map(
+    params: SlidingWindowParams,
+    in_len: int,
+    nan_in_range: Tuple[int, int] | None,
 ):
     # TODO! doc
-    tsfm = DummySlidingWindowTransform(sliding_window_params)
+    _, _, output_size = params.get_metrics_for_input(in_len)
 
-    x = np.random.randn(in_len)
-    x[nan_in_range] = float("nan")
+    nan_map = np.zeros(output_size, dtype=np.int64)
+    if not nan_in_range:
+        return nan_map
 
-    out = tsfm(x)
-    if len(out) != out_len:
-        return False, f"expected out len {out_len}, got {len(out)}"
+    for in_sli, out_sli in params.get_kernel_map(in_len):
+        if nan_in_range[0] < in_sli.stop and in_sli.start < nan_in_range[1]:
+            nan_map[out_sli] = np.maximum(nan_map[out_sli], 1)
+            if nan_in_range[0] <= in_sli.start < nan_in_range[1] or nan_in_range[0] < in_sli.stop <= nan_in_range[1]:
+                nan_map[out_sli.start] = 2
+                nan_map[out_sli.stop - 1] = 2
 
-    actual_nan_out_range = get_nan_range(out)
-    if actual_nan_out_range != nan_out_range:
-        return False, f"expected out range {nan_out_range}, got {actual_nan_out_range}"
-
-    return True, None
+    return nan_map
