@@ -63,11 +63,12 @@ def check_nan_trick(
     params: SlidingWindowParams,
     in_len: int,
     out_len: int,
-    nan_in_range: Tuple[int, int] | None,
+    in_nan_range: Tuple[int, int] | None,
     out_nan_idx: np.ndarray,
 ) -> bool:
     # TODO! doc
-    nan_map = get_nan_map(params, in_len, nan_in_range)
+
+    nan_map = get_nan_map(params, in_len, in_nan_range)
     if out_len != len(nan_map):
         return False
 
@@ -87,21 +88,30 @@ def get_nan_map(
     nan_in_range: Tuple[int, int] | None,
 ):
     # TODO! doc
-    _, _, output_size = params.get_metrics_for_input(in_len)
+    _, num_wins, out_size = params.get_metrics_for_input(in_len)
 
-    nan_map = np.zeros(output_size, dtype=np.int64)
+    nan_map = np.zeros(out_size, dtype=np.int64)
     if not nan_in_range:
         return nan_map
 
-    for in_sli, out_sli in params.get_kernel_map(in_len):
-        if nan_in_range[0] < in_sli.stop and in_sli.start < nan_in_range[1]:
-            out_sli = slice(
-                max(0, out_sli.start),
-                min(out_sli.stop, output_size),
+    for (in_start, in_stop), (out_start, out_stop) in params.get_kernel_map(num_wins):
+        # The kernel can output nans only if it has any overlap with the input nans
+        if nan_in_range[0] < in_stop and in_start < nan_in_range[1]:
+            # The kernel is only GUARANTEED to output nans if its first or last element are nan (otherwise the kernel
+            # might have gaps and these gaps might be precisely aligned with the nans).
+            guaranteed_nan_output = (
+                nan_in_range[0] <= in_start < nan_in_range[1] or nan_in_range[0] < in_stop <= nan_in_range[1]
             )
-            nan_map[out_sli] = np.maximum(nan_map[out_sli], 1)
-            if nan_in_range[0] <= in_sli.start < nan_in_range[1] or nan_in_range[0] < in_sli.stop <= nan_in_range[1]:
-                nan_map[out_sli.start] = 2
-                nan_map[out_sli.stop - 1] = 2
+            # Likewise, the output kernel might have gaps, so we can only guarantee that the first and last elements
+            # of the output window are nans (marked with 2)
+            if guaranteed_nan_output and 0 <= out_start < out_size:
+                nan_map[out_start] = 2
+            if guaranteed_nan_output and 0 < out_stop <= out_size:
+                nan_map[out_stop - 1] = 2
+
+            # Everywhere else in the output window, we have an unknown as to whether the output is nan or not
+            # (marked with 1)
+            unknown_sli = slice(max(0, out_start), min(out_stop, out_size))
+            nan_map[unknown_sli] = np.maximum(nan_map[unknown_sli], 1)
 
     return nan_map
