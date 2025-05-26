@@ -23,7 +23,7 @@ def run_nan_trick(
     trsfm: Callable,
     in_seq: Sequence,
     in_nan_range: Tuple[int, int] | None,
-    output_spec: Optional[SeqSpec] = None,
+    out_spec: Optional[SeqSpec] = None,
 ) -> Tuple[int, np.ndarray]:
     """
     TODO: doc
@@ -34,7 +34,7 @@ def run_nan_trick(
         raise ValueError(f"Input sequence size must be greater than 0, got {in_seq.size}")
     if in_nan_range and not (0 <= in_nan_range[0] < in_nan_range[1] <= in_seq.size):
         raise ValueError(f"Nan range must be positive and within the input sequence size, got {in_nan_range}")
-    output_spec = output_spec or in_seq.spec
+    out_spec = out_spec or in_seq.spec
 
     # Corrupt the given range of the input sequence with NaNs
     if in_nan_range:
@@ -43,7 +43,7 @@ def run_nan_trick(
     # Forward the input through the transform
     logger.debug(f"Running transform with input size {in_seq.size} and nans at {in_nan_range}")
     try:
-        out_seq = Sequence.apply(trsfm, in_seq, output_spec)
+        out_seq = Sequence.apply(trsfm, in_seq, out_spec)
     except RuntimeError as e:
         # We'll assume that RuntimeError are conv errors for a too small input size
         # TODO: more reliable mechanism

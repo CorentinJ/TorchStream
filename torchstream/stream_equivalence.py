@@ -2,7 +2,6 @@ import itertools
 from typing import Callable, Tuple
 
 import numpy as np
-import pytest
 import torch
 
 from torchstream.sequence.sequence import Sequence
@@ -10,7 +9,6 @@ from torchstream.sliding_window.nan_trick import get_out_nan_idx
 from torchstream.stream import Stream
 
 
-@pytest.mark.skip("Not a test")
 @torch.no_grad()
 def test_stream_equivalent(
     sync_fn: Callable,
@@ -29,7 +27,7 @@ def test_stream_equivalent(
 
     :param check_throughput_with_nan_trick: TODO: doc
     """
-    if not in_seq:
+    if in_seq is None:
         in_seq = Sequence.randn(stream.in_spec, seq_size=50)
 
     # Get the sync output
