@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass, field
-from typing import Tuple
+from typing import Iterator, Tuple
 
 import numpy as np
 
@@ -106,23 +106,32 @@ class SlidingWindowParams:
         non_padded_min_input_size = (num_wins_needed - 1) * self.stride_in + self.kernel_size_in
         return max(1, non_padded_min_input_size - self.right_pad - self.left_pad)
 
-    def get_kernel_map(self, input_size: int) -> Tuple[Tuple[slice, slice], ...]:
-        # TODO: doc
-        (left_pad, right_pad), num_wins, out_size = self.get_metrics_for_input(input_size)
+    def get_kernel_map(self, num_wins: int | None = None) -> Iterator[Tuple[Tuple[int, int], Tuple[int, int]]]:
+        """
+        Iterates over the regions of input and output mapped by the sliding window transform.
 
-        return tuple(
-            (
-                slice(
-                    i * self.stride_in - left_pad,
-                    i * self.stride_in + self.kernel_size_in - left_pad,
+        Note:
+        - Both input and output windows may overlap.
+        - Input windows will have negative bounds when overlapping with the left padding, and bounds beyond the input
+        size when overlapping with the right padding.
+        - Similarly, output windows will have negative bounds if they are to be trimmed on the left, and bounds beyond
+        the output size when trimmed on the right.
+
+        :param num_wins: The number of windows to iterate over. If None, it will iterate without limit.
+        """
+        num_wins = num_wins if num_wins is not None else int(1e10)
+
+        for i in range(num_wins):
+            yield (
+                (
+                    i * self.stride_in - self.left_pad,
+                    i * self.stride_in + self.kernel_size_in - self.left_pad,
                 ),
-                slice(
-                    max(0, i * self.stride_out - self.out_trim),
-                    max(0, i * self.stride_out + self.kernel_size_out - self.out_trim),
+                (
+                    i * self.stride_out - self.out_trim,
+                    i * self.stride_out + self.kernel_size_out - self.out_trim,
                 ),
             )
-            for i in range(num_wins)
-        )
 
     def get_inverse_map(self, input_size: int) -> np.ndarray:
         # TODO: doc
@@ -135,7 +144,10 @@ class SlidingWindowParams:
         out = np.zeros((out_size, 2), dtype=np.int64)
         out[:, 0] = padded_in_size
         out[:, 1] = -left_pad
-        for in_sli, out_sli in self.get_kernel_map(input_size):
+
+        raise NotImplementedError()
+        # FIXME! bounds
+        for in_sli, out_sli in self.get_kernel_map(num_wins):
             out[out_sli, 0] = np.minimum(out[out_sli, 0], in_sli.start)
             out[out_sli, 1] = np.maximum(out[out_sli, 1], in_sli.stop)
 
