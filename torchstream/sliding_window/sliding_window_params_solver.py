@@ -3,7 +3,7 @@ import logging
 import math
 import time
 from functools import partial
-from typing import Any, Callable, Iterable, List, Optional, Tuple
+from typing import Callable, Iterable, List, Optional, Tuple
 
 import torch
 from z3 import And, If, Implies, Int, Ints, Not, Or, Solver, is_true, sat
@@ -287,7 +287,7 @@ def _separate_incompatible_hypotheses(hypotheses, history):
     hypotheses = list(hypotheses)
 
     incompat_hypotheses = []
-    for hypothesis in hypotheses:
+    for hypothesis in list(hypotheses):
         for record in history:
             if not check_nan_trick(
                 hypothesis,
@@ -351,16 +351,11 @@ def find_sliding_window_params_for_transform(
     hypotheses = []
     history = []
     while len(hypotheses) > 1 or not solver_converged:
-        # Keep track of the solver's history
-        record: dict[str, Any] = {"step": len(history) + 1}
-        history.append(record)
-
         # Determine an input size and an input nan range
         if not hypotheses:
             # In the absence of input/output information, use sane defaults
             seq_size = init_seq_size
             in_nan_range = (seq_size // 2, seq_size // 2 + 1)
-            # hyps_by_outcome = None
         else:
             # Once we have a couple of hypotheses, we'll determine our nan trick parameters based on them
             # Get the nan trick parameters that will be the most discriminative of the hypotheses
@@ -384,14 +379,21 @@ def find_sliding_window_params_for_transform(
             raise TypeError(
                 f"The input_provider function {input_provider} returned a {type(in_seq)} when a Sequence was expected"
             )
-        record["in_seq"] = in_seq.copy()
-        record["in_nan_range"] = in_nan_range
 
         # Perform the nan trick on the actual transform
         out_seq, out_nan_idx = run_nan_trick(trsfm, in_seq, in_nan_range, out_spec=(out_spec or in_seq.spec))
-        record["out_seq"] = out_seq.copy()
-        record["out_nan_idx"] = out_nan_idx
 
+        # Keep track of the solver's history
+        record = {
+            "step": len(history) + 1,
+            "in_seq": in_seq.copy(),
+            "in_nan_range": in_nan_range,
+            "out_seq": out_seq.copy(),
+            "out_nan_idx": out_nan_idx,
+        }
+        history.append(record)
+
+        # Specifically handle transforms that need larger input sizes
         if out_seq.size == 0:
             # TODO: better messages
             if seq_size == max_in_seq_size:
@@ -441,7 +443,7 @@ def find_sliding_window_params_for_transform(
         logger.info(
             f"Step {len(history)}: got {len(hypotheses)} hypothes{'es' if len(hypotheses) != 1 else 'is'} "
             + (f"(max is {max_hypotheses_per_step}) " if len(hypotheses) == max_hypotheses_per_step else "")
-            + (f"solver ran in {record['solver_time'] * 1000:.0f}ms" if "solver_time" in record else "")
+            + (f"(solver ran in {record['solver_time'] * 1000:.0f}ms)" if "solver_time" in record else "")
         )
 
     # FIXME!!
