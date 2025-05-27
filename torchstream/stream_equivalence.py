@@ -4,6 +4,7 @@ from typing import Callable, Tuple
 import numpy as np
 import torch
 
+from torchstream.sequence.dtype import SeqArrayLike
 from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.nan_trick import get_out_nan_idx
 from torchstream.stream import Stream
@@ -13,7 +14,8 @@ from torchstream.stream import Stream
 def test_stream_equivalent(
     sync_fn: Callable,
     stream: Stream,
-    in_seq: Sequence | None = None,
+    # TODO: offer comparison to an output array instead, to avoid recomputing for multiple streams
+    in_seq: Sequence | SeqArrayLike | None = None,
     in_step_sizes: Tuple[int, ...] = (7, 4, 12, 1, 17),
     atol: float = 1e-5,
     check_throughput_with_nan_trick: bool = False,
@@ -29,11 +31,15 @@ def test_stream_equivalent(
     """
     if in_seq is None:
         in_seq = Sequence.randn(stream.in_spec, seq_size=50)
+    elif isinstance(in_seq, Sequence):
+        in_seq = in_seq.copy()
+    else:
+        in_seq = Sequence(stream.in_spec, in_seq, close_input=True)
 
     # Get the sync output
     out_seq_ref = Sequence.apply(sync_fn, in_seq, stream.out_spec)
 
-    # FIXME: this is a trivial hack that assumes that the input size at least the kernel size, ideally we'd only
+    # FIXME: this is a trivial hack that assumes that the input size is at least the kernel size, ideally we'd only
     # add the kernel size - 1 NaNs to the input.
     in_nan_trick_seq = Sequence(in_seq, in_seq, close_input=True)
 

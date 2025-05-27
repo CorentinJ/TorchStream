@@ -24,7 +24,7 @@ def run_nan_trick(
     in_seq: Sequence,
     in_nan_range: Tuple[int, int] | None,
     out_spec: Optional[SeqSpec] = None,
-) -> Tuple[int, np.ndarray]:
+) -> Tuple[Sequence, np.ndarray]:
     """
     TODO: doc
 
@@ -56,7 +56,7 @@ def run_nan_trick(
     out_nan_idx = get_out_nan_idx(out_seq)
     logger.debug(f"Got a {tuple(out_seq.shape)} shaped output with nans at {out_nan_idx}")
 
-    return out_seq.size, out_nan_idx
+    return out_seq, out_nan_idx
 
 
 def check_nan_trick(

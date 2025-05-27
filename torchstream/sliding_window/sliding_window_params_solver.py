@@ -1,17 +1,19 @@
+import itertools
 import logging
 import math
 import time
 from functools import partial
-from typing import Callable, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Iterable, List, Optional, Tuple
 
-import numpy as np
 import torch
-from z3 import And, If, Implies, Int, Ints, Not, Or, Solver, sat
+from z3 import And, If, Implies, Int, Ints, Not, Or, Solver, is_true, sat
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
-from torchstream.sliding_window.nan_trick import check_nan_trick, run_nan_trick
+from torchstream.sliding_window.nan_trick import check_nan_trick, get_nan_map, run_nan_trick
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
+from torchstream.stream_equivalence import test_stream_equivalent
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +129,8 @@ class SlidingWindowParamsSolver:
             # FIXME!! not the case with output trimming
             self.solver.add(Implies(c > 0, padded_nan_start >= self.k_i + self.s_i * (c - 1)))
 
-    def is_compatible(self, solution: SlidingWindowParams) -> bool:
+    # TODO: name
+    def is_compatible(self, solution: SlidingWindowParams):
         with self.solver as temp_solver:
             temp_solver.add(
                 self.k_i == solution.kernel_size_in,
@@ -138,7 +141,17 @@ class SlidingWindowParamsSolver:
                 self.s_o == solution.stride_out,
                 self.t_o == solution.out_trim,
             )
-            return temp_solver.check() == sat
+            model = temp_solver.model()
+
+            # TODO: use assert_and_track?
+            violations = []
+            for a in temp_solver.assertions():
+                val = model.eval(a, model_completion=True)
+                # model.eval returns a Z3 BoolRef (True/False) for a BoolExpr
+                if not is_true(val):
+                    violations.append(a)
+
+            return violations
 
     def get_solutions(
         self, known_solutions: List[SlidingWindowParams] | None = None, max_solutions: int = 100
@@ -206,57 +219,38 @@ def _get_infogain(category_counts: Iterable[int]) -> float:
     return infogain
 
 
-def group_sli_params_by_inv_map(params: List[SlidingWindowParams], seq_size: int) -> List:
-    # TODO: doc
-    inv_maps_idx = {}
-    hyps_by_inv_map = []
-    for params_i in params:
-        inv_map = params_i.get_inverse_map(seq_size)
+def _get_infogain_for_hypotheses(hypotheses: List[SlidingWindowParams], input_size: int, in_nan_idx: Iterable[int]):
+    # FIXME!!
+    if in_nan_idx:
+        in_nan_idx = next(iter(in_nan_idx))
+        nan_range = (in_nan_idx, in_nan_idx + 1)
+    else:
+        nan_range = None
+    nan_maps = [get_nan_map(hyp, input_size, nan_range) for hyp in hypotheses]
 
-        # FIXME
-        inv_map = np.maximum(inv_map, 0)
-        inv_map = np.minimum(inv_map, seq_size)
+    groups = [tuple(map_idx) for _, map_idx in itertools.groupby(range(len(nan_maps)), key=lambda i: len(nan_maps[i]))]
+    max_out_len = max(len(nan_map) for nan_map in nan_maps)
 
-        key = inv_map.tobytes()
-        if key not in inv_maps_idx:
-            inv_maps_idx[key] = len(hyps_by_inv_map)
-            hyps_by_inv_map.append((inv_map, []))
-        hyps_by_inv_map[inv_maps_idx[key]][1].append(params_i)
+    # FIXME!!
+    if len(groups) > 1:
+        return 1.0
 
-    return hyps_by_inv_map
+    for out_idx in range(max_out_len):
+        # new_groups = []
+        # for group in groups:
+        #     if len(group) == 1:
+        #         new_groups.append(group)
+        #         continue
 
+        nan_values = [(nan_map[out_idx] if len(nan_map) > out_idx else None) for nan_map in nan_maps]
 
-def _simulate_hypothesis(hypothesis: SlidingWindowParams, input_size: int, nan_idx: Iterable[int]):
-    nan_out_ranges = []
-    out_range = slice(0, 0)
-    for in_range, out_range in hypothesis.get_kernel_map(input_size):
-        if any(idx in nan_idx for idx in range(in_range.start, in_range.stop)):
-            if not nan_out_ranges or nan_out_ranges[-1][1] < out_range.start:
-                nan_out_ranges.append((out_range.start, out_range.stop))
-            else:
-                nan_out_ranges[-1] = (
-                    min(nan_out_ranges[-1][0], out_range.start),
-                    max(nan_out_ranges[-1][1], out_range.stop),
-                )
+        unique_values = set(nan_values)
+        if 1 in unique_values:
+            unique_values.remove(1)
+        if len(unique_values) > 1:
+            return 1.0
 
-    return out_range.stop, tuple(nan_out_ranges)
-
-
-def _get_infogain_for_hypotheses(hypotheses: List[SlidingWindowParams], input_size: int, nan_idx: Iterable[int]):
-    outcomes = {}
-    for hyp in hypotheses:
-        outcome = _simulate_hypothesis(hyp, input_size, nan_idx)
-        outcomes.setdefault(outcome, []).append(hyp)
-
-    # print("\n\n")
-    # for outcome, hyps in outcomes.items():
-    #     if len(hyps) > 1:
-    #         print(outcome, hyps)
-    #         print("===")
-    # print("\n\n")
-
-    outcomes_count = {k: len(v) for k, v in outcomes.items()}
-    return outcomes_count, _get_infogain(outcomes_count.values())
+    return 0.0
 
 
 def find_nan_trick_params_by_infogain(hypotheses: List[SlidingWindowParams]):
@@ -268,21 +262,45 @@ def find_nan_trick_params_by_infogain(hypotheses: List[SlidingWindowParams]):
     # FIXME!!
     best_in_size = 100
     for in_size in range(min_in_size, max_in_size + 1):
-        outcomes_count, infogain = _get_infogain_for_hypotheses(hypotheses, in_size, set())
+        infogain = _get_infogain_for_hypotheses(hypotheses, in_size, set())
         if infogain > best_infogain:
             best_infogain = infogain
             best_in_size = in_size
-            print(in_size, infogain, outcomes_count)
+            # print(in_size, infogain, outcomes_count)
 
     best_nan_idx = None
     for nan_idx in range(0, best_in_size):
-        outcomes_count, infogain = _get_infogain_for_hypotheses(hypotheses, best_in_size, {nan_idx})
+        infogain = _get_infogain_for_hypotheses(hypotheses, best_in_size, {nan_idx})
         if infogain > best_infogain:
             best_infogain = infogain
             best_nan_idx = nan_idx
-            print(best_in_size, nan_idx, infogain, outcomes_count)
+            # print(best_in_size, nan_idx, infogain, outcomes_count)
+
+    # FIXME!!
+    if best_infogain == 0.0:
+        return None, None
 
     return best_in_size, best_nan_idx
+
+
+def _separate_incompatible_hypotheses(hypotheses, history):
+    hypotheses = list(hypotheses)
+
+    incompat_hypotheses = []
+    for hypothesis in hypotheses:
+        for record in history:
+            if not check_nan_trick(
+                hypothesis,
+                record["in_seq"].size,
+                record["out_seq"].size,
+                record["in_nan_range"],
+                record["out_nan_idx"],
+            ):
+                incompat_hypotheses.append(hypothesis)
+                hypotheses.remove(hypothesis)
+                break
+
+    return hypotheses, incompat_hypotheses
 
 
 # TODO: allow transforms with multiple sequential inputs
@@ -291,10 +309,11 @@ def find_nan_trick_params_by_infogain(hypotheses: List[SlidingWindowParams]):
 def find_sliding_window_params_for_transform(
     trsfm: Callable,
     input_provider: Callable[[int], Sequence] | SeqSpec,
-    output_spec: Optional[SeqSpec] = None,
+    out_spec: Optional[SeqSpec] = None,
     init_seq_size: int = 30,
     max_in_seq_size: int = 10_000,
     max_hypotheses_per_step: int = 100,
+    atol: float = 1e-5,
 ) -> List[SlidingWindowParams]:
     """
     Given a sequence-to-sequence transform (neural net, single layer, time series analysis function, ...),
@@ -324,14 +343,18 @@ def find_sliding_window_params_for_transform(
     if max_hypotheses_per_step <= 1:
         raise ValueError("max_hypotheses_per_step must be greater than 1")
     if isinstance(input_provider, SeqSpec):
-        seq_spec = input_provider
-        input_provider = partial(Sequence.randn, seq_spec)
+        in_spec = input_provider
+        input_provider = partial(Sequence.randn, in_spec)
 
     solver = SlidingWindowParamsSolver()
     solver_converged = False
-    step = 1
-    hypotheses, incompat_hypotheses = [], set()
+    hypotheses = []
+    history = []
     while len(hypotheses) > 1 or not solver_converged:
+        # Keep track of the solver's history
+        record: dict[str, Any] = {"step": len(history) + 1}
+        history.append(record)
+
         # Determine an input size and an input nan range
         if not hypotheses:
             # In the absence of input/output information, use sane defaults
@@ -342,11 +365,18 @@ def find_sliding_window_params_for_transform(
             # Once we have a couple of hypotheses, we'll determine our nan trick parameters based on them
             # Get the nan trick parameters that will be the most discriminative of the hypotheses
             seq_size, in_nan_idx = find_nan_trick_params_by_infogain(hypotheses)
+            if seq_size is None:
+                logger.debug(
+                    f"Got {len(hypotheses)} compatible hypotheses from the nan trick, moving on to equivalency "
+                    f"checking. Hypotheses:\n{hypotheses}"
+                )
+                break
             in_nan_range = (in_nan_idx, in_nan_idx + 1) if in_nan_idx is not None else None
 
-        # FIXME!!
-        if len(hypotheses) <= 5:
-            print(hypotheses)
+        # Verify we're not using the same input parameters twice, which would be a waste of compute
+        assert not any(
+            record["in_seq"].size == seq_size and record["in_nan_range"] == in_nan_range for record in history
+        ), f"Internal error: input parameters ({seq_size}, {in_nan_range}) have already been used"
 
         # Get an input of said size
         in_seq = input_provider(seq_size)
@@ -354,11 +384,15 @@ def find_sliding_window_params_for_transform(
             raise TypeError(
                 f"The input_provider function {input_provider} returned a {type(in_seq)} when a Sequence was expected"
             )
+        record["in_seq"] = in_seq.copy()
+        record["in_nan_range"] = in_nan_range
 
         # Perform the nan trick on the actual transform
-        out_size, out_nan_idx = run_nan_trick(trsfm, in_seq, in_nan_range, output_spec=(output_spec or in_seq.spec))
+        out_seq, out_nan_idx = run_nan_trick(trsfm, in_seq, in_nan_range, out_spec=(out_spec or in_seq.spec))
+        record["out_seq"] = out_seq.copy()
+        record["out_nan_idx"] = out_nan_idx
 
-        if out_size == 0:
+        if out_seq.size == 0:
             # TODO: better messages
             if seq_size == max_in_seq_size:
                 raise RuntimeError()
@@ -369,25 +403,21 @@ def find_sliding_window_params_for_transform(
                 init_seq_size = min(10 * init_seq_size, max_in_seq_size)
 
         # Provide the nan trick results to the solver
-        out_nan_range = (out_nan_idx[0], out_nan_idx[-1] + 1) if out_nan_idx else None
-        solver.add_in_out_range_map(seq_size, out_size, in_nan_range, out_nan_range)
+        out_nan_range = (out_nan_idx[0], out_nan_idx[-1] + 1) if len(out_nan_idx) else None
+        solver.add_in_out_range_map(seq_size, out_seq.size, in_nan_range, out_nan_range)
 
-        # Eliminate incompatible hypotheses
+        # Eliminate incompatible hypotheses based on these results
         n_hyps_init = len(hypotheses)
-        for hypothesis in hypotheses:
-            if not check_nan_trick(hypothesis, seq_size, out_size, in_nan_range, out_nan_idx):
-                incompat_hypotheses.add(hypothesis)
-                hypotheses.remove(hypothesis)
+        hypotheses, record["rejected_hypotheses"] = _separate_incompatible_hypotheses(hypotheses, history[-1:])
         assert not n_hyps_init or len(hypotheses) < n_hyps_init, "Internal error: no hypotheses were removed"
 
         # Get new hypotheses
         # TODO: doc
-        solver_start_time = time.perf_counter()
-        if not hypotheses and len(out_nan_idx) == out_size:
+        if not hypotheses and len(out_nan_idx) == out_seq.size:
             if seq_size == max_in_seq_size:
                 # TODO: offer a course of action
                 logger.warning(
-                    f"Your transform outputs NaNs covering the entire output (size={out_size}) given the "
+                    f"Your transform outputs NaNs covering the entire output (size={out_seq.size}) given the "
                     f"maximum input size (={seq_size}). This likely means that an operation in your transform "
                     f"broadcasts an input element to all output elements, like a mean, batchnorm, etc... We can't "
                     f"determine sliding window parameters nor stream exactly these types of transforms as their kernel "
@@ -396,20 +426,34 @@ def find_sliding_window_params_for_transform(
                 break
             init_seq_size = min(10 * init_seq_size, max_in_seq_size)
         elif not solver_converged:
-            # TODO!! exclude hyps
-
-            # hypotheses = solver.get_solutions(compatible_prev_hypotheses, max_solutions=max_hypotheses_per_step)
-            hypotheses = solver.get_solutions([], max_solutions=max_hypotheses_per_step)
+            solver_start_time = time.perf_counter()
+            hypotheses = solver.get_solutions(hypotheses, max_solutions=max_hypotheses_per_step)
+            record["solver_time"] = time.perf_counter() - solver_start_time
             if len(hypotheses) < max_hypotheses_per_step:
                 solver_converged = True
 
-        solver_time = time.perf_counter() - solver_start_time
+            # The solver is not as strict as it should be, so we need to filter out incompatible hypotheses based
+            # on past observations.
+            hypotheses, _ = _separate_incompatible_hypotheses(hypotheses, history)
+
+        record["hypotheses"] = list(hypotheses)
+        record["solver_converged"] = solver_converged
         logger.info(
-            f"Step {step}: got {len(hypotheses)} hypothes{'es' if len(hypotheses) != 1 else 'is'} "
+            f"Step {len(history)}: got {len(hypotheses)} hypothes{'es' if len(hypotheses) != 1 else 'is'} "
             + (f"(max is {max_hypotheses_per_step}) " if len(hypotheses) == max_hypotheses_per_step else "")
-            + f"in {solver_time * 1000:.0f}ms"
+            + (f"solver ran in {record['solver_time'] * 1000:.0f}ms" if "solver_time" in record else "")
         )
 
-        step += 1
+    # FIXME!!
+    in_seq = input_provider(100)
+    for hypothesis in list(hypotheses):
+        try:
+            test_stream_equivalent(
+                trsfm, SlidingWindowStream(trsfm, hypothesis, in_seq.spec, out_spec), in_seq, atol=atol
+            )
+        except AssertionError:
+            hypotheses.remove(hypothesis)
+    if len(hypotheses) > 1:
+        logger.info(f"Found {len(hypotheses)} compatible hypotheses:\n{hypotheses}")
 
-    return hypotheses[0] if hypotheses else None
+    return hypotheses

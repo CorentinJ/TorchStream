@@ -1,13 +1,14 @@
 import logging
 
-from torch.nn import Conv1d
+from torch.nn import Conv1d, ConvTranspose1d
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_solver import (
-    find_nan_trick_params_by_infogain,
     find_sliding_window_params_for_transform,
 )
+from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
+from torchstream.stream_equivalence import test_stream_equivalent
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
@@ -17,39 +18,68 @@ logging.basicConfig(level=logging.DEBUG)
 # hyps = solver.get_solutions()
 # sols = find_nan_trick_params_by_infogain(hyps)
 
-# if False:
-a = Conv1d(1, 1, kernel_size=3, stride=4)
-sol = find_sliding_window_params_for_transform(a, SeqSpec((1, 1, -1)))  # , max_hypotheses_per_step=10)
-print(sol)
+trsfm1 = Conv1d(1, 1, kernel_size=2, stride=1, padding=1)
+
+trsfm2 = ConvTranspose1d(1, 1, kernel_size=2, stride=1)
+trsfm2.weight.data = trsfm1.weight.data.flip(2)
+trsfm2.bias.data = trsfm1.bias.data
+
+in_spec = SeqSpec((1, 1, -1))
+in_seq = in_spec.new_randn(100)
+
+print(trsfm1(in_seq))
+print(trsfm2(in_seq))
+
 quit()
 
+if False or True:
+    sol = find_sliding_window_params_for_transform(trsfm, SeqSpec((1, 1, -1)))  # , max_hypotheses_per_step=10)
+    print("\nSolution:\n", sol)
+    quit()
 
-b = (
+
+hypotheses = [
     SlidingWindowParams(
-        kernel_size_in=5,
-        stride_in=5,
+        kernel_size_in=1,
+        left_pad=0,
+        right_pad=0,
+        kernel_size_out=2,
+    ),
+    SlidingWindowParams(
+        kernel_size_in=2,
         left_pad=1,
-        right_pad=4,
+        right_pad=1,
+        kernel_size_out=1,
     ),
-    SlidingWindowParams(
-        kernel_size_in=7,
-        stride_in=5,
-        left_pad=3,
-        right_pad=4,
-    ),
-    SlidingWindowParams(
-        kernel_size_in=6,
-        stride_in=5,
-        left_pad=2,
-        right_pad=4,
-    ),
-)
+]
 
-print(find_nan_trick_params_by_infogain(list(b)))
-print()
+if False or True:
+    # in_len, in_nan_idx = find_nan_trick_params_by_infogain(hypotheses)
+    # print(f"{in_len=}, {in_nan_idx=}")
+    # print()
 
-for i in b:
-    print(i)
-    for j, x in enumerate(i.get_kernel_map(10)):
-        print(j, x)
-    print("---")
+    # gt_hyp = hypotheses[-1]
+    # nan_map = get_nan_map(gt_hyp, in_len, (in_nan_idx, in_nan_idx + 1))
+    # out_nan_idx = np.where(nan_map > 0)[0]
+
+    for i in hypotheses:
+        print(i)
+        for j, x in enumerate(i.get_inverse_kernel_map(7)):
+            print(j, x)
+        # compat = check_nan_trick(i, in_len, len(nan_map), (in_nan_idx, in_nan_idx + 1), out_nan_idx)
+        # print(f"  {compat=}")
+        print("---")
+
+    quit()
+
+in_spec = SeqSpec((1, 1, -1))
+in_seq = in_spec.new_randn(100)
+for hypothesis in list(hypotheses):
+    try:
+        test_stream_equivalent(
+            trsfm,
+            SlidingWindowStream(trsfm, hypothesis, in_spec),
+            in_seq,
+        )
+    except AssertionError as e:
+        print(f"Failed for hypothesis {hypothesis}: {e}")

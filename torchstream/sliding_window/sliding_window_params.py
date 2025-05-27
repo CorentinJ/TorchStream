@@ -2,8 +2,6 @@ import math
 from dataclasses import dataclass, field
 from typing import Iterator, Tuple
 
-import numpy as np
-
 
 @dataclass(frozen=True)
 class SlidingWindowParams:
@@ -18,12 +16,7 @@ class SlidingWindowParams:
     stride_in: int = field(default=1)
     # The static number of elements to pad on the left side of the input.
     left_pad: int = field(default=0)
-    # This value represents the number of extra windows that are produced as a result of the left and right padding
-    # combined. It is a proxy for right padding, because right padding is not necessarily constant, but this
-    # value typically is. A few examples:
-    #   - For a conv1d layer with no padding, alpha = 0.
-    #   - For a conv1d layer with stride=1 and "same" padding (input size = output size), alpha = kernel_size_in - 1.
-    # FIXME! change doc repo wide
+    # FIXME! doc
     right_pad: int = field(default=0)
     # The kernel size of the output. It is 1 for normal convolutions, but can be larger for transposed convolutions.
     kernel_size_out: int = field(default=1)
@@ -133,25 +126,16 @@ class SlidingWindowParams:
                 ),
             )
 
-    def get_inverse_map(self, input_size: int) -> np.ndarray:
+    def get_inverse_kernel_map(self, input_size: int):
         # TODO: doc
         (left_pad, right_pad), num_wins, out_size = self.get_metrics_for_input(input_size)
-        if not out_size:
-            return np.zeros((0, 2), dtype=np.int64)
 
-        padded_in_size = left_pad + input_size + right_pad
+        out_map = [[] for _ in range(out_size)]
+        for (in_start, in_stop), (out_start, out_stop) in self.get_kernel_map(num_wins):
+            for out_idx in range(max(0, out_start), min(out_size, out_stop)):
+                out_map[out_idx].append((in_start, in_stop, out_idx - out_start))
 
-        out = np.zeros((out_size, 2), dtype=np.int64)
-        out[:, 0] = padded_in_size
-        out[:, 1] = -left_pad
-
-        raise NotImplementedError()
-        # FIXME! bounds
-        for in_sli, out_sli in self.get_kernel_map(num_wins):
-            out[out_sli, 0] = np.minimum(out[out_sli, 0], in_sli.start)
-            out[out_sli, 1] = np.maximum(out[out_sli, 1], in_sli.stop)
-
-        return out
+        return out_map
 
     def __repr__(self):
         return (
