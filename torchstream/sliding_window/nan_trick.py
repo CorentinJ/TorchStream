@@ -51,7 +51,7 @@ def run_nan_trick(
 
         logger.info(f"Transformed failed with {repr(e)}")
 
-        return 0, np.empty(0, dtype=np.int64)
+        return Sequence.empty(out_spec), np.empty(0, dtype=np.int64)
 
     out_nan_idx = get_out_nan_idx(out_seq)
     logger.debug(f"Got a {tuple(out_seq.shape)} shaped output with nans at {out_nan_idx}")

@@ -6,7 +6,7 @@ from functools import partial
 from typing import Callable, Iterable, List, Optional, Tuple
 
 import torch
-from z3 import And, If, Implies, Int, Ints, Not, Or, Solver, is_true, sat
+from z3 import And, Bool, If, Implies, Int, Ints, Not, Or, Solver, sat
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
@@ -130,9 +130,17 @@ class SlidingWindowParamsSolver:
             self.solver.add(Implies(c > 0, padded_nan_start >= self.k_i + self.s_i * (c - 1)))
 
     # TODO: name
-    def is_compatible(self, solution: SlidingWindowParams):
-        with self.solver as temp_solver:
-            temp_solver.add(
+    def get_violations(self, solution: SlidingWindowParams):
+        unsat_solver = Solver()
+
+        trackers = []
+        for idx, assertion in enumerate(self.solver.assertions()):
+            bool_tracker = Bool(f"assertion_{idx}")
+            unsat_solver.assert_and_track(assertion, bool_tracker)
+            trackers.append((bool_tracker, assertion))
+
+        unsat_solver.add(
+            And(
                 self.k_i == solution.kernel_size_in,
                 self.s_i == solution.stride_in,
                 self.p_l == solution.left_pad,
@@ -141,17 +149,13 @@ class SlidingWindowParamsSolver:
                 self.s_o == solution.stride_out,
                 self.t_o == solution.out_trim,
             )
-            model = temp_solver.model()
+        )
 
-            # TODO: use assert_and_track?
-            violations = []
-            for a in temp_solver.assertions():
-                val = model.eval(a, model_completion=True)
-                # model.eval returns a Z3 BoolRef (True/False) for a BoolExpr
-                if not is_true(val):
-                    violations.append(a)
-
-            return violations
+        unsat_solver.check()
+        violations = [
+            expression for (bool_tracker, expression) in trackers if bool_tracker in unsat_solver.unsat_core()
+        ]
+        return violations
 
     def get_solutions(
         self, known_solutions: List[SlidingWindowParams] | None = None, max_solutions: int = 100
@@ -407,6 +411,14 @@ def find_sliding_window_params_for_transform(
         # Provide the nan trick results to the solver
         out_nan_range = (out_nan_idx[0], out_nan_idx[-1] + 1) if len(out_nan_idx) else None
         solver.add_in_out_range_map(seq_size, out_seq.size, in_nan_range, out_nan_range)
+
+        # FIXME!!
+        sol = SlidingWindowParams(kernel_size_in=3, stride_in=2)
+        print("====")
+        for violation in solver.get_violations(sol):
+            print(violation)
+            print("----")
+        print("====")
 
         # Eliminate incompatible hypotheses based on these results
         n_hyps_init = len(hypotheses)
