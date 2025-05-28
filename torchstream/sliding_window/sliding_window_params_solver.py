@@ -6,7 +6,7 @@ from functools import partial
 from typing import Callable, Iterable, List, Optional, Tuple
 
 import torch
-from z3 import And, Bool, If, Implies, Int, Ints, Not, Or, Solver, sat
+from z3 import And, Bool, If, Int, Ints, Not, Or, Solver, sat
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
@@ -105,32 +105,55 @@ class SlidingWindowParamsSolver:
         #     which region of the output results from which region of the input.
         #   - Only the first and last index of the input and output windows are guaranteed to carry over the nans, but
         #     they still may be suppressed by output trimming.
-        # FIXME! properly handle both kernels with gaps and output trimming
-        if not in_nan_range:
+        # FIXME? Add assertions when we have no output
+        if not in_nan_range or not out_nan_range:
             return
-        padded_nan_start, padded_nan_stop = self.p_l + in_nan_range[0], self.p_l + in_nan_range[1]
-        if out_nan_range:
-            # The start of both the input and the output range correspond to the same window. The same can be said
-            # for the end of the ranges.
-            # FIXME: notation difference: c above is the number of windows, cs and ce are window indices
-            crs, cre = Ints(f"c_{constraint_idx}_rs c_{constraint_idx}_re")
-            self.solver.add(0 <= crs, crs <= cre, cre < c)
 
-            self.solver.add(out_nan_range[0] == crs * self.s_o - self.t_o)
-            self.solver.add(
-                crs == (If(padded_nan_start >= self.k_i, padded_nan_start - self.k_i + 1, 0) + self.s_i - 1) / self.s_i
-            )
+        # TODO? I could strengthen the constraints on crs/cre by putting the out nan range into a var that could also
+        # be the indices trimmed by out_trim. I just need to ensure this is compatible with kernels that have gaps.
 
-            self.solver.add(out_nan_range[1] == cre * self.s_o + self.k_o - self.t_o)
-            self.solver.add(cre == If(padded_nan_stop > (c - 1) * self.s_i, c - 1, (padded_nan_stop - 1) / self.s_i))
-        else:
-            # When there's an output but no in->out range, it necessarily means that the input range was dropped
-            # due to windows not lining up. Therefore, the input range is fully contained after the last window.
-            # FIXME!! not the case with output trimming
-            self.solver.add(Implies(c > 0, padded_nan_start >= self.k_i + self.s_i * (c - 1)))
+        # The window(s) that output nans must necessarily have seen a nan in their input. We'll model this.
+        crs, cre = Ints(f"c_{constraint_idx}_rs c_{constraint_idx}_re")
+        self.solver.add(
+            crs <= cre,
+            # crs is the index of the first window that could possibly output the first nan in the output (we have no
+            # guarantee that it is indeed that window, this is a lower bound).
+            crs >= 0,
+            crs >= (out_nan_range[0] - self.k_o + 1 + self.t_o) / self.s_o,
+            # Likewise, cre is the index of the last window that could possibly have output the last nan in the output.
+            cre < c,
+            cre <= (out_nan_range[1] + self.t_o) / self.s_o,
+            # [crs, cre] defines a range of windows which necessarily overlaps the input nans. We have no guarantee
+            # it fully contains them due to the edge cases listed above.
+            self.p_l + in_nan_range[0] < cre * self.s_i + self.k_i,
+            self.p_l + in_nan_range[1] >= crs * self.s_i,
+        )
 
-    # TODO: name
+        # if not in_nan_range:
+        #     return
+        # padded_nan_start, padded_nan_stop = self.p_l + in_nan_range[0], self.p_l + in_nan_range[1]
+        # if out_nan_range:
+        #     # The start of both the input and the output range correspond to the same window. The same can be said
+        #     # for the end of the ranges.
+        #     # FIXME: notation difference: c above is the number of windows, cs and ce are window indices
+        #     crs, cre = Ints(f"c_{constraint_idx}_rs c_{constraint_idx}_re")
+        #     self.solver.add(0 <= crs, crs <= cre, cre < c)
+
+        #     self.solver.add(out_nan_range[0] == crs * self.s_o - self.t_o)
+        #     self.solver.add(
+        #         crs == (If(padded_nan_start >= self.k_i, padded_nan_start - self.k_i + 1, 0) + self.s_i - 1) / self.s_i
+        #     )
+
+        #     self.solver.add(out_nan_range[1] == cre * self.s_o + self.k_o - self.t_o)
+        #     self.solver.add(cre == If(padded_nan_stop > (c - 1) * self.s_i, c - 1, (padded_nan_stop - 1) / self.s_i))
+        # else:
+        #     # When there's an output but no in->out range, it necessarily means that the input range was dropped
+        #     # due to windows not lining up. Therefore, the input range is fully contained after the last window.
+        #     # FIXME!! not the case with output trimming
+        #     self.solver.add(Implies(c > 0, padded_nan_start >= self.k_i + self.s_i * (c - 1)))
+
     def get_violations(self, solution: SlidingWindowParams):
+        # TODO: doc
         unsat_solver = Solver()
 
         trackers = []
@@ -415,10 +438,15 @@ def find_sliding_window_params_for_transform(
         # FIXME!!
         sol = SlidingWindowParams(kernel_size_in=3, stride_in=2)
         print("====")
+        print(sol)
+        v = True
         for violation in solver.get_violations(sol):
+            v = False
             print(violation)
             print("----")
         print("====")
+        if not v:
+            quit()
 
         # Eliminate incompatible hypotheses based on these results
         n_hyps_init = len(hypotheses)

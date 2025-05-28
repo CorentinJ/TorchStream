@@ -1,6 +1,6 @@
 import logging
 
-from torch.nn import Conv1d, ConvTranspose1d
+from torch.nn import Conv1d
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
@@ -13,24 +13,7 @@ from torchstream.stream_equivalence import test_stream_equivalent
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
-# solver = SlidingWindowParamsSolver()
-# solver.add_in_out_range_map((8, 12), [])
-# hyps = solver.get_solutions()
-# sols = find_nan_trick_params_by_infogain(hyps)
-
-trsfm1 = Conv1d(1, 1, kernel_size=2, stride=1, padding=1)
-
-trsfm2 = ConvTranspose1d(1, 1, kernel_size=2, stride=1)
-trsfm2.weight.data = trsfm1.weight.data.flip(2)
-trsfm2.bias.data = trsfm1.bias.data
-
-in_spec = SeqSpec((1, 1, -1))
-in_seq = in_spec.new_randn(100)
-
-print(trsfm1(in_seq))
-print(trsfm2(in_seq))
-
-quit()
+trsfm = Conv1d(1, 1, kernel_size=2, stride=2, dilation=2)
 
 if False or True:
     sol = find_sliding_window_params_for_transform(trsfm, SeqSpec((1, 1, -1)))  # , max_hypotheses_per_step=10)
