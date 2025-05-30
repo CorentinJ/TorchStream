@@ -44,26 +44,26 @@ class SlidingWindowParams:
         if self.out_trim < 0 or self.out_trim >= self.kernel_size_out:
             raise ValueError("out_trim must be at least 0 and at most kernel_size_out - 1.")
 
-    def get_metrics_for_input(self, input_size: int) -> Tuple[Tuple[int, int], int, int]:
+    def get_metrics_for_input(self, in_len: int) -> Tuple[Tuple[int, int], int, int]:
         """
-        Computes the padding, number of windows and output size for an input to the transform with a given size.
+        Computes the padding, number of windows and output length for an input to the transform with a given length.
 
-        :param input_size: The size of the input tensor, without the sliding window padding applied.
+        :param in_len: The length of the input tensor, without the sliding window padding applied.
         :return:
             - (left_pad, right_pad): A tuple of integers of the padding that is applied to the input tensor before
             applying the sliding window transform. Because sliding windows with input stride > 1 might not line up
-            exactly with the end of the padded input, the right padding for a given input size might be effectively
+            exactly with the end of the padded input, the right padding for a given input length might be effectively
             less than <self.right_pad>. There are also cases where inputs on the right go unused, and therefore the
             effective right padding returned will be negative. This is to ensure that the padded input always lines
             up with the last window.
-            - num_wins: The number of windows that are computed for the given input size.
-            - out_size: The size of the output tensor.
+            - num_wins: The number of windows that are computed for the given input length.
+            - out_len: The length of the output tensor.
         """
         # Number of windows
-        if input_size <= 0:
+        if in_len <= 0:
             num_wins = 0
         else:
-            num_wins = max(0, (self.left_pad + input_size + self.right_pad - self.kernel_size_in) // self.stride_in + 1)
+            num_wins = max(0, (self.left_pad + in_len + self.right_pad - self.kernel_size_in) // self.stride_in + 1)
 
         # Padding
         if num_wins == 0:
@@ -72,7 +72,7 @@ class SlidingWindowParams:
             padding = (0, 0)
         else:
             padded_input_size = (num_wins - 1) * self.stride_in + self.kernel_size_in
-            right_pad = padded_input_size - input_size - self.left_pad
+            right_pad = padded_input_size - in_len - self.left_pad
             assert -self.stride_in < right_pad, (
                 "Internal error: trimming on the right should be smaller than the stride"
             )
@@ -82,11 +82,11 @@ class SlidingWindowParams:
             padding = (self.left_pad, right_pad)
 
         if num_wins == 0:
-            output_size = 0
+            out_len = 0
         else:
-            output_size = max(0, (num_wins - 1) * self.stride_out + self.kernel_size_out - 2 * self.out_trim)
+            out_len = max(0, (num_wins - 1) * self.stride_out + self.kernel_size_out - 2 * self.out_trim)
 
-        return padding, num_wins, output_size
+        return padding, num_wins, out_len
 
     # TODO: test this function with a bunch of edge cases
     def get_min_input_size(self) -> int:
@@ -99,7 +99,7 @@ class SlidingWindowParams:
         non_padded_min_input_size = (num_wins_needed - 1) * self.stride_in + self.kernel_size_in
         return max(1, non_padded_min_input_size - self.right_pad - self.left_pad)
 
-    def get_kernel_map(self, num_wins: int | None = None) -> Iterator[Tuple[Tuple[int, int], Tuple[int, int]]]:
+    def iter_kernel_map(self, num_wins: int | None = None) -> Iterator[Tuple[Tuple[int, int], Tuple[int, int]]]:
         """
         Iterates over the regions of input and output mapped by the sliding window transform.
 
@@ -126,13 +126,31 @@ class SlidingWindowParams:
                 ),
             )
 
-    def get_inverse_kernel_map(self, input_size: int):
-        # TODO: doc
-        (left_pad, right_pad), num_wins, out_size = self.get_metrics_for_input(input_size)
+    def iter_bounded_kernel_map(
+        self, in_len: int, bound_input: bool = True, bound_output: bool = True
+    ) -> Iterator[Tuple[Tuple[int, int], Tuple[int, int]]]:
+        """
+        Wrapper around get_kernel_map() that bounds the input and output windows between 0 and their respective sizes.
+        """
+        _, num_wins, out_len = self.get_metrics_for_input(in_len)
 
-        out_map = [[] for _ in range(out_size)]
-        for (in_start, in_stop), (out_start, out_stop) in self.get_kernel_map(num_wins):
-            for out_idx in range(max(0, out_start), min(out_size, out_stop)):
+        for (in_start, in_stop), (out_start, out_stop) in self.iter_kernel_map(num_wins):
+            if bound_input:
+                in_start = min(max(in_start, 0), in_len)
+                in_stop = min(max(in_stop, 0), in_len)
+            if bound_output:
+                out_start = min(max(out_start, 0), out_len)
+                out_stop = min(max(out_stop, 0), out_len)
+
+            yield (in_start, in_stop), (out_start, out_stop)
+
+    def get_inverse_kernel_map(self, in_len: int):
+        # TODO: doc
+        out_map = []
+        for (in_start, in_stop), (out_start, out_stop) in self.iter_bounded_kernel_map(in_len, bound_input=False):
+            while len(out_map) < out_stop:
+                out_map.append([])
+            for out_idx in range(out_start, out_stop):
                 out_map[out_idx].append((in_start, in_stop, out_idx - out_start))
 
         return out_map

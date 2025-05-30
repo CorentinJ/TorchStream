@@ -435,18 +435,18 @@ def find_sliding_window_params_for_transform(
         out_nan_range = (out_nan_idx[0], out_nan_idx[-1] + 1) if len(out_nan_idx) else None
         solver.add_in_out_range_map(seq_size, out_seq.size, in_nan_range, out_nan_range)
 
-        # FIXME!!
-        sol = SlidingWindowParams(kernel_size_in=3, stride_in=2)
-        print("====")
-        print(sol)
-        v = True
-        for violation in solver.get_violations(sol):
-            v = False
-            print(violation)
-            print("----")
-        print("====")
-        if not v:
-            quit()
+        # # FIXME!!
+        # sol = SlidingWindowParams(kernel_size_in=3, stride_in=2)
+        # print("====")
+        # print(sol)
+        # v = True
+        # for violation in solver.get_violations(sol):
+        #     v = False
+        #     print(violation)
+        #     print("----")
+        # print("====")
+        # if not v:
+        #     quit()
 
         # Eliminate incompatible hypotheses based on these results
         n_hyps_init = len(hypotheses)
