@@ -89,12 +89,13 @@ def check_nan_trick(
         return False
 
 
+# TODO: tests
 def determine_kernel_sparsity(
     params: SlidingWindowParams,
     in_len: int,
     in_nan_range: Tuple[int, int],
     out_nan_idx: np.ndarray,
-):
+) -> Tuple[np.ndarray, np.ndarray]:
     # TODO! doc
 
     _, num_wins, _ = params.get_metrics_for_input(in_len)
@@ -143,11 +144,10 @@ def determine_kernel_sparsity(
 
     if solver.check() == unsat:
         raise ValueError("No possible kernel configuration could give rise to the observed outcome.")
-    model = solver.model()
 
+    model = solver.model()
     kernel_in_values = np.zeros(params.kernel_size_in, dtype=np.int64)
     kernel_out_values = np.zeros(params.kernel_size_out, dtype=np.int64)
-
     for i in range(params.kernel_size_in):
         if model[kernel_in[i]] == True:
             kernel_in_values[i] = 2
@@ -155,7 +155,6 @@ def determine_kernel_sparsity(
             kernel_in_values[i] = 0
         else:
             kernel_in_values[i] = 1
-
     for i in range(params.kernel_size_out):
         if model[kernel_out[i]] == True:
             kernel_out_values[i] = 2

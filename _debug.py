@@ -44,10 +44,6 @@ hypotheses = [
     ),
 ]
 
-for hypothesis in hypotheses:
-    print(check_nan_trick(hypothesis, 7, 3, (2, 3), np.array([0, 1])))
-quit()
-
 if False or True:
     # in_len, in_nan_idx = find_nan_trick_params_by_infogain(hypotheses)
     # print(f"{in_len=}, {in_nan_idx=}")
@@ -59,13 +55,11 @@ if False or True:
     # out_nan_idx = np.where(nan_map > 0)[0]
 
     for i in hypotheses:
-        print(i)
-        print(get_nan_map(i, 7, (2, 3)))
+        print("NaN map:", get_nan_map(i, 7, (2, 3)))
         for j, x in enumerate(i.get_inverse_kernel_map(10)):
-            print(j, x)
-        # compat = check_nan_trick(i, in_len, len(nan_map), (in_nan_idx, in_nan_idx + 1), out_nan_idx)
-        # print(f"  {compat=}")
-        print("---")
+            print("Inv map", j, x)
+        check_nan_trick(i, 7, 3, (2, 3), np.array([0, 1]))
+        print("---\n")
 
     quit()
 

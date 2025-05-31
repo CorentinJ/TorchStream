@@ -146,11 +146,11 @@ class SlidingWindowParams:
 
     def get_inverse_kernel_map(self, in_len: int):
         # TODO: doc
-        out_map = []
-        for (in_start, in_stop), (out_start, out_stop) in self.iter_bounded_kernel_map(in_len, bound_input=False):
-            while len(out_map) < out_stop:
-                out_map.append([])
-            for out_idx in range(out_start, out_stop):
+        _, num_wins, out_len = self.get_metrics_for_input(in_len)
+
+        out_map = [[] for _ in range(out_len)]
+        for (in_start, in_stop), (out_start, out_stop) in self.iter_kernel_map(num_wins):
+            for out_idx in range(max(0, out_start), min(out_len, out_stop)):
                 out_map[out_idx].append((in_start, in_stop, out_idx - out_start))
 
         return out_map
