@@ -5,12 +5,13 @@ import time
 from functools import partial
 from typing import Callable, Iterable, List, Optional, Tuple
 
+import numpy as np
 import torch
 from z3 import And, Bool, If, Int, Ints, Not, Or, Solver, sat
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
-from torchstream.sliding_window.nan_trick import check_nan_trick, get_nan_map, run_nan_trick
+from torchstream.sliding_window.nan_trick import check_nan_trick, determine_kernel_sparsity, get_nan_map, run_nan_trick
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 from torchstream.stream_equivalence import test_stream_equivalent
@@ -310,12 +311,61 @@ def find_nan_trick_params_by_infogain(hypotheses: List[SlidingWindowParams]):
     return best_in_size, best_nan_idx
 
 
+def _update_reject_hypothesis(
+    params: SlidingWindowParams,
+    kernel_priors,
+    in_len: int,
+    out_len: int,
+    in_nan_range: Tuple[int, int] | None,
+    out_nan_idx: np.ndarray,
+) -> bool:
+    # TODO! doc
+
+    # Reject if the we get a different output length
+    _, _, expected_out_len = params.get_metrics_for_input(in_len)
+    if out_len != expected_out_len:
+        return False
+
+    kernel_in, kernel_out = determine_kernel_sparsity(
+        hypothesis,
+        record["in_seq"].size,
+        # FIXME!!
+        in_nan_range,
+        out_nan_idx,
+    )
+    if kernel_in is None:
+        logger.debug(f"No possible kernel for {params}, NaN trick invalidates it")
+        return False
+    logger.debug(f"Kernel for {params}\nIn: {kernel_in}\nOut: {kernel_out}")
+    return True
+
+
 def _separate_incompatible_hypotheses(hypotheses, history):
     hypotheses = list(hypotheses)
 
     incompat_hypotheses = []
     for hypothesis in list(hypotheses):
         for record in history:
+            # Reject if the we get a different output length
+            _, _, expected_out_len = hypothesis.get_metrics_for_input(record["in_seq"].size)
+            if record["out_seq"].size != expected_out_len:
+                incompat_hypotheses.append(hypothesis)
+                hypotheses.remove(hypothesis)
+                break
+
+            kernel_in, kernel_out = determine_kernel_sparsity(
+                hypothesis,
+                record["in_seq"].size,
+                # FIXME!!
+                in_nan_range,
+                out_nan_idx,
+            )
+            if kernel_in is None:
+                logger.debug(f"No possible kernel for {params}, NaN trick invalidates it")
+                return False
+            logger.debug(f"Kernel for {params}\nIn: {kernel_in}\nOut: {kernel_out}")
+            return True
+
             if not check_nan_trick(
                 hypothesis,
                 record["in_seq"].size,

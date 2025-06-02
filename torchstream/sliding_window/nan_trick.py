@@ -60,42 +60,14 @@ def run_nan_trick(
     return out_seq, out_nan_idx
 
 
-def check_nan_trick(
-    params: SlidingWindowParams,
-    in_len: int,
-    out_len: int,
-    in_nan_range: Tuple[int, int] | None,
-    out_nan_idx: np.ndarray,
-) -> bool:
-    # TODO! doc
-
-    # Reject if the we get a different output length
-    _, _, expected_out_len = params.get_metrics_for_input(in_len)
-    if out_len != expected_out_len:
-        return False
-
-    try:
-        kernel_in, kernel_out = determine_kernel_sparsity(
-            params,
-            in_len,
-            # FIXME!!
-            in_nan_range,
-            out_nan_idx,
-        )
-        logger.debug(f"Kernel for {params}\nIn: {kernel_in}\nOut: {kernel_out}")
-        return True
-    except ValueError:
-        logger.debug(f"No possible kernel for {params}, NaN trick invalidates it")
-        return False
-
-
 # TODO: tests
 def determine_kernel_sparsity(
     params: SlidingWindowParams,
     in_len: int,
     in_nan_range: Tuple[int, int],
     out_nan_idx: np.ndarray,
-) -> Tuple[np.ndarray, np.ndarray]:
+    kernel_priors: Tuple[np.ndarray, np.ndarray] | None = None,
+) -> Tuple[np.ndarray | None, np.ndarray | None]:
     # TODO! doc
 
     _, num_wins, _ = params.get_metrics_for_input(in_len)
@@ -104,12 +76,17 @@ def determine_kernel_sparsity(
     corrupted_wins = [Bool("corrupted_win_" + str(i)) for i in range(num_wins)]
     kernel_in = [Bool("kernel_in_" + str(i)) for i in range(params.kernel_size_in)]
     kernel_out = [Bool("kernel_out_" + str(i)) for i in range(params.kernel_size_out)]
-    solver.add(
-        kernel_in[0] == True,
-        kernel_in[-1] == True,
-        kernel_out[0] == True,
-        kernel_out[-1] == True,
-    )
+
+    # Apply the kernel priors if provided
+    if kernel_priors is None:
+        solver.add(
+            kernel_in[0] == True,
+            kernel_in[-1] == True,
+            kernel_out[0] == True,
+            kernel_out[-1] == True,
+        )
+    else:
+        pass
 
     for win_idx, ((in_start, in_stop), (out_start, out_stop)) in enumerate(params.iter_kernel_map(num_wins)):
         # The kernel can only output nans (=be corrupted) if it has any overlap with the input nans
@@ -143,7 +120,7 @@ def determine_kernel_sparsity(
             )
 
     if solver.check() == unsat:
-        raise ValueError("No possible kernel configuration could give rise to the observed outcome.")
+        return None, None
 
     model = solver.model()
     kernel_in_values = np.zeros(params.kernel_size_in, dtype=np.int64)
