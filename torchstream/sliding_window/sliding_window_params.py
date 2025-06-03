@@ -1,34 +1,53 @@
 import math
-from dataclasses import dataclass, field
 from typing import Iterator, Tuple
 
+import numpy as np
 
-@dataclass(frozen=True)
+
 class SlidingWindowParams:
     """
     This class represents the parameters of a sliding window transform (e.g. a convolution, a moving average, ...).
     """
 
-    # TODO: does default_factory actually cast?
-    # The kernel size of the input. For dilated (à trous) convolutions, this is the span of the entire kernel.
-    # TODO: clarify these params are not only for convs
-    kernel_size_in: int = field(default=1)
-    stride_in: int = field(default=1)
-    # The static number of elements to pad on the left side of the input.
-    left_pad: int = field(default=0)
-    # FIXME! doc
-    right_pad: int = field(default=0)
-    # The kernel size of the output. It is 1 for normal convolutions, but can be larger for transposed convolutions.
-    kernel_size_out: int = field(default=1)
-    stride_out: int = field(default=1)
-    # This parameter is for trimming both sides of the output. It is rare to trim the output in practice, typically
-    # it's for getting rid of non-fully overlapping windows of the output when the output kernel size is larger than 1.
-    # Transposed convolutions expose this parameter through the "padding" parameter for example.
-    # So far I haven't met a model that had different left/right values, output padding or trimming larger than the
-    # kernel size.
-    out_trim: int = field(default=0)
+    def __init__(
+        self,
+        # TODO: overload where the kernel can be specified directly
+        kernel_size_in: int = 1,
+        stride_in: int = 1,
+        left_pad: int = 0,
+        right_pad: int = 0,
+        kernel_size_out: int = 1,
+        stride_out: int = 1,
+        out_trim: int = 0,
+    ):
+        """
+        :param kernel_size_in: The kernel size of the input. For dilated (à trous) convolutions, this is the span of the
+        entire kernel.
+        :param left_pad: The static number of elements to pad on the left side of the input.
+        :param right_pad: The maximum number of elements to pad on the right side of the input. Due to windows not
+        necessarily lining up with the input size with stride_in > 1, the effective right padding might be less than
+        this value.
+        :param kernel_size_out: The kernel size of the output. It is 1 for normal convolutions, but can be larger for
+        transposed convolutions.
+        :param out_trim: The number of elements to trim from both sides of the output. It is rare to trim the output
+        in practice, typically it's for getting rid of non-fully overlapping windows of the output when the output
+        kernel size is larger than 1. Transposed convolutions expose this parameter through the "padding" parameter
+        for example.
+        NOTE: So far I haven't met a model that had different left/right values, output padding or trimming
+        larger than the kernel size.
+        """
+        # The kernels are represented with integer numpy arrays, where a 0 means the kernel does not cover the elements
+        # at that index, a 2 means it does, and a 1 means it is unknown.
+        self.kernel_in = np.ones(int(kernel_size_in), dtype=np.int64)
+        self.kernel_out = np.ones(int(kernel_size_out), dtype=np.int64)
+        self.kernel_in[0] = self.kernel_in[-1] = self.kernel_out[0] = self.kernel_out[-1] = 2
 
-    def __post_init__(self):
+        self.stride_in = int(stride_in)
+        self.left_pad = int(left_pad)
+        self.right_pad = int(right_pad)
+        self.stride_out = int(stride_out)
+        self.out_trim = int(out_trim)
+
         if self.kernel_size_in < 1:
             raise ValueError("kernel_size_in must be at least 1.")
         if self.stride_in < 1 or self.stride_in > self.kernel_size_in:
@@ -43,6 +62,14 @@ class SlidingWindowParams:
             raise ValueError("right_pad must be at least 0 and at most kernel_size_in - 1.")
         if self.out_trim < 0 or self.out_trim >= self.kernel_size_out:
             raise ValueError("out_trim must be at least 0 and at most kernel_size_out - 1.")
+
+    @property
+    def kernel_size_in(self) -> int:
+        return len(self.kernel_in)
+
+    @property
+    def kernel_size_out(self) -> int:
+        return len(self.kernel_out)
 
     def get_metrics_for_input(self, in_len: int) -> Tuple[Tuple[int, int], int, int]:
         """
@@ -154,6 +181,32 @@ class SlidingWindowParams:
                 out_map[out_idx].append((in_start, in_stop, out_idx - out_start))
 
         return out_map
+
+    def __eq__(self, other):
+        if not isinstance(other, SlidingWindowParams):
+            return False
+        return (
+            np.array_equal(self.kernel_in, other.kernel_in)
+            and np.array_equal(self.kernel_out, other.kernel_out)
+            and self.stride_in == other.stride_in
+            and self.left_pad == other.left_pad
+            and self.right_pad == other.right_pad
+            and self.stride_out == other.stride_out
+            and self.out_trim == other.out_trim
+        )
+
+    def __hash__(self):
+        return hash(
+            (
+                tuple(self.kernel_in),
+                tuple(self.kernel_out),
+                self.stride_in,
+                self.left_pad,
+                self.right_pad,
+                self.stride_out,
+                self.out_trim,
+            )
+        )
 
     def __repr__(self):
         return (
