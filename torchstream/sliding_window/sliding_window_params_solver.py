@@ -11,7 +11,7 @@ from z3 import And, Bool, If, Int, Ints, Not, Or, Solver, sat
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
-from torchstream.sliding_window.nan_trick import check_nan_trick, determine_kernel_sparsity, get_nan_map, run_nan_trick
+from torchstream.sliding_window.nan_trick import determine_kernel_sparsity, get_nan_map, run_nan_trick
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 from torchstream.stream_equivalence import test_stream_equivalent
@@ -313,7 +313,6 @@ def find_nan_trick_params_by_infogain(hypotheses: List[SlidingWindowParams]):
 
 def _update_reject_hypothesis(
     params: SlidingWindowParams,
-    kernel_priors,
     in_len: int,
     out_len: int,
     in_nan_range: Tuple[int, int] | None,
@@ -326,17 +325,23 @@ def _update_reject_hypothesis(
     if out_len != expected_out_len:
         return False
 
-    kernel_in, kernel_out = determine_kernel_sparsity(
-        hypothesis,
-        record["in_seq"].size,
-        # FIXME!!
-        in_nan_range,
-        out_nan_idx,
-    )
-    if kernel_in is None:
-        logger.debug(f"No possible kernel for {params}, NaN trick invalidates it")
-        return False
-    logger.debug(f"Kernel for {params}\nIn: {kernel_in}\nOut: {kernel_out}")
+    # Reject if the nan trick's output is not compatible with the hypothesis
+    if in_nan_range is not None:
+        kernel_in, kernel_out = determine_kernel_sparsity(
+            params,
+            in_len,
+            # FIXME!!
+            in_nan_range,
+            out_nan_idx,
+        )
+        if kernel_in is None or kernel_out is None:
+            # logger.debug(f"No possible kernel for {params}, NaN trick invalidates it")
+            return False
+        # logger.debug(f"Kernel for {params}\nIn: {kernel_in}\nOut: {kernel_out}")
+
+        params.kernel_in_sparsity = kernel_in
+        params.kernel_out_sparsity = kernel_out
+
     return True
 
 
@@ -346,33 +351,16 @@ def _separate_incompatible_hypotheses(hypotheses, history):
     incompat_hypotheses = []
     for hypothesis in list(hypotheses):
         for record in history:
-            # Reject if the we get a different output length
-            _, _, expected_out_len = hypothesis.get_metrics_for_input(record["in_seq"].size)
-            if record["out_seq"].size != expected_out_len:
-                incompat_hypotheses.append(hypothesis)
-                hypotheses.remove(hypothesis)
-                break
-
-            kernel_in, kernel_out = determine_kernel_sparsity(
-                hypothesis,
-                record["in_seq"].size,
-                # FIXME!!
-                in_nan_range,
-                out_nan_idx,
-            )
-            if kernel_in is None:
-                logger.debug(f"No possible kernel for {params}, NaN trick invalidates it")
-                return False
-            logger.debug(f"Kernel for {params}\nIn: {kernel_in}\nOut: {kernel_out}")
-            return True
-
-            if not check_nan_trick(
+            # NOTE: this updates the hypothesis in place
+            compatible = _update_reject_hypothesis(
                 hypothesis,
                 record["in_seq"].size,
                 record["out_seq"].size,
+                # FIXME!!
                 record["in_nan_range"],
                 record["out_nan_idx"],
-            ):
+            )
+            if not compatible:
                 incompat_hypotheses.append(hypothesis)
                 hypotheses.remove(hypothesis)
                 break

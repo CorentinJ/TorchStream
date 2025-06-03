@@ -10,6 +10,19 @@ from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.stream import NotEnoughInputError, Stream
 
 
+# FIXME!
+def requires_same_context(sli1: SlidingWindowParams, sli2: SlidingWindowParams) -> bool:
+    return (
+        sli1.kernel_size_in == sli2.kernel_size_in
+        and sli1.kernel_size_out == sli2.kernel_size_out
+        and sli1.stride_in == sli2.stride_in
+        and sli1.left_pad == sli2.left_pad
+        and sli1.right_pad == sli2.right_pad
+        and sli1.stride_out == sli2.stride_out
+        and sli1.out_trim == sli2.out_trim
+    )
+
+
 class SlidingWindowStream(Stream):
     def __init__(
         self,

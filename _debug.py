@@ -4,7 +4,7 @@ import numpy as np
 from torch.nn import Conv1d
 
 from torchstream.sequence.seq_spec import SeqSpec
-from torchstream.sliding_window.nan_trick import check_nan_trick, get_nan_map
+from torchstream.sliding_window.nan_trick import get_nan_map
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_solver import (
     find_sliding_window_params_for_transform,
@@ -17,9 +17,12 @@ logging.basicConfig(level=logging.DEBUG)
 
 trsfm = Conv1d(1, 1, kernel_size=2, stride=2, dilation=2)
 
-if False:  # or True:
-    sol = find_sliding_window_params_for_transform(trsfm, SeqSpec((1, 1, -1)))  # , max_hypotheses_per_step=10)
-    print("\nSolution:\n", sol)
+if False or True:
+    sols = find_sliding_window_params_for_transform(trsfm, SeqSpec((1, 1, -1)), max_hypotheses_per_step=20)
+    for sol in sols:
+        print("\nSolution:\n", sol)
+        print(sol.kernel_in_sparsity)
+        print(sol.kernel_out_sparsity)
     quit()
 
 

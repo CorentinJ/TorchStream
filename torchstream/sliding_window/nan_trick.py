@@ -66,7 +66,6 @@ def determine_kernel_sparsity(
     in_len: int,
     in_nan_range: Tuple[int, int],
     out_nan_idx: np.ndarray,
-    kernel_priors: Tuple[np.ndarray, np.ndarray] | None = None,
 ) -> Tuple[np.ndarray | None, np.ndarray | None]:
     # TODO! doc
 
@@ -77,16 +76,17 @@ def determine_kernel_sparsity(
     kernel_in = [Bool("kernel_in_" + str(i)) for i in range(params.kernel_size_in)]
     kernel_out = [Bool("kernel_out_" + str(i)) for i in range(params.kernel_size_out)]
 
-    # Apply the kernel priors if provided
-    if kernel_priors is None:
-        solver.add(
-            kernel_in[0] == True,
-            kernel_in[-1] == True,
-            kernel_out[0] == True,
-            kernel_out[-1] == True,
-        )
-    else:
-        pass
+    # Apply the kernel priors
+    for idx, val in enumerate(params.kernel_in_sparsity):
+        if val == 0:
+            solver.add(kernel_in[idx] == False)
+        elif val == 2:
+            solver.add(kernel_in[idx] == True)
+    for idx, val in enumerate(params.kernel_out_sparsity):
+        if val == 0:
+            solver.add(kernel_out[idx] == False)
+        elif val == 2:
+            solver.add(kernel_out[idx] == True)
 
     for win_idx, ((in_start, in_stop), (out_start, out_stop)) in enumerate(params.iter_kernel_map(num_wins)):
         # The kernel can only output nans (=be corrupted) if it has any overlap with the input nans
@@ -104,8 +104,8 @@ def determine_kernel_sparsity(
             solver.add(
                 Or(
                     *[
-                        And(corrupted_wins[in_start // params.stride_in], kernel_out[kernel_out_idx])
-                        for in_start, _, kernel_out_idx in inv_map
+                        And(corrupted_wins[win_idx], kernel_out[kernel_out_idx])
+                        for win_idx, in_start, _, kernel_out_idx in inv_map
                     ]
                 )
             )
@@ -113,8 +113,8 @@ def determine_kernel_sparsity(
             solver.add(
                 And(
                     *[
-                        Not(And(corrupted_wins[in_start // params.stride_in], kernel_out[kernel_out_idx]))
-                        for in_start, _, kernel_out_idx in inv_map
+                        Not(And(corrupted_wins[win_idx], kernel_out[kernel_out_idx]))
+                        for win_idx, in_start, _, kernel_out_idx in inv_map
                     ]
                 )
             )

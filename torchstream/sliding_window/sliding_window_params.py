@@ -38,9 +38,10 @@ class SlidingWindowParams:
         """
         # The kernels are represented with integer numpy arrays, where a 0 means the kernel does not cover the elements
         # at that index, a 2 means it does, and a 1 means it is unknown.
-        self.kernel_in = np.ones(int(kernel_size_in), dtype=np.int64)
-        self.kernel_out = np.ones(int(kernel_size_out), dtype=np.int64)
-        self.kernel_in[0] = self.kernel_in[-1] = self.kernel_out[0] = self.kernel_out[-1] = 2
+        self.kernel_in_sparsity = np.ones(int(kernel_size_in), dtype=np.int64)
+        self.kernel_in_sparsity[0] = self.kernel_in_sparsity[-1] = 2
+        self.kernel_out_sparsity = np.ones(int(kernel_size_out), dtype=np.int64)
+        self.kernel_out_sparsity[0] = self.kernel_out_sparsity[-1] = 2
 
         self.stride_in = int(stride_in)
         self.left_pad = int(left_pad)
@@ -65,11 +66,11 @@ class SlidingWindowParams:
 
     @property
     def kernel_size_in(self) -> int:
-        return len(self.kernel_in)
+        return len(self.kernel_in_sparsity)
 
     @property
     def kernel_size_out(self) -> int:
-        return len(self.kernel_out)
+        return len(self.kernel_out_sparsity)
 
     def get_metrics_for_input(self, in_len: int) -> Tuple[Tuple[int, int], int, int]:
         """
@@ -176,9 +177,9 @@ class SlidingWindowParams:
         _, num_wins, out_len = self.get_metrics_for_input(in_len)
 
         out_map = [[] for _ in range(out_len)]
-        for (in_start, in_stop), (out_start, out_stop) in self.iter_kernel_map(num_wins):
+        for win_idx, ((in_start, in_stop), (out_start, out_stop)) in enumerate(self.iter_kernel_map(num_wins)):
             for out_idx in range(max(0, out_start), min(out_len, out_stop)):
-                out_map[out_idx].append((in_start, in_stop, out_idx - out_start))
+                out_map[out_idx].append((win_idx, in_start, in_stop, out_idx - out_start))
 
         return out_map
 
@@ -186,8 +187,8 @@ class SlidingWindowParams:
         if not isinstance(other, SlidingWindowParams):
             return False
         return (
-            np.array_equal(self.kernel_in, other.kernel_in)
-            and np.array_equal(self.kernel_out, other.kernel_out)
+            np.array_equal(self.kernel_in_sparsity, other.kernel_in_sparsity)
+            and np.array_equal(self.kernel_out_sparsity, other.kernel_out_sparsity)
             and self.stride_in == other.stride_in
             and self.left_pad == other.left_pad
             and self.right_pad == other.right_pad
@@ -198,8 +199,8 @@ class SlidingWindowParams:
     def __hash__(self):
         return hash(
             (
-                tuple(self.kernel_in),
-                tuple(self.kernel_out),
+                tuple(self.kernel_in_sparsity),
+                tuple(self.kernel_out_sparsity),
                 self.stride_in,
                 self.left_pad,
                 self.right_pad,
