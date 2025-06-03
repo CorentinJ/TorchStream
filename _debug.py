@@ -15,10 +15,11 @@ from torchstream.stream_equivalence import test_stream_equivalent
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
-trsfm = Conv1d(1, 1, kernel_size=2, stride=2, dilation=2)
+# trsfm = Conv1d(1, 1, kernel_size=2, stride=2, dilation=2)
+trsfm = Conv1d(1, 1, kernel_size=3, stride=2, dilation=1)
 
 if False or True:
-    sols = find_sliding_window_params_for_transform(trsfm, SeqSpec((1, 1, -1)), max_hypotheses_per_step=20)
+    sols = find_sliding_window_params_for_transform(trsfm, SeqSpec((1, 1, -1)), max_hypotheses_per_step=5)
     for sol in sols:
         print("\nSolution:\n", sol)
         print(sol.kernel_in_sparsity)
