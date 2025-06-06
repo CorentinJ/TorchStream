@@ -35,6 +35,7 @@ class SlidingWindowStream(Stream):
 
         self.transform = transform
         self.params = sliding_window_params
+        assert not self.params.out_trim, "Not implemented"
 
         # Number of windows that are wasted on the left solely due to padding. "wasted" here means that we recompute
         # these windows on each step despite them being unnecessary, simply because the transform re-pads the input
@@ -57,22 +58,13 @@ class SlidingWindowStream(Stream):
 
     # FIXME: signature
     def _step(self, in_seq: Sequence) -> Union[Tensor, np.ndarray, Tuple[Tensor, np.ndarray]]:
-        (left_pad, right_pad), num_wins, expected_out_size = self.params.get_metrics_for_input(in_seq.size)
-
         # Get the index of the first window that will compute valid output that we'll return
         first_eff_win_idx = self._n_wins_left_context - self._n_wins_to_buffer_left
-        out_trim_start = first_eff_win_idx * self.params.stride_out
-
-        # Likewise, get the index of the last window with valid output
-        # If the input is closed, there is no output trimming that needs to occur on the right side
-        if in_seq.input_closed:
-            out_trim_end = None
-            eff_num_wins = num_wins - first_eff_win_idx
-        # Otherwise, we may need to trim output on the right due to erroneous inputs incurred by right padding
-        else:
-            num_wins_before_right_trim = num_wins - max(0, int(math.ceil((right_pad / self.params.stride_in))))
-            out_trim_end = num_wins_before_right_trim * self.params.stride_out
-            eff_num_wins = num_wins_before_right_trim - first_eff_win_idx
+        right_context_size = self.params.right_pad if in_seq.input_closed else 0
+        last_eff_win_idx = (
+            self.params.left_pad + in_seq.size + right_context_size - self.params.kernel_size_in
+        ) // self.params.stride_in
+        eff_num_wins = last_eff_win_idx - first_eff_win_idx + 1
 
         if eff_num_wins <= 0:
             if self.input_closed and self._prev_trimmed_output is not None:
@@ -81,12 +73,17 @@ class SlidingWindowStream(Stream):
             # TODO: breakdown current state & display how much more data is needed
             raise NotEnoughInputError(f"Input sequence of size {in_seq.size} is not enough to produce any output.")
 
+        out_trim_start = first_eff_win_idx * self.params.stride_out
+        out_trim_end = None if in_seq.input_closed else (last_eff_win_idx + 1) * self.params.stride_out
+        assert out_trim_start >= 0 and (out_trim_end is None or out_trim_end > out_trim_start), "Internal error"
+
         # Forward the input
         tsfm_out = Sequence.apply(self.transform, in_seq, self.out_spec)
-        if tsfm_out.size != expected_out_size:
+        # FIXME!
+        if tsfm_out.size != self.params.get_metrics_for_input(in_seq.size)[2]:
             raise ValueError(
                 f"Sliding window parameters are not matching {self.transform}, got a {tsfm_out.size} sized "
-                f"sequence instead of {expected_out_size} for {in_seq.size} sized input. Sliding window params: "
+                f"sequence instead of {self.params.get_metrics_for_input(in_seq.size)[2]} for {in_seq.size} sized input. Sliding window params: "
                 f"{self.params}"
             )
 
