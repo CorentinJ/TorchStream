@@ -237,7 +237,12 @@ class SlidingWindowParamsSolver:
     class Hypothesis:
         params: SlidingWindowParams
         n_records_validated: int = 0
-        rejected_by_record: dict | None = None
+        nan_trick_rejected: bool = False
+        streaming_rejected: bool = False
+
+        @property
+        def rejected(self) -> bool:
+            return self.nan_trick_rejected or self.streaming_rejected
 
     def __init__(
         self,
@@ -405,16 +410,13 @@ class SlidingWindowParamsSolver:
 
         return in_seq_size, in_nan_range, out_seq.size, out_nan_idx
 
-    def test_hypothesis_against_nan_trick_history(self, hypothesis: Hypothesis) -> bool:
-        # TODO! doc
-        assert hypothesis.rejected_by_record is None, "Internal error: hypothesis already rejected"
-
+    def test_update_hypothesis_against_nan_trick_history(self, hypothesis: Hypothesis):
         for record in self.nan_trick_history[hypothesis.n_records_validated :]:
             # Reject the hypothesis if we get a different output length
             _, _, expected_out_len = hypothesis.params.get_metrics_for_input(record["in_seq"].size)
             if record["out_seq"].size != expected_out_len:
-                hypothesis.rejected_by_record = record
-                return False
+                hypothesis.nan_trick_rejected = True
+                return
 
             # Reject if the nan trick's output is not compatible with the hypothesis
             if record["in_nan_range"] is not None:
@@ -425,8 +427,8 @@ class SlidingWindowParamsSolver:
                     record["out_nan_idx"],
                 )
                 if kernel_in is None or kernel_out is None:
-                    hypothesis.rejected_by_record = record
-                    return False
+                    hypothesis.nan_trick_rejected = True
+                    return
 
                 # Update the hypothesis in place
                 hypothesis.params.kernel_in_sparsity = kernel_in
@@ -434,14 +436,12 @@ class SlidingWindowParamsSolver:
 
             hypothesis.n_records_validated += 1
 
-        return True
-
-    def test_hypothesis_by_streaming(self, hypothesis: Hypothesis) -> bool:
+    def test_update_hypothesis_by_streaming(self, hypothesis: Hypothesis) -> bool:
         # FIXME!: get input size to have 10 windows instead, also clean up the streaming impl to clearly reflect that
         # it fails if the output size is not as expected
         in_seq = self.input_provider(100)
 
-        nwlc, nerc, esb, eitwr, wteor = self.sampler.get_streaming_params()
+        nwlc, nerc, esb, eitwr, wteor = get_streaming_params(hypothesis.params)
         sol_nwlc, sol_nerc, sol_esb, sol_eitwr, sol_wteor = self.sampler.get_streaming_params()
 
         # FIXME! not relying on a try/catch mechanism
@@ -482,10 +482,13 @@ class SlidingWindowParamsSolver:
                     ),
                 )
             )
+            # TODO! reject hypotheses that are not better on one aspect than all current hypotheses
 
             return True
 
         except AssertionError:
+            hypothesis.streaming_rejected = True
+
             # The solution failed, let's reject all similar solutions that use strictly less context
             self.sampler.solver.add(
                 Implies(
@@ -502,24 +505,18 @@ class SlidingWindowParamsSolver:
 
     def update_reject_hypothesis(self, hypothesis: Hypothesis) -> bool:
         # FIXME: handle the collection update here?
-        keep = self.test_hypothesis_against_nan_trick_history(hypothesis)
-        keep &= self.test_hypothesis_by_streaming(hypothesis)
-        return keep
+        if not hypothesis.nan_trick_rejected:
+            self.test_update_hypothesis_against_nan_trick_history(hypothesis)
+        if not hypothesis.streaming_rejected:
+            self.test_update_hypothesis_by_streaming(hypothesis)
+        return not hypothesis.rejected
 
     @torch.no_grad()
     def solve(self):
-        #   - make streaming test part of update/reject
-        #   - ideal algo:
-        #       - do an update/reject phase on existing hypotheses
-        #       - sample only once a fixed amount to go up to max_hypotheses_per_step (actually to a minimum of 2 after rejection...)
-        #       - do another update/reject on the new
-        #       - get parameters (will not fail given all hyps have been upd/rej)
-        #   1. Solver runs out 2. Infogain runs out
-
         # Get initial nan trick parameters in the absence of any information
         nan_trick_params = self.get_nan_trick_params_for_hypotheses([])
 
-        while len(self.hypotheses) > 1 or not self.sampler_exhausted:
+        while nan_trick_params is not None:
             # Run the nan trick
             assert nan_trick_params is not None, "Internal error: no nan trick params available"
             self.run_nan_trick(*nan_trick_params)
@@ -548,8 +545,8 @@ class SlidingWindowParamsSolver:
 
             # Get new hypotheses
             sampler_times = []
-            hypotheses_for_infogain = list(self.hypotheses)
-            while True:
+            nan_trick_params = None
+            while nan_trick_params is None and not self.sampler_exhausted:
                 # Sample sliding window parameters
                 sampler_start_time = time.perf_counter()
                 params = self.sampler.get_new_solution()
@@ -563,43 +560,26 @@ class SlidingWindowParamsSolver:
                 # to steer the sampler towards more promising candidates.
                 if params:
                     hypothesis = SlidingWindowParamsSolver.Hypothesis(params)
-                    hypotheses_for_infogain.append(hypothesis)
-                    if self.update_reject_hypothesis(hypothesis):
-                        self.hypotheses.append(hypothesis)
+                    self.hypotheses.append(hypothesis)
+                    self.update_reject_hypothesis(hypothesis)
 
                 # Get the next NaN trick params
-                if len(hypotheses_for_infogain) >= self.max_hypotheses_per_step:
-                    nan_trick_params = self.get_nan_trick_params_for_hypotheses(hypotheses_for_infogain)
-                else:
-                    nan_trick_params = None
+                if len(self.hypotheses) >= self.max_hypotheses_per_step or self.sampler_exhausted:
+                    nan_trick_params = self.get_nan_trick_params_for_hypotheses(self.hypotheses)
+
                 # FIXME accurate timing
                 sampler_times.append(time.perf_counter() - sampler_start_time)
 
-                if nan_trick_params or self.sampler_exhausted:
-                    break
+            if sampler_times:
+                logger.info(
+                    f"Step {len(self.nan_trick_history)}: "
+                    # FIXME
+                    f"sampled {len(sampler_times)} new hypotheses "
+                    f"in {sum(sampler_times) * 1000:.0f}ms "
+                    f"(mean={np.mean(sampler_times) * 1000:.0f}ms), "
+                )
 
-            logger.info(
-                f"Step {len(self.nan_trick_history)}: "
-                # FIXME
-                f"sampled {len(sampler_times)} new hypotheses "
-                f"in {sum(sampler_times) * 1000:.0f}ms "
-                f"(mean={np.mean(sampler_times) * 1000:.0f}ms), "
-            )
-
-        return [hypothesis.params for hypothesis in self.hypotheses]
-
-        # # FIXME!!
-        # sol = SlidingWindowParams(kernel_size_in=3, stride_in=2)
-        # print("====")
-        # print(sol)
-        # v = True
-        # for violation in sampler.get_violations(sol):
-        #     v = False
-        #     print(violation)
-        #     print("----")
-        # print("====")
-        # if not v:
-        #     quit()
+        return [hypothesis.params for hypothesis in self.hypotheses if not hypothesis.rejected]
 
 
 # TODO: allow transforms with multiple sequential inputs
@@ -640,7 +620,7 @@ def find_sliding_window_params_for_transform(
     of the transforms, but increase the execution time of the sampler. If necessary, tune it according to your model's
     performances.
     """
-    return SlidingWindowParamsSolver(
+    solver = SlidingWindowParamsSolver(
         trsfm=trsfm,
         input_provider=input_provider,
         out_spec=out_spec,
@@ -648,4 +628,16 @@ def find_sliding_window_params_for_transform(
         max_in_seq_size=max_in_seq_size,
         max_hypotheses_per_step=max_hypotheses_per_step,
         atol=atol,
-    ).solve()
+    )
+    sols = solver.solve()
+
+    # # FIXME!!
+    # sol = SlidingWindowParams(kernel_size_in=3, stride_in=2)
+    # print("====")
+    # print(sol)
+    # for violation in solver.sampler.get_violations(sol):
+    #     print(violation)
+    #     print("----")
+    # print("====")
+
+    return sols
