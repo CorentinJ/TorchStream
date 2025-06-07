@@ -5,23 +5,22 @@ from torch.nn import Conv1d, ConvTranspose1d
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.nan_trick import get_nan_map
-from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_solver import (
     find_sliding_window_params_for_transform,
 )
-from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream, get_streaming_params
+from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 from torchstream.stream_equivalence import test_stream_equivalent
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
-# trsfm = Conv1d(1, 1, kernel_size=2)  # , stride=2, dilation=2)
-trsfm = Conv1d(1, 1, kernel_size=2)
-trsfm = ConvTranspose1d(1, 1, kernel_size=2)
+trsfm = Conv1d(1, 1, kernel_size=2, stride=2, dilation=2)
+# trsfm = Conv1d(1, 1, kernel_size=2)
+# trsfm = ConvTranspose1d(1, 1, kernel_size=2)
 
-print(get_streaming_params(SlidingWindowParams(kernel_size_in=2)))
-print(get_streaming_params(SlidingWindowParams(kernel_size_out=2)))
-quit()
+# print(get_streaming_params(SlidingWindowParams(kernel_size_in=2)))
+# print(get_streaming_params(SlidingWindowParams(kernel_size_out=2)))
+# quit()
 
 if False or True:
     sols = find_sliding_window_params_for_transform(trsfm, SeqSpec((1, 1, -1)), max_hypotheses_per_step=5)

@@ -239,10 +239,11 @@ class SlidingWindowParamsSolver:
         n_records_validated: int = 0
         nan_trick_rejected: bool = False
         streaming_rejected: bool | None = None
+        suboptimal_rejected: bool = False
 
         @property
         def rejected(self) -> bool:
-            return self.nan_trick_rejected or (self.streaming_rejected is True)
+            return self.nan_trick_rejected or (self.streaming_rejected is True) or self.suboptimal_rejected
 
     def __init__(
         self,
@@ -436,7 +437,7 @@ class SlidingWindowParamsSolver:
 
             hypothesis.n_records_validated += 1
 
-    def test_update_hypothesis_by_streaming(self, hypothesis: Hypothesis) -> bool:
+    def test_update_hypothesis_by_streaming(self, hypothesis: Hypothesis):
         # FIXME!: get input size to have 10 windows instead, also clean up the streaming impl to clearly reflect that
         # it fails if the output size is not as expected
         in_seq = self.input_provider(100)
@@ -472,7 +473,8 @@ class SlidingWindowParamsSolver:
                     self.sampler.t_o < hypothesis.params.out_trim,
                 )
             )
-            # Also enforce solutions that are more efficient on at least one aspect
+            # Also enforce solutions that are more efficient on at least one aspect, both in the sampler
+            # and in current hypotheses
             self.sampler.solver.add(
                 Implies(
                     And(sol_eitwr == eitwr, sol_wteor == wteor),
@@ -483,9 +485,10 @@ class SlidingWindowParamsSolver:
                     ),
                 )
             )
-            # TODO! reject hypotheses that are not better on one aspect than all current hypotheses
-
-            return True
+            for other_hyp in list(self.hypotheses):
+                ot_nwlc, ot_nerc, ot_esb, ot_eitwr, ot_wteor = get_streaming_params(other_hyp.params)
+                if (ot_eitwr == eitwr and ot_wteor == wteor) and not (ot_nwlc < nwlc or ot_nerc < nerc or ot_esb > esb):
+                    other_hyp.suboptimal_rejected = True
 
         except AssertionError:
             hypothesis.streaming_rejected = True
@@ -502,22 +505,19 @@ class SlidingWindowParamsSolver:
                 )
             )
 
-            return False
-
     def update_reject_hypotheses(self, hypothesis: Hypothesis):
         if not hypothesis.rejected:
             self.test_update_hypothesis_against_nan_trick_history(hypothesis)
 
-        # FIXME: only test is solution is simpler than all current
         if hypothesis.streaming_rejected is None:
             self.test_update_hypothesis_by_streaming(hypothesis)
 
         if hypothesis not in self.hypotheses:
             self.hypotheses.append(hypothesis)
-        for hypothesis in list(self.hypotheses):
-            if hypothesis.rejected:
-                self.hypotheses.remove(hypothesis)
-                self.rejected_hypotheses.append(hypothesis)
+        for other_hyp in list(self.hypotheses):
+            if other_hyp.rejected:
+                self.hypotheses.remove(other_hyp)
+                self.rejected_hypotheses.append(other_hyp)
 
     @torch.no_grad()
     def solve(self):
