@@ -238,11 +238,11 @@ class SlidingWindowParamsSolver:
         params: SlidingWindowParams
         n_records_validated: int = 0
         nan_trick_rejected: bool = False
-        streaming_rejected: bool = False
+        streaming_rejected: bool | None = None
 
         @property
         def rejected(self) -> bool:
-            return self.nan_trick_rejected or self.streaming_rejected
+            return self.nan_trick_rejected or (self.streaming_rejected is True)
 
     def __init__(
         self,
@@ -452,6 +452,7 @@ class SlidingWindowParamsSolver:
                 in_seq,
                 atol=self.atol,
             )
+            hypothesis.streaming_rejected = False
 
             print("----")
             print("Passed equivalence test for", hypothesis)
@@ -507,7 +508,7 @@ class SlidingWindowParamsSolver:
         # FIXME: handle the collection update here?
         if not hypothesis.nan_trick_rejected:
             self.test_update_hypothesis_against_nan_trick_history(hypothesis)
-        if not hypothesis.streaming_rejected:
+        if hypothesis.streaming_rejected is None:
             self.test_update_hypothesis_by_streaming(hypothesis)
         return not hypothesis.rejected
 
