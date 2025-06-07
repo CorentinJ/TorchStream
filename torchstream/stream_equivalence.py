@@ -52,7 +52,11 @@ def test_stream_equivalent(
         in_stream_i = in_seq.consume(step_size)
 
         # FIXME: this is a seq
-        out_seq_stream_i = stream(in_stream_i, is_last_input=not in_seq.size, on_starve="empty")
+        try:
+            out_seq_stream_i = stream(in_stream_i, is_last_input=not in_seq.size, on_starve="empty")
+        # FIXME: cleaner mechanism for bad sliding window params
+        except ValueError:
+            assert False
 
         out_sync_i = out_seq_ref.consume(out_seq_stream_i.size)
 
