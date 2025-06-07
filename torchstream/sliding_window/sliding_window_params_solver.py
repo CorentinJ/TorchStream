@@ -504,13 +504,20 @@ class SlidingWindowParamsSolver:
 
             return False
 
-    def update_reject_hypothesis(self, hypothesis: Hypothesis) -> bool:
-        # FIXME: handle the collection update here?
-        if not hypothesis.nan_trick_rejected:
+    def update_reject_hypotheses(self, hypothesis: Hypothesis):
+        if not hypothesis.rejected:
             self.test_update_hypothesis_against_nan_trick_history(hypothesis)
+
+        # FIXME: only test is solution is simpler than all current
         if hypothesis.streaming_rejected is None:
             self.test_update_hypothesis_by_streaming(hypothesis)
-        return not hypothesis.rejected
+
+        if hypothesis not in self.hypotheses:
+            self.hypotheses.append(hypothesis)
+        for hypothesis in list(self.hypotheses):
+            if hypothesis.rejected:
+                self.hypotheses.remove(hypothesis)
+                self.rejected_hypotheses.append(hypothesis)
 
     @torch.no_grad()
     def solve(self):
@@ -534,18 +541,12 @@ class SlidingWindowParamsSolver:
                 continue
 
             # Update all current hypotheses, rejecting incompatible ones in the process
-            # TODO: populate rejected_hypotheses
-            new_hypotheses = [hypothesis for hypothesis in self.hypotheses if self.update_reject_hypothesis(hypothesis)]
-            if len(self.hypotheses):
-                assert len(self.hypotheses) > len(new_hypotheses), "Internal error: no hypotheses were removed"
-            logger.info(
-                f"Step {len(self.nan_trick_history)}: "
-                f"{len(self.hypotheses) - len(new_hypotheses)}/{len(self.hypotheses)} hypotheses rejected."
-            )
-            self.hypotheses = new_hypotheses
+            for hypothesis in list(self.hypotheses):
+                self.update_reject_hypotheses(hypothesis)
 
             # Get new hypotheses
             sampler_times = []
+            infogain_hypotheses = list(self.hypotheses)
             nan_trick_params = None
             while nan_trick_params is None and not self.sampler_exhausted:
                 # Sample sliding window parameters
@@ -561,12 +562,12 @@ class SlidingWindowParamsSolver:
                 # to steer the sampler towards more promising candidates.
                 if params:
                     hypothesis = SlidingWindowParamsSolver.Hypothesis(params)
-                    self.hypotheses.append(hypothesis)
-                    self.update_reject_hypothesis(hypothesis)
+                    infogain_hypotheses.append(hypothesis)
+                    self.update_reject_hypotheses(hypothesis)
 
                 # Get the next NaN trick params
-                if len(self.hypotheses) >= self.max_hypotheses_per_step or self.sampler_exhausted:
-                    nan_trick_params = self.get_nan_trick_params_for_hypotheses(self.hypotheses)
+                if len(infogain_hypotheses) >= self.max_hypotheses_per_step or self.sampler_exhausted:
+                    nan_trick_params = self.get_nan_trick_params_for_hypotheses(infogain_hypotheses)
 
                 # FIXME accurate timing
                 sampler_times.append(time.perf_counter() - sampler_start_time)
@@ -578,9 +579,17 @@ class SlidingWindowParamsSolver:
                     f"sampled {len(sampler_times)} new hypotheses "
                     f"in {sum(sampler_times) * 1000:.0f}ms "
                     f"(mean={np.mean(sampler_times) * 1000:.0f}ms), "
+                    # FIXME!! assertion
+                    # assert len(self.hypotheses) > len(new_hypotheses), "Internal error: no hypotheses were removed"
+                    # logger.info(
+                    #     f"Step {len(self.nan_trick_history)}: "
+                    #     f"{len(self.hypotheses) - len(new_hypotheses)}/{len(self.hypotheses)} hypotheses rejected."
+                    # )
                 )
 
-        return [hypothesis.params for hypothesis in self.hypotheses if not hypothesis.rejected]
+            # TODO!! assert
+
+        return [hypothesis.params for hypothesis in self.hypotheses]
 
 
 # TODO: allow transforms with multiple sequential inputs
