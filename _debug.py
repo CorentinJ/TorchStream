@@ -1,7 +1,7 @@
 import logging
 
 import numpy as np
-from torch.nn import Conv1d, ConvTranspose1d
+from torch.nn import Conv1d
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.nan_trick import get_nan_map
@@ -23,13 +23,33 @@ trsfm = Conv1d(1, 1, kernel_size=2, stride=2, dilation=2)
 # quit()
 
 if False or True:
-    sols = find_sliding_window_params_for_transform(trsfm, SeqSpec((1, 1, -1)), max_hypotheses_per_step=5)
+    sols = find_sliding_window_params_for_transform(trsfm, SeqSpec((1, 1, -1)), max_hypotheses_per_step=20)
     assert sols
     for sol in sols:
         print("\n\n\nSolution:\n", sol)
         print(sol.kernel_in_sparsity)
         print(sol.kernel_out_sparsity)
     quit()
+
+# return SlidingWindowParamsSolver(
+#     trsfm=trsfm,
+#     input_provider=input_provider,
+#     out_spec=out_spec,
+#     init_seq_size=init_seq_size,
+#     max_in_seq_size=max_in_seq_size,
+#     max_hypotheses_per_step=max_hypotheses_per_step,
+#     atol=atol,
+# ).solve()
+# sols = solver.solve()
+
+# # FIXME!!
+# sol = SlidingWindowParams(kernel_size_in=3, stride_in=2)
+# print("====")
+# print(sol)
+# for violation in solver.sampler.get_violations(sol):
+#     print(violation)
+#     print("----")
+# print("====")
 
 
 if False or True:
