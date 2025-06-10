@@ -50,7 +50,7 @@ def run_nan_trick(
         # TODO: more reliable mechanism
         # TODO: handle errors due to nans
 
-        logger.info(f"Transformed failed with {type(e)}")
+        logger.info(f"Transformed failed with {type(e).__name__}, assuming input too short")
 
         return Sequence.empty(out_spec), np.empty(0, dtype=np.int64)
 

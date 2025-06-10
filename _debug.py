@@ -6,50 +6,40 @@ from torch.nn import Conv1d
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.nan_trick import get_nan_map
 from torchstream.sliding_window.sliding_window_params_solver import (
-    find_sliding_window_params_for_transform,
+    SlidingWindowParamsSolver,
 )
-from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
+from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream, get_streaming_params
 from torchstream.stream_equivalence import test_stream_equivalent
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
-trsfm = Conv1d(1, 1, kernel_size=2, stride=2, dilation=2)
+trsfm = Conv1d(1, 1, kernel_size=4, stride=2, dilation=2)
 # trsfm = Conv1d(1, 1, kernel_size=2)
 # trsfm = ConvTranspose1d(1, 1, kernel_size=2)
 
-# print(get_streaming_params(SlidingWindowParams(kernel_size_in=2)))
-# print(get_streaming_params(SlidingWindowParams(kernel_size_out=2)))
-# quit()
 
 if False or True:
-    sols = find_sliding_window_params_for_transform(trsfm, SeqSpec((1, 1, -1)), max_hypotheses_per_step=20)
+    solver = SlidingWindowParamsSolver(trsfm, SeqSpec((1, 1, -1)), max_hypotheses_per_step=20)
+    sols = solver.solve()
     assert sols
     for sol in sols:
-        print("\n\n\nSolution:\n", sol)
+        print("\n\nSolution:\n", sol)
+        print(get_streaming_params(sol))
         print(sol.kernel_in_sparsity)
         print(sol.kernel_out_sparsity)
+
+    # sol = SlidingWindowParams(kernel_size_in=3, stride_in=2)
+    # if sol not in sols:
+    #     print("====")
+    #     print(sol)
+    #     print(get_streaming_params(sol))
+    #     for violation in solver.sampler.get_violations(sol):
+    #         print(violation)
+    #         print("----")
+    #     print("====")
+
     quit()
-
-# return SlidingWindowParamsSolver(
-#     trsfm=trsfm,
-#     input_provider=input_provider,
-#     out_spec=out_spec,
-#     init_seq_size=init_seq_size,
-#     max_in_seq_size=max_in_seq_size,
-#     max_hypotheses_per_step=max_hypotheses_per_step,
-#     atol=atol,
-# ).solve()
-# sols = solver.solve()
-
-# # FIXME!!
-# sol = SlidingWindowParams(kernel_size_in=3, stride_in=2)
-# print("====")
-# print(sol)
-# for violation in solver.sampler.get_violations(sol):
-#     print(violation)
-#     print("----")
-# print("====")
 
 
 if False or True:

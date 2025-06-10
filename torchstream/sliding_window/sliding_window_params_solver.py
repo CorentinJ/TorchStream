@@ -71,7 +71,7 @@ class SlidingWindowParamsSampler:
         # Blocker for guiding the solver towards simpler solutions first.
         self.cost = Int("cost")
         self.solver.add(self.k_i + self.s_i + self.p_l + self.p_r + self.k_o + self.s_o + self.t_o <= self.cost)
-        self.max_cost_stack = []
+        self.max_cost_stack = [1_000, 100, 10]
 
     def add_in_out_range_map(
         self,
@@ -472,11 +472,12 @@ class SlidingWindowParamsSolver:
             hypothesis.streaming_rejected = False
 
             # FIXME
-            # logger.debug(f"Successfully streamed hypothesis {hypothesis.params}")
+            logger.debug(f"Successfully streamed hypothesis {hypothesis.params}")
 
             # TODO: keep track of the constraint in order to be able to revert it later if the equivalence
             # test fails
             # This solution worked, enforce solutions that are simpler on at least one aspect
+            # TODO: on all aspects?
             self.sampler.solver.add(
                 Or(
                     self.sampler.k_i < hypothesis.params.kernel_size_in,
@@ -508,15 +509,14 @@ class SlidingWindowParamsSolver:
         except AssertionError:
             hypothesis.streaming_rejected = True
 
-            # The solution failed, let's reject all similar solutions that use strictly less context
+            # The solution failed, let's reject solutions with the same streaming parameters
             self.sampler.solver.add(
-                Implies(
-                    And(sol_eitwr == eitwr, sol_wteor == wteor),
-                    Or(
-                        sol_nwlc > nwlc,
-                        sol_nerc > nerc,
-                        sol_esb < esb,
-                    ),
+                Or(
+                    sol_nwlc != nwlc,
+                    sol_nerc != nerc,
+                    sol_esb != esb,
+                    sol_eitwr != eitwr,
+                    sol_wteor != wteor,
                 )
             )
 
@@ -576,6 +576,7 @@ class SlidingWindowParamsSolver:
                 # Sample sliding window parameters
                 sampler_start_time = time.perf_counter()
                 params = self.sampler.get_new_solution()
+                print("\x1b[31m", params, "\x1b[39m", sep="")
                 if params is None:
                     self.sampler_exhausted = True
 
