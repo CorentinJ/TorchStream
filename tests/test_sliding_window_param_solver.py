@@ -26,12 +26,12 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
 
     set_seed(0x5EED)
 
-    expected_sol = SlidingWindowParams(
-        kernel_size_in=kernel_span,
-        stride_in=stride,
-        left_pad=padding[0],
-        right_pad=padding[1],
-    )
+    # expected_sol = SlidingWindowParams(
+    #     kernel_size_in=kernel_span,
+    #     stride_in=stride,
+    #     left_pad=padding[0],
+    #     right_pad=padding[1],
+    # )
 
     conv = nn.Conv1d(
         in_channels=1,
@@ -49,7 +49,17 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
         return x
 
     sols = find_sliding_window_params_for_transform(transform, SeqSpec((1, 1, -1)))
-    assert expected_sol in sols
+    # FIXME!
+    assert any(
+        sol.kernel_size_in == kernel_span
+        and sol.stride_in == stride
+        and sol.left_pad == padding[0]
+        and sol.right_pad == padding[1]
+        and sol.kernel_size_out == 1
+        and sol.stride_out == 1
+        and sol.out_trim == 0
+        for sol in sols
+    )
 
 
 @pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])

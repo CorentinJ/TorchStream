@@ -1,6 +1,8 @@
 import numbers
 from typing import Callable, Optional, Tuple, overload
 
+import torch
+
 from torchstream.sequence.array_interface import ArrayInterface
 from torchstream.sequence.dtype import SeqArrayLike
 from torchstream.sequence.seq_spec import SeqSpec
@@ -311,8 +313,10 @@ class Sequence:
         out_spec = out_spec or in_seq
         out_spec = out_spec.spec if isinstance(out_spec, Sequence) else out_spec
 
-        out_arr = trsfm(in_seq.data)
-        out_seq = cls(out_spec, out_arr, close_input=True)
+        with torch.inference_mode():
+            out_arr = trsfm(in_seq.data)
+            out_seq = cls(out_spec, out_arr, close_input=True)
+
         return out_seq
 
     def __repr__(self) -> str:

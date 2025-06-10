@@ -290,6 +290,10 @@ class SlidingWindowParamsSolver:
         self.rejected_hypotheses: List[SlidingWindowParamsSolver.Hypothesis] = []
         self.nan_trick_history = []
 
+        # FIXME: doc & names
+        self.nan_trick_params = self.get_best_nan_trick_params_for_hypotheses([])
+        self.prev_n_rejected = 0
+
     # def _get_infogain(category_counts: Iterable[int]) -> float:
     #     category_counts = list(category_counts)
     #     infogain = math.log(sum(category_counts))
@@ -474,27 +478,28 @@ class SlidingWindowParamsSolver:
             # FIXME
             logger.debug(f"Successfully streamed hypothesis {hypothesis.params}")
 
-            # TODO: keep track of the constraint in order to be able to revert it later if the equivalence
-            # test fails
-            # This solution worked, enforce solutions that are simpler on at least one aspect
-            # TODO: on all aspects?
-            self.sampler.solver.add(
-                Or(
-                    self.sampler.k_i < hypothesis.params.kernel_size_in,
-                    self.sampler.s_i < hypothesis.params.stride_in,
-                    self.sampler.p_l < hypothesis.params.left_pad,
-                    self.sampler.p_r < hypothesis.params.right_pad,
-                    self.sampler.k_o < hypothesis.params.kernel_size_out,
-                    self.sampler.s_o < hypothesis.params.stride_out,
-                    self.sampler.t_o < hypothesis.params.out_trim,
-                )
-            )
-            # Also enforce solutions that are more efficient on at least one aspect, both in the sampler
+            # # TODO: keep track of the constraint in order to be able to revert it later if the equivalence
+            # # test fails
+            # # This solution worked, enforce solutions that are simpler on at least one aspect
+            # # TODO: on all aspects?
+            # self.sampler.solver.add(
+            #     Or(
+            #         self.sampler.k_i < hypothesis.params.kernel_size_in,
+            #         self.sampler.s_i < hypothesis.params.stride_in,
+            #         self.sampler.p_l < hypothesis.params.left_pad,
+            #         self.sampler.p_r < hypothesis.params.right_pad,
+            #         self.sampler.k_o < hypothesis.params.kernel_size_out,
+            #         self.sampler.s_o < hypothesis.params.stride_out,
+            #         self.sampler.t_o < hypothesis.params.out_trim,
+            #     )
+            # )
+            # Also enforce solutions that are equally or more efficient on at least one aspect, both in the sampler
             # and in current hypotheses
             self.sampler.solver.add(
                 Implies(
                     And(sol_eitwr == eitwr, sol_wteor == wteor),
                     Or(
+                        sol_nwlc == nwlc and sol_nerc == nerc and sol_esb == esb,
                         sol_nwlc < nwlc,
                         sol_nerc < nerc,
                         sol_esb > esb,
@@ -503,7 +508,12 @@ class SlidingWindowParamsSolver:
             )
             for other_hyp in list(self.hypotheses):
                 ot_nwlc, ot_nerc, ot_esb, ot_eitwr, ot_wteor = get_streaming_params(other_hyp.params)
-                if (ot_eitwr == eitwr and ot_wteor == wteor) and not (ot_nwlc < nwlc or ot_nerc < nerc or ot_esb > esb):
+                if (ot_eitwr == eitwr and ot_wteor == wteor) and not (
+                    (ot_nwlc == nwlc and ot_nerc == nerc and ot_esb == esb)
+                    or ot_nwlc < nwlc
+                    or ot_nerc < nerc
+                    or ot_esb > esb
+                ):
                     other_hyp.suboptimal_rejected = True
 
         except AssertionError:
@@ -539,70 +549,66 @@ class SlidingWindowParamsSolver:
                 self.hypotheses.remove(other_hyp)
                 self.rejected_hypotheses.append(other_hyp)
 
-    @torch.no_grad()
-    def solve(self):
-        # Get initial nan trick parameters in the absence of any information
-        nan_trick_params = self.get_best_nan_trick_params_for_hypotheses([])
-        prev_n_rejected = 0
+    def step(self):
+        # Run the nan trick
+        assert self.nan_trick_params is not None, "Internal error: no nan trick params available"
+        self.run_nan_trick(*self.nan_trick_params)
 
-        while nan_trick_params is not None:
-            # Run the nan trick
-            assert nan_trick_params is not None, "Internal error: no nan trick params available"
-            self.run_nan_trick(*nan_trick_params)
+        # If we have had no output yet, we'll quickly increase the input size before involving the sampler, or
+        # we may be stuck sampling for a while before getting decent candidates.
+        if all(record["in_seq"].size == 0 for record in self.nan_trick_history):
+            self.init_seq_size = min(10 * self.init_seq_size, self.max_in_seq_size)
+            logger.info(
+                f"Transform failed with input size {self.nan_trick_history[-1]['in_seq'].size}. "
+                f"Increasing init sequence size to {self.init_seq_size}"
+            )
+            self.nan_trick_params = self.get_best_nan_trick_params_for_hypotheses([])
+            return
 
-            # If we have had no output yet, we'll quickly increase the input size before involving the sampler, or
-            # we may be stuck sampling for a while before getting decent candidates.
-            if all(record["in_seq"].size == 0 for record in self.nan_trick_history):
-                self.init_seq_size = min(10 * self.init_seq_size, self.max_in_seq_size)
-                logger.info(
-                    f"Transform failed with input size {self.nan_trick_history[-1]['in_seq'].size}. "
-                    f"Increasing init sequence size to {self.init_seq_size}"
-                )
-                nan_trick_params = self.get_best_nan_trick_params_for_hypotheses([])
-                continue
+        # Update all current hypotheses, rejecting incompatible ones in the process
+        for hypothesis in list(self.hypotheses):
+            self.update_reject_hypotheses(hypothesis)
+        if len(self.nan_trick_history) > 1:
+            assert len(self.rejected_hypotheses) > self.prev_n_rejected, "Internal error: no hypotheses were rejected"
+        self.prev_n_rejected = len(self.rejected_hypotheses)
 
-            # Update all current hypotheses, rejecting incompatible ones in the process
-            for hypothesis in list(self.hypotheses):
+        # Get new hypotheses
+        sampler_times = []
+        infogain_hypotheses = list(self.hypotheses)
+        self.nan_trick_params = None
+        while self.nan_trick_params is None and not self.sampler_exhausted:
+            # Sample sliding window parameters
+            sampler_start_time = time.perf_counter()
+            params = self.sampler.get_new_solution()
+            if params is None:
+                self.sampler_exhausted = True
+
+            # Validate them. Regardless of the outcome, we will add them to the hypotheses for infogain in order
+            # to steer the sampler towards more promising candidates.
+            if params:
+                hypothesis = SlidingWindowParamsSolver.Hypothesis(params)
+                infogain_hypotheses.append(hypothesis)
                 self.update_reject_hypotheses(hypothesis)
-            if len(self.nan_trick_history) > 1:
-                assert len(self.rejected_hypotheses) > prev_n_rejected, "Internal error: no hypotheses were rejected"
-            prev_n_rejected = len(self.rejected_hypotheses)
 
-            # Get new hypotheses
-            sampler_times = []
-            infogain_hypotheses = list(self.hypotheses)
-            nan_trick_params = None
-            while nan_trick_params is None and not self.sampler_exhausted:
-                # Sample sliding window parameters
-                sampler_start_time = time.perf_counter()
-                params = self.sampler.get_new_solution()
-                print("\x1b[31m", params, "\x1b[39m", sep="")
-                if params is None:
-                    self.sampler_exhausted = True
+            # Get the next NaN trick params
+            if len(infogain_hypotheses) >= self.max_hypotheses_per_step or self.sampler_exhausted:
+                self.nan_trick_params = self.get_best_nan_trick_params_for_hypotheses(infogain_hypotheses)
 
-                # Validate them. Regardless of the outcome, we will add them to the hypotheses for infogain in order
-                # to steer the sampler towards more promising candidates.
-                if params:
-                    hypothesis = SlidingWindowParamsSolver.Hypothesis(params)
-                    infogain_hypotheses.append(hypothesis)
-                    self.update_reject_hypotheses(hypothesis)
+            # FIXME accurate timing
+            sampler_times.append(time.perf_counter() - sampler_start_time)
 
-                # Get the next NaN trick params
-                if len(infogain_hypotheses) >= self.max_hypotheses_per_step or self.sampler_exhausted:
-                    nan_trick_params = self.get_best_nan_trick_params_for_hypotheses(infogain_hypotheses)
+        if sampler_times:
+            logger.info(
+                f"Step {len(self.nan_trick_history)}: "
+                # FIXME
+                f"sampled {len(sampler_times)} new hypotheses "
+                f"in {sum(sampler_times) * 1000:.0f}ms "
+                f"(mean={np.mean(sampler_times) * 1000:.0f}ms), "
+            )
 
-                # FIXME accurate timing
-                sampler_times.append(time.perf_counter() - sampler_start_time)
-
-            if sampler_times:
-                logger.info(
-                    f"Step {len(self.nan_trick_history)}: "
-                    # FIXME
-                    f"sampled {len(sampler_times)} new hypotheses "
-                    f"in {sum(sampler_times) * 1000:.0f}ms "
-                    f"(mean={np.mean(sampler_times) * 1000:.0f}ms), "
-                )
-
+    def solve(self) -> List[SlidingWindowParams]:
+        while self.nan_trick_params is not None:
+            self.step()
         return [hypothesis.params for hypothesis in self.hypotheses]
 
 
