@@ -68,6 +68,11 @@ class SlidingWindowParamsSampler:
         print("--- OUT TRIM DISABLED ---")
         self.solver.add(self.t_o == 0)
 
+        # Blocker for guiding the solver towards simpler solutions first.
+        self.cost = Int("cost")
+        self.solver.add(self.k_i + self.s_i + self.p_l + self.p_r + self.k_o + self.s_o + self.t_o <= self.cost)
+        self.max_cost_stack = []
+
     def add_in_out_range_map(
         self,
         in_len: int,
@@ -171,6 +176,48 @@ class SlidingWindowParamsSampler:
         win_to_elem_out_ratio = self.s_o
         return n_wins_left_context, n_elems_right_context, eff_size_bias, elem_in_to_win_ratio, win_to_elem_out_ratio
 
+    def get_new_solution(self) -> SlidingWindowParams | None:
+        # TODO! doc
+        # TODO! iter_new_solutions, mark emitted ones, simplify constraints.
+
+        while True:
+            constraint = [self.cost <= self.max_cost_stack[-1]] if self.max_cost_stack else []
+            if self.solver.check(constraint) == sat:
+                model = self.solver.model()
+                model_values = (
+                    model[self.k_i].as_long(),
+                    model[self.s_i].as_long(),
+                    model[self.p_l].as_long(),
+                    model[self.p_r].as_long(),
+                    model[self.k_o].as_long(),
+                    model[self.s_o].as_long(),
+                    model[self.t_o].as_long(),
+                )
+
+                # Enforce new solutions
+                self.solver.add(
+                    Or(
+                        self.k_i != model[self.k_i],
+                        self.s_i != model[self.s_i],
+                        self.p_l != model[self.p_l],
+                        self.p_r != model[self.p_r],
+                        self.k_o != model[self.k_o],
+                        self.s_o != model[self.s_o],
+                        self.t_o != model[self.t_o],
+                    )
+                )
+
+                # Temporarily enforce simpler solutions
+                cost = sum(model_values)
+                if not self.max_cost_stack or self.max_cost_stack[-1] > cost:
+                    self.max_cost_stack.append(cost)
+
+                return SlidingWindowParams(*model_values)
+            elif constraint:
+                self.max_cost_stack.pop(-1)
+            else:
+                return None
+
     def get_violations(self, solution: SlidingWindowParams):
         # TODO: doc
         unsat_solver = Solver()
@@ -198,38 +245,6 @@ class SlidingWindowParamsSampler:
             expression for (bool_tracker, expression) in trackers if bool_tracker in unsat_solver.unsat_core()
         ]
         return violations
-
-    def get_new_solution(self) -> SlidingWindowParams | None:
-        # TODO! doc
-        # TODO! iter_new_solutions, mark emitted ones, simplify constraints.
-
-        if self.solver.check() == sat:
-            model = self.solver.model()
-            params = SlidingWindowParams(
-                kernel_size_in=model[self.k_i].as_long(),
-                stride_in=model[self.s_i].as_long(),
-                left_pad=model[self.p_l].as_long(),
-                right_pad=model[self.p_r].as_long(),
-                kernel_size_out=model[self.k_o].as_long(),
-                stride_out=model[self.s_o].as_long(),
-                out_trim=model[self.t_o].as_long(),
-            )
-
-            self.solver.add(
-                Or(
-                    self.k_i != model[self.k_i],
-                    self.s_i != model[self.s_i],
-                    self.p_l != model[self.p_l],
-                    self.p_r != model[self.p_r],
-                    self.k_o != model[self.k_o],
-                    self.s_o != model[self.s_o],
-                    self.t_o != model[self.t_o],
-                )
-            )
-
-            return params
-        else:
-            return None
 
 
 class SlidingWindowParamsSolver:
