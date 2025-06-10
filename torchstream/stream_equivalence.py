@@ -72,11 +72,11 @@ def test_stream_equivalent(
             )
 
         # Check throughput with the NaN trick
+        # FIXME! how's this gonna work with output trimming?
         if check_throughput_with_nan_trick and not stream.output_closed:
             in_nan_trick_seq_i = in_nan_trick_seq.copy()
             in_nan_trick_seq_i[in_seq.consumed :] = float("nan")
             out_nan_trick_seq_i = Sequence.apply(sync_fn, in_nan_trick_seq_i, stream.out_spec)
-            # FIXME!!
             out_nan_idx = get_out_nan_idx(out_nan_trick_seq_i)
             assert len(out_nan_idx), "Internal error: kernel size must be greater than the input sequence size"
 
