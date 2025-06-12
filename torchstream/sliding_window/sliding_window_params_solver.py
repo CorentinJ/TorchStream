@@ -171,7 +171,7 @@ class SlidingWindowParamsSampler:
         n_overlapping_out_wins = (self.k_o + self.s_o - 1) / self.s_o - 1
         n_wins_left_context = n_left_wins_wasted + n_overlapping_out_wins
         n_elems_right_context = self.p_r
-        eff_size_bias = self.p_l - self.k_i
+        eff_size_bias = self.k_i - self.p_l
         elem_in_to_win_ratio = self.s_i
         win_to_elem_out_ratio = self.s_o
         return n_wins_left_context, n_elems_right_context, eff_size_bias, elem_in_to_win_ratio, win_to_elem_out_ratio
@@ -289,6 +289,7 @@ class SlidingWindowParamsSolver:
         self.hypotheses: List[SlidingWindowParamsSolver.Hypothesis] = []
         self.rejected_hypotheses: List[SlidingWindowParamsSolver.Hypothesis] = []
         self.nan_trick_history = []
+        self.validated_stream_params = set()
 
         # FIXME: doc & names
         self.nan_trick_params = self.get_best_nan_trick_params_for_hypotheses([])
@@ -457,12 +458,17 @@ class SlidingWindowParamsSolver:
             hypothesis.n_records_validated += 1
 
     def test_update_hypothesis_by_streaming(self, hypothesis: Hypothesis):
+        hyp_stream_params = get_streaming_params(hypothesis.params)
+        if hyp_stream_params in self.validated_stream_params:
+            hypothesis.streaming_rejected = False
+            return
+
+        nwlc, nerc, esb, eitwr, wteor = hyp_stream_params
+        sol_nwlc, sol_nerc, sol_esb, sol_eitwr, sol_wteor = self.sampler.get_streaming_params()
+
         # FIXME!: get input size to have 10 windows instead, also clean up the streaming impl to clearly reflect that
         # it fails if the output size is not as expected
         in_seq = self.input_provider(100)
-
-        nwlc, nerc, esb, eitwr, wteor = get_streaming_params(hypothesis.params)
-        sol_nwlc, sol_nerc, sol_esb, sol_eitwr, sol_wteor = self.sampler.get_streaming_params()
 
         # FIXME! not relying on a try/catch mechanism
         try:
@@ -474,6 +480,7 @@ class SlidingWindowParamsSolver:
                 atol=self.atol,
             )
             hypothesis.streaming_rejected = False
+            self.validated_stream_params.add(hyp_stream_params)
 
             # FIXME
             logger.debug(f"Successfully streamed hypothesis {hypothesis.params}")
@@ -489,7 +496,7 @@ class SlidingWindowParamsSolver:
                         And(sol_nwlc == nwlc, sol_nerc == nerc, sol_esb == esb),
                         sol_nwlc < nwlc,
                         sol_nerc < nerc,
-                        sol_esb > esb,
+                        sol_esb < esb,
                     ),
                 )
             )
@@ -499,7 +506,7 @@ class SlidingWindowParamsSolver:
                     (ot_nwlc == nwlc and ot_nerc == nerc and ot_esb == esb)
                     or ot_nwlc < nwlc
                     or ot_nerc < nerc
-                    or ot_esb > esb
+                    or ot_esb < esb
                 ):
                     other_hyp.suboptimal_rejected = True
 

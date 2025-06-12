@@ -31,7 +31,7 @@ def get_streaming_params(sli_params: SlidingWindowParams):
     n_elems_right_context = sli_params.right_pad
 
     # Bias in computing the effective size of the input sequence
-    eff_size_bias = sli_params.left_pad - sli_params.kernel_size_in
+    eff_size_bias = sli_params.kernel_size_in - sli_params.left_pad
 
     # Slope in computing the effective number of windows
     elem_in_to_win_ratio = sli_params.stride_in
@@ -73,7 +73,7 @@ class SlidingWindowStream(Stream):
         # Get the index of the first window that will compute valid output that we'll return
         first_eff_win_idx = self.n_wins_left_context - self.n_wins_to_buffer_left
         right_context_size = self.n_elems_right_context if in_seq.input_closed else 0
-        last_eff_win_idx = (self.eff_size_bias + in_seq.size + right_context_size) // self.elem_in_to_win_ratio
+        last_eff_win_idx = (in_seq.size - self.eff_size_bias + right_context_size) // self.elem_in_to_win_ratio
         eff_num_wins = last_eff_win_idx - first_eff_win_idx + 1
 
         if eff_num_wins <= 0:
