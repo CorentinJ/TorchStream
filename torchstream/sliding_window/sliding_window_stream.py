@@ -1,5 +1,5 @@
 import math
-from typing import Callable, Optional, Tuple, Union
+from typing import Callable, Tuple, Union
 
 import numpy as np
 from torch import Tensor
@@ -24,8 +24,10 @@ def get_streaming_params(sli_params: SlidingWindowParams):
     # overlapping windows (e.g. a vector sum) is known. (TODO? implement)
     n_overlapping_out_wins = int(math.ceil(sli_params.kernel_size_out / sli_params.stride_out)) - 1
 
+    n_trimmed_wins = int(math.ceil(sli_params.out_trim / sli_params.stride_out))
+
     # Number of windows that are needed as extra context on the left
-    n_wins_left_context = n_left_wins_wasted + n_overlapping_out_wins
+    n_wins_left_context = n_left_wins_wasted + max(n_overlapping_out_wins, n_trimmed_wins)
 
     # Number of input elements that are needed as extra context on the right
     n_elems_right_context = sli_params.right_pad
@@ -47,10 +49,9 @@ class SlidingWindowStream(Stream):
         transform: Callable,
         sliding_window_params: SlidingWindowParams,
         input_spec: SeqSpec,
-        output_spec: Optional[SeqSpec] = None,
+        output_spec: SeqSpec | None = None,
     ):
         super().__init__(input_spec, output_spec)
-        assert not sliding_window_params.out_trim, "Not implemented"
 
         self.transform = transform
 
@@ -61,7 +62,7 @@ class SlidingWindowStream(Stream):
             self.eff_size_bias,
             self.elem_in_to_win_ratio,
             self.win_to_elem_out_ratio,
-        ) = get_streaming_params(self.params)
+        ) = get_streaming_params(sliding_window_params)
         self.n_wins_to_buffer_left = self.n_wins_left_context
 
         # Buffer for held back output. This is only returned in the special case where the stream is closed without
@@ -74,6 +75,13 @@ class SlidingWindowStream(Stream):
         first_eff_win_idx = self.n_wins_left_context - self.n_wins_to_buffer_left
         right_context_size = self.n_elems_right_context if in_seq.input_closed else 0
         last_eff_win_idx = (in_seq.size - self.eff_size_bias + right_context_size) // self.elem_in_to_win_ratio
+        if not in_seq.input_closed:
+            num_wins = self.params.get_metrics_for_input(in_seq.size)[1]
+            last_eff_win_idx = min(
+                # FIXME! too conservative
+                last_eff_win_idx,
+                num_wins - 1 - int(math.ceil(self.params.out_trim / self.params.stride_out)),
+            )
         eff_num_wins = last_eff_win_idx - first_eff_win_idx + 1
 
         if eff_num_wins <= 0:
@@ -87,14 +95,23 @@ class SlidingWindowStream(Stream):
         out_trim_end = None if in_seq.input_closed else (last_eff_win_idx + 1) * self.win_to_elem_out_ratio
         assert out_trim_start >= 0 and (out_trim_end is None or out_trim_end > out_trim_start), "Internal error"
 
+        # FIXME!
+        out_size = self.params.get_metrics_for_input(in_seq.size)[2]
+        if self.n_wins_left_context != self.n_wins_to_buffer_left:
+            assert self.params.out_trim <= out_trim_start
+            out_trim_start -= self.params.out_trim
+        if not in_seq.input_closed:
+            assert out_size + self.params.out_trim >= out_trim_end
+            out_trim_end -= self.params.out_trim
+        assert out_trim_start >= 0 and (out_trim_end is None or out_trim_end > out_trim_start), "Internal error"
+
         # Forward the input
         tsfm_out = Sequence.apply(self.transform, in_seq, self.out_spec)
-        # FIXME!
-        if tsfm_out.size != self.params.get_metrics_for_input(in_seq.size)[2]:
+        if tsfm_out.size != out_size:
             raise ValueError(
                 f"Sliding window parameters are not matching {self.transform}, got a {tsfm_out.size} sized "
-                f"sequence instead of {self.params.get_metrics_for_input(in_seq.size)[2]} for {in_seq.size} sized input. Sliding window params: "
-                f"{self.params}"
+                f"sequence instead of {out_size} for {in_seq.size} sized "
+                f"input. Sliding window params: {self.params}"
             )
 
         # Drop input that won't be necessary in the future

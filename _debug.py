@@ -1,8 +1,7 @@
 import logging
 
 import numpy as np
-import torch
-from torch.nn import Conv1d
+from torch.nn import ConvTranspose1d
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.nan_trick import get_nan_map
@@ -17,25 +16,18 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
 # trsfm = Conv1d(1, 1, kernel_size=4, stride=2, dilation=2)
-# trsfm = Conv1d(1, 1, kernel_size=2)
-# trsfm = ConvTranspose1d(1, 1, kernel_size=2)
+trsfm = ConvTranspose1d(1, 1, kernel_size=3)
 
-conv = Conv1d(
-    in_channels=1,
-    out_channels=1,
-    kernel_size=3,
-    stride=2,
-    dilation=2,
-)
+# conv = Conv1d(1, 1, kernel_size=3, stride=3, dilation=3)
 
 
-def trsfm(x):
-    x = torch.nn.functional.pad(x, (2, 0))
-    x = conv(x)
-    return x
+# def trsfm(x):
+#     x = torch.nn.functional.pad(x, (2, 0))
+#     x = conv(x)
+#     return x
 
 
-if False or True:
+if False:  # or True:
     solver = SlidingWindowParamsSolver(trsfm, SeqSpec((1, 1, -1)), max_hypotheses_per_step=20)
     while solver.nan_trick_params is not None:
         solver.step()
@@ -68,7 +60,7 @@ if False or True:
     quit()
 
 
-if False or True:
+if False:  # or True:
     # in_len, in_nan_idx = find_nan_trick_params_by_infogain(hypotheses)
     # print(f"{in_len=}, {in_nan_idx=}")
     # print()
@@ -89,12 +81,7 @@ if False or True:
 
 in_spec = SeqSpec((1, 1, -1))
 in_seq = in_spec.new_randn(100)
-for hypothesis in list(hypotheses):
-    try:
-        test_stream_equivalent(
-            trsfm,
-            SlidingWindowStream(trsfm, hypothesis, in_spec),
-            in_seq,
-        )
-    except AssertionError as e:
-        print(f"Failed for hypothesis {hypothesis}: {e}")
+test_stream_equivalent(
+    trsfm,
+    SlidingWindowStream(trsfm, SlidingWindowParams(kernel_size_out=3), in_spec),
+)
