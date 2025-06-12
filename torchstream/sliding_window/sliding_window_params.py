@@ -124,7 +124,13 @@ class SlidingWindowParams:
         """
         out_needed = 1 + self.out_trim * 2
         num_wins_needed = int(math.ceil(max(0, out_needed - self.kernel_size_out) / self.stride_out)) + 1
-        non_padded_min_input_size = (num_wins_needed - 1) * self.stride_in + self.kernel_size_in
+        return self.get_min_input_size_for_num_wins(num_wins_needed)
+
+    def get_min_input_size_for_num_wins(self, num_wins: int) -> int:
+        """
+        Returns the minimum input size necessary to have a given number of output windows.
+        """
+        non_padded_min_input_size = (num_wins - 1) * self.stride_in + self.kernel_size_in
         return max(1, non_padded_min_input_size - self.right_pad - self.left_pad)
 
     def iter_kernel_map(self, num_wins: int | None = None) -> Iterator[Tuple[Tuple[int, int], Tuple[int, int]]]:

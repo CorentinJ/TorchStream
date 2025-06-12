@@ -237,12 +237,13 @@ class SlidingWindowParamsSolver:
         nwlc, nerc, esb, eitwr, wteor = hyp_stream_params
         sol_nwlc, sol_nerc, sol_esb, sol_eitwr, sol_wteor = self.sampler.get_streaming_params()
 
-        # FIXME!: get input size to have 10 windows instead, also clean up the streaming impl to clearly reflect that
-        # it fails if the output size is not as expected
-        in_seq = self.input_provider(100)
+        # FIXME?: A justification for the number 10
+        in_size = hypothesis.params.get_min_input_size_for_num_wins(10)
+        in_seq = self.input_provider(in_size)
 
         # FIXME! not relying on a try/catch mechanism
         try:
+            # TODO: clean up the streaming impl to clearly reflect that it fails if the output size is not as expected
             # TODO! use the in/out sizes generated in streaming as data
             test_stream_equivalent(
                 self.trsfm,
