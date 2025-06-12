@@ -287,13 +287,13 @@ class SlidingWindowParamsSolver:
         self.sampler = SlidingWindowParamsSampler()
         self.sampler_exhausted = False
         self.hypotheses: List[SlidingWindowParamsSolver.Hypothesis] = []
+        self.hypotheses_to_test: List[SlidingWindowParamsSolver.Hypothesis] = []
         self.rejected_hypotheses: List[SlidingWindowParamsSolver.Hypothesis] = []
         self.nan_trick_history = []
         self.validated_stream_params = set()
 
         # FIXME: doc & names
-        self.nan_trick_params = self.get_best_nan_trick_params_for_hypotheses([])
-        self.prev_n_rejected = 0
+        self.nan_trick_params = self.get_next_nan_trick_params([])
 
     # def _get_infogain(category_counts: Iterable[int]) -> float:
     #     category_counts = list(category_counts)
@@ -338,9 +338,7 @@ class SlidingWindowParamsSolver:
 
         return 0.0
 
-    def get_best_nan_trick_params_for_hypotheses(
-        self, hypotheses: List[Hypothesis]
-    ) -> Tuple[int, Tuple[int, int] | None] | None:
+    def get_next_nan_trick_params(self, hypotheses: List[Hypothesis]) -> Tuple[int, Tuple[int, int] | None] | None:
         """
         Determines an input size and an input nan range for the next nan trick step.
         When hypotheses are available, this function will return parameters not used before that allows discrimating
@@ -556,19 +554,22 @@ class SlidingWindowParamsSolver:
                 f"Transform failed with input size {self.nan_trick_history[-1]['in_seq'].size}. "
                 f"Increasing init sequence size to {self.init_seq_size}"
             )
-            self.nan_trick_params = self.get_best_nan_trick_params_for_hypotheses([])
+            self.nan_trick_params = self.get_next_nan_trick_params([])
             return
 
         # Update all current hypotheses, rejecting incompatible ones in the process
         for hypothesis in list(self.hypotheses):
             self.update_reject_hypotheses(hypothesis)
         if len(self.nan_trick_history) > 1:
-            assert len(self.rejected_hypotheses) > self.prev_n_rejected, "Internal error: no hypotheses were rejected"
-        self.prev_n_rejected = len(self.rejected_hypotheses)
+            assert len(self.hypotheses_to_test) > len(self.hypotheses), "Internal error: no hypotheses were rejected"
+        logger.info(
+            f"Step {len(self.nan_trick_history)}: "
+            f"rejected {len(self.hypotheses_to_test) - len(self.hypotheses)}/{len(self.hypotheses_to_test)} hypotheses"
+        )
 
         # Get new hypotheses
         sampler_times = []
-        infogain_hypotheses = list(self.hypotheses)
+        self.hypotheses_to_test = list(self.hypotheses)
         self.nan_trick_params = None
         while self.nan_trick_params is None and not self.sampler_exhausted:
             # Sample sliding window parameters
@@ -581,15 +582,16 @@ class SlidingWindowParamsSolver:
             # to steer the sampler towards more promising candidates.
             if params:
                 hypothesis = SlidingWindowParamsSolver.Hypothesis(params)
-                infogain_hypotheses.append(hypothesis)
+                self.hypotheses_to_test.append(hypothesis)
                 self.update_reject_hypotheses(hypothesis)
 
             # Get the next NaN trick params
-            if len(infogain_hypotheses) >= self.max_hypotheses_per_step or self.sampler_exhausted:
-                self.nan_trick_params = self.get_best_nan_trick_params_for_hypotheses(infogain_hypotheses)
+            if len(self.hypotheses_to_test) >= self.max_hypotheses_per_step or self.sampler_exhausted:
+                self.nan_trick_params = self.get_next_nan_trick_params(self.hypotheses_to_test)
 
             # FIXME accurate timing
-            sampler_times.append(time.perf_counter() - sampler_start_time)
+            if params:
+                sampler_times.append(time.perf_counter() - sampler_start_time)
 
         if sampler_times:
             logger.info(
@@ -603,6 +605,7 @@ class SlidingWindowParamsSolver:
     def solve(self) -> List[SlidingWindowParams]:
         while self.nan_trick_params is not None:
             self.step()
+        logger.debug(self.hypotheses)
         return [hypothesis.params for hypothesis in self.hypotheses]
 
 

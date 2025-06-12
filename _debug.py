@@ -39,14 +39,14 @@ if False or True:
     solver = SlidingWindowParamsSolver(trsfm, SeqSpec((1, 1, -1)), max_hypotheses_per_step=20)
     while solver.nan_trick_params is not None:
         solver.step()
-        if len(solver.nan_trick_history) > 3:
-            break
-    print("\n\n")
-    for hyp in solver.hypotheses:
-        print(hyp.params)
-        print(get_streaming_params(hyp.params))
+    #     if len(solver.nan_trick_history) > 3:
+    #         break
+    # print("\n\n")
+    # for hyp in solver.hypotheses:
+    #     print(hyp.params)
+    #     print(get_streaming_params(hyp.params))
 
-    quit()
+    # quit()
 
     # sols = [hypothesis.params for hypothesis in solver.hypotheses]
     # assert sols
