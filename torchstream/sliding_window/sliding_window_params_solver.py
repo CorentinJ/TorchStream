@@ -194,7 +194,7 @@ class SlidingWindowParamsSampler:
                     model[self.t_o].as_long(),
                 )
 
-                # Enforce new solutions
+                # Enforce new solutions only
                 self.solver.add(
                     Or(
                         self.k_i != model[self.k_i],
@@ -478,28 +478,15 @@ class SlidingWindowParamsSolver:
             # FIXME
             logger.debug(f"Successfully streamed hypothesis {hypothesis.params}")
 
-            # # TODO: keep track of the constraint in order to be able to revert it later if the equivalence
-            # # test fails
-            # # This solution worked, enforce solutions that are simpler on at least one aspect
-            # # TODO: on all aspects?
-            # self.sampler.solver.add(
-            #     Or(
-            #         self.sampler.k_i < hypothesis.params.kernel_size_in,
-            #         self.sampler.s_i < hypothesis.params.stride_in,
-            #         self.sampler.p_l < hypothesis.params.left_pad,
-            #         self.sampler.p_r < hypothesis.params.right_pad,
-            #         self.sampler.k_o < hypothesis.params.kernel_size_out,
-            #         self.sampler.s_o < hypothesis.params.stride_out,
-            #         self.sampler.t_o < hypothesis.params.out_trim,
-            #     )
-            # )
-            # Also enforce solutions that are equally or more efficient on at least one aspect, both in the sampler
+            # TODO: keep track of the constraint in order to be able to revert it later if the equivalence
+            # test fails
+            # Enforce solutions that are equally or more efficient on at least one aspect, both in the sampler
             # and in current hypotheses
             self.sampler.solver.add(
                 Implies(
                     And(sol_eitwr == eitwr, sol_wteor == wteor),
                     Or(
-                        sol_nwlc == nwlc and sol_nerc == nerc and sol_esb == esb,
+                        And(sol_nwlc == nwlc, sol_nerc == nerc, sol_esb == esb),
                         sol_nwlc < nwlc,
                         sol_nerc < nerc,
                         sol_esb > esb,
