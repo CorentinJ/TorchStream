@@ -64,7 +64,7 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
 @pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])
 @pytest.mark.parametrize("stride", [1, 2, 3, 10, 17])
 @pytest.mark.parametrize("dilation", [1, 2, 3])
-@pytest.mark.parametrize("out_trim", [0, 1, 2, 3])
+@pytest.mark.parametrize("out_trim", [0, 1, 2, 9])
 def test_conv_transpose_1d(kernel_size: int, stride: int, dilation: int, out_trim: int):
     kernel_span = (kernel_size - 1) * dilation + 1
     if stride > kernel_span:
@@ -83,7 +83,6 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, dilation: int, out_tri
         stride=stride,
         # "padding" is poorly explained in https://pytorch.org/docs/stable/generated/torch.nn.ConvTranspose1d.html
         # A better explanation of the parameter is that it trims the output on both sides by the given amount.
-        # FIXME!
         padding=out_trim,
         dilation=dilation,
         # TODO: handle grouping?
@@ -101,7 +100,6 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, dilation: int, out_tri
     test_stream_equivalent(
         conv,
         conv_stream,
-        # FIXME!! restore
         # check_throughput_with_nan_trick=True,
     )
 

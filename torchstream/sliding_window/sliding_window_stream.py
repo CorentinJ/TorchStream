@@ -78,32 +78,30 @@ class SlidingWindowStream(Stream):
         if not in_seq.input_closed:
             num_wins = self.params.get_metrics_for_input(in_seq.size)[1]
             last_eff_win_idx = min(
-                # FIXME! too conservative
                 last_eff_win_idx,
+                # FIXME! incorrect, too conservative
                 num_wins - 1 - int(math.ceil(self.params.out_trim / self.params.stride_out)),
             )
         eff_num_wins = last_eff_win_idx - first_eff_win_idx + 1
 
-        if eff_num_wins <= 0:
+        # FIXME!
+        out_size = self.params.get_metrics_for_input(in_seq.size)[2]
+
+        out_trim_start = first_eff_win_idx * self.win_to_elem_out_ratio
+        if self.n_wins_left_context != self.n_wins_to_buffer_left:
+            out_trim_start -= self.params.out_trim
+        if in_seq.input_closed:
+            out_trim_end = out_size
+        else:
+            out_trim_end = (last_eff_win_idx + 1) * self.win_to_elem_out_ratio - self.params.out_trim
+
+        if eff_num_wins <= 0 or out_trim_end < out_trim_start:
             if self.input_closed and self._prev_trimmed_output is not None:
                 return self._prev_trimmed_output
 
             # TODO: breakdown current state & display how much more data is needed
             raise NotEnoughInputError(f"Input sequence of size {in_seq.size} is not enough to produce any output.")
-
-        out_trim_start = first_eff_win_idx * self.win_to_elem_out_ratio
-        out_trim_end = None if in_seq.input_closed else (last_eff_win_idx + 1) * self.win_to_elem_out_ratio
-        assert out_trim_start >= 0 and (out_trim_end is None or out_trim_end > out_trim_start), "Internal error"
-
-        # FIXME!
-        out_size = self.params.get_metrics_for_input(in_seq.size)[2]
-        if self.n_wins_left_context != self.n_wins_to_buffer_left:
-            assert self.params.out_trim <= out_trim_start
-            out_trim_start -= self.params.out_trim
-        if not in_seq.input_closed:
-            assert out_size + self.params.out_trim >= out_trim_end
-            out_trim_end -= self.params.out_trim
-        assert out_trim_start >= 0 and (out_trim_end is None or out_trim_end > out_trim_start), "Internal error"
+        assert out_trim_end > out_trim_start >= 0, "Internal error"
 
         # Forward the input
         tsfm_out = Sequence.apply(self.transform, in_seq, self.out_spec)
