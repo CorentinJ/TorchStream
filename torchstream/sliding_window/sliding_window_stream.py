@@ -71,21 +71,21 @@ class SlidingWindowStream(Stream):
 
     # FIXME: signature
     def _step(self, in_seq: Sequence) -> Union[Tensor, np.ndarray, Tuple[Tensor, np.ndarray]]:
-        # Get the index of the first window that will compute valid output that we'll return
+        # Of the windows that will be computed, find the subrange that will effectively be used in the output.
         first_eff_win_idx = self.n_wins_left_context - self.n_wins_to_buffer_left
-        right_context_size = self.n_elems_right_context if in_seq.input_closed else 0
-        last_eff_win_idx = (in_seq.size - self.eff_size_bias + right_context_size) // self.elem_in_to_win_ratio
-        if not in_seq.input_closed:
-            num_wins = self.params.get_metrics_for_input(in_seq.size)[1]
+        last_win_idx = (in_seq.size - self.eff_size_bias + self.n_elems_right_context) // self.elem_in_to_win_ratio
+        if in_seq.input_closed:
+            last_eff_win_idx = last_win_idx
+        else:
             last_eff_win_idx = min(
-                last_eff_win_idx,
+                # Don't account for windows with right padding, as it will lead to incorrect outputs
+                (in_seq.size - self.eff_size_bias) // self.elem_in_to_win_ratio,
                 # FIXME! incorrect, too conservative
-                num_wins - 1 - int(math.ceil(self.params.out_trim / self.params.stride_out)),
+                last_win_idx - int(math.ceil(self.params.out_trim / self.params.stride_out)),
             )
         eff_num_wins = last_eff_win_idx - first_eff_win_idx + 1
 
-        # FIXME!
-        out_size = self.params.get_metrics_for_input(in_seq.size)[2]
+        out_size = last_win_idx * self.params.stride_out + self.params.kernel_size_out - 2 * self.params.out_trim
 
         out_trim_start = first_eff_win_idx * self.win_to_elem_out_ratio
         if self.n_wins_left_context != self.n_wins_to_buffer_left:

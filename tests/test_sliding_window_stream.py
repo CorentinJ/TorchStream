@@ -23,6 +23,8 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
         pytest.skip("Stride should be smaller than the kernel span")
     if padding[0] >= kernel_span or padding[1] >= kernel_span:
         pytest.skip("Padding should be smaller than the kernel span")
+    if kernel_size == 1 and dilation > 1:
+        pytest.skip("Redundant")
 
     set_seed(0x5EED)
 
