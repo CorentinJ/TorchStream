@@ -64,7 +64,9 @@ class SlidingWindowStream(Stream):
             self.win_to_elem_out_ratio,
         ) = get_streaming_params(sliding_window_params)
         self.n_wins_to_buffer_left = self.n_wins_left_context
-        self.off = 0
+
+        self.tsfm_out_pos = 0
+        self.stream_out_pos = 0
 
         # Buffer for held back output. This is only returned in the special case where the stream is closed without
         # being to compute any new window, and some previous output has not been returned yet.
@@ -72,45 +74,40 @@ class SlidingWindowStream(Stream):
 
     # FIXME: signature
     def _step(self, in_seq: Sequence) -> Union[Tensor, np.ndarray, Tuple[Tensor, np.ndarray]]:
+        in_start = in_seq.n_consumed
+        in_end = in_start + in_seq.size
+
         # Of the windows that will be computed, find the subrange that will effectively be used in the output.
         first_eff_win_idx = self.n_wins_left_context - self.n_wins_to_buffer_left
-        last_win_idx = (in_seq.size - self.eff_size_bias + self.n_elems_right_context) // self.elem_in_to_win_ratio
+        last_win_idx = (in_seq.size - self.eff_size_bias + self.n_elems_right_context) // self.params.stride_in
         if in_seq.input_closed:
-            last_eff_win_idx = last_win_idx
+            eff_num_wins = last_win_idx - first_eff_win_idx + 1
         else:
-            last_eff_win_idx = min(
-                # Don't account for windows with right padding, as it will lead to incorrect outputs
-                (in_seq.size - self.eff_size_bias) // self.elem_in_to_win_ratio,
-                # FIXME! incorrect, too conservative
-                last_win_idx - int(math.ceil(self.params.out_trim / self.params.stride_out)),
+            eff_num_wins = (
+                min(
+                    # Don't account for windows with right padding, as it will lead to incorrect outputs
+                    (in_seq.size - self.eff_size_bias) // self.params.stride_in,
+                    last_win_idx - int(math.ceil(self.params.out_trim / self.params.stride_out)),
+                )
+                - first_eff_win_idx
+                + 1
             )
-        eff_num_wins = last_eff_win_idx - first_eff_win_idx + 1
 
         out_size = last_win_idx * self.params.stride_out + self.params.kernel_size_out - 2 * self.params.out_trim
-
-        out_trim_start = first_eff_win_idx * self.win_to_elem_out_ratio + self.off
-        if self.n_wins_left_context != self.n_wins_to_buffer_left:
-            out_trim_start -= self.params.out_trim
         if in_seq.input_closed:
-            out_trim_end = out_size
-            pt = out_trim_end
+            out_valid_end = self.tsfm_out_pos + out_size
         else:
-            # FIXME!!
-            a = (in_seq.size - self.eff_size_bias) // self.elem_in_to_win_ratio
-            out_trim_end = min((a + 1) * self.win_to_elem_out_ratio - self.params.out_trim, out_size)
-            pt = min((last_eff_win_idx + 1) * self.win_to_elem_out_ratio - self.params.out_trim, out_size)
+            last_eff_win_idx = (in_seq.size - self.eff_size_bias) // self.params.stride_in
+            out_valid_end = self.tsfm_out_pos + min(
+                (last_eff_win_idx + 1) * self.params.stride_out - self.params.out_trim, out_size
+            )
 
-            self.off = out_trim_end - pt
-
-        if eff_num_wins <= 0 or out_trim_end < out_trim_start:
-            # FIXME!
-            self.off = 0
+        if eff_num_wins <= 0 or out_valid_end < self.stream_out_pos:
             if self.input_closed and self._prev_trimmed_output is not None:
                 return self._prev_trimmed_output
 
             # TODO: breakdown current state & display how much more data is needed
             raise NotEnoughInputError(f"Input sequence of size {in_seq.size} is not enough to produce any output.")
-        assert out_trim_end > out_trim_start >= 0, "Internal error"
 
         # Forward the input
         tsfm_out = Sequence.apply(self.transform, in_seq, self.out_spec)
@@ -121,11 +118,15 @@ class SlidingWindowStream(Stream):
                 f"input. Sliding window params: {self.params}"
             )
 
+        out_trim_start = self.stream_out_pos - self.tsfm_out_pos
+        out_trim_end = out_valid_end - self.tsfm_out_pos
+        assert out_trim_end > out_trim_start >= 0, "Internal error"
+        self.stream_out_pos += out_trim_end - out_trim_start
+
         # Drop input that won't be necessary in the future
-        if in_seq.input_closed:
-            in_seq.drop()
-        elif eff_num_wins > self.n_wins_to_buffer_left:
-            in_seq.drop((eff_num_wins - self.n_wins_to_buffer_left) * self.elem_in_to_win_ratio)
+        wins_to_drop = max(0, eff_num_wins - self.n_wins_to_buffer_left)
+        in_seq.drop(wins_to_drop * self.params.stride_in)
+        self.tsfm_out_pos += wins_to_drop * self.params.stride_out
         self.n_wins_to_buffer_left = max(0, self.n_wins_to_buffer_left - eff_num_wins)
 
         # If we're trimming on the right, save the trim in case the stream closes before we can compute any
