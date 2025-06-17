@@ -64,6 +64,7 @@ class SlidingWindowStream(Stream):
             self.win_to_elem_out_ratio,
         ) = get_streaming_params(sliding_window_params)
         self.n_wins_to_buffer_left = self.n_wins_left_context
+        self.off = 0
 
         # Buffer for held back output. This is only returned in the special case where the stream is closed without
         # being to compute any new window, and some previous output has not been returned yet.
@@ -87,15 +88,23 @@ class SlidingWindowStream(Stream):
 
         out_size = last_win_idx * self.params.stride_out + self.params.kernel_size_out - 2 * self.params.out_trim
 
-        out_trim_start = first_eff_win_idx * self.win_to_elem_out_ratio
+        out_trim_start = first_eff_win_idx * self.win_to_elem_out_ratio + self.off
         if self.n_wins_left_context != self.n_wins_to_buffer_left:
             out_trim_start -= self.params.out_trim
         if in_seq.input_closed:
             out_trim_end = out_size
+            pt = out_trim_end
         else:
-            out_trim_end = (last_eff_win_idx + 1) * self.win_to_elem_out_ratio - self.params.out_trim
+            # FIXME!!
+            a = (in_seq.size - self.eff_size_bias) // self.elem_in_to_win_ratio
+            out_trim_end = min((a + 1) * self.win_to_elem_out_ratio - self.params.out_trim, out_size)
+            pt = min((last_eff_win_idx + 1) * self.win_to_elem_out_ratio - self.params.out_trim, out_size)
+
+            self.off = out_trim_end - pt
 
         if eff_num_wins <= 0 or out_trim_end < out_trim_start:
+            # FIXME!
+            self.off = 0
             if self.input_closed and self._prev_trimmed_output is not None:
                 return self._prev_trimmed_output
 
@@ -121,7 +130,7 @@ class SlidingWindowStream(Stream):
 
         # If we're trimming on the right, save the trim in case the stream closes before we can compute any
         # new sliding window output.
-        if out_trim_end and out_trim_end < tsfm_out.size:
+        if out_trim_end < tsfm_out.size:
             self._prev_trimmed_output = tsfm_out[out_trim_end:]
         else:
             self._prev_trimmed_output = None
