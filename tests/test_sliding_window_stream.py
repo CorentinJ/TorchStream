@@ -59,7 +59,7 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
     test_stream_equivalent(
         transform,
         conv_stream,
-        check_throughput_with_nan_trick=True,
+        throughput_check_max_delay=0,
     )
 
 
@@ -102,7 +102,7 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, dilation: int, out_tri
     test_stream_equivalent(
         conv,
         conv_stream,
-        # check_throughput_with_nan_trick=True,
+        throughput_check_max_delay=out_trim,
     )
 
 
@@ -142,5 +142,5 @@ def test_moving_average(
     test_stream_equivalent(
         tsfm,
         tsfm_stream,
-        check_throughput_with_nan_trick=True,
+        throughput_check_max_delay=0,
     )

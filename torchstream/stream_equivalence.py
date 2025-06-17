@@ -20,7 +20,7 @@ def test_stream_equivalent(
     in_seq: Sequence | SeqArrayLike | None = None,
     in_step_sizes: Tuple[int, ...] = (7, 4, 12, 1, 17),
     atol: float = 1e-5,
-    check_throughput_with_nan_trick: bool = False,
+    throughput_check_max_delay: int | None = None,
 ):
     """
     Tests if a stream implementation gives outputs close or equivalent to its synchronous counterpart.
@@ -29,7 +29,7 @@ def test_stream_equivalent(
     Outputs must be sequential data of the same shape.
     TODO: better doc
 
-    :param check_throughput_with_nan_trick: TODO: doc
+    :param throughput_check_max_delay: TODO: doc
     """
     if in_seq is None:
         in_seq = Sequence.randn(stream.in_spec, seq_size=50)
@@ -59,6 +59,7 @@ def test_stream_equivalent(
             assert False
 
         out_sync_i = out_seq_ref.consume(out_seq_stream_i.size)
+        total_stream_out = out_seq_ref.n_consumed
 
         # Ensure the outputs are close
         assert out_sync_i.shape == out_seq_stream_i.shape, (
@@ -72,25 +73,25 @@ def test_stream_equivalent(
             )
 
         # Check throughput with the NaN trick
-        # FIXME! how's this gonna work with output trimming?
-        if check_throughput_with_nan_trick and not stream.output_closed:
+        if throughput_check_max_delay is not None and not stream.output_closed:
             in_nan_trick_seq_i = in_nan_trick_seq.copy()
-            in_nan_trick_seq_i[in_seq.consumed :] = float("nan")
+            in_nan_trick_seq_i[in_seq.n_consumed :] = float("nan")
             out_nan_trick_seq_i = Sequence.apply(sync_fn, in_nan_trick_seq_i, stream.out_spec)
             out_nan_idx = get_out_nan_idx(out_nan_trick_seq_i)
             assert len(out_nan_idx), "Internal error: kernel size must be greater than the input sequence size"
 
-            assert out_nan_idx[-1] + 1 == out_nan_trick_seq_i.size, (
+            assert out_nan_idx[-1] == out_nan_trick_seq_i.size - 1, (
                 # FIXME: can also happen if kernel is greater than the input size
-                f"Transform is not suitable for NaN trick, NaNs set at {(in_seq.consumed, in_nan_trick_seq.size)} in "
+                f"Transform is not suitable for NaN trick, NaNs set at {(in_seq.n_consumed, in_nan_trick_seq.size)} in "
                 f"the input propagated up to {out_nan_idx}, when the output is {out_nan_trick_seq_i.size} long. NaNs "
                 f"should have propagated to the end."
             )
 
-            assert out_nan_idx[0] >= out_seq_ref.consumed, "Internal error"
-            assert out_nan_idx[0] == out_seq_ref.consumed, (
+            assert not out_nan_idx[0] < total_stream_out, "Internal error: stream has output more than sync"
+            assert total_stream_out >= out_nan_idx[0] - throughput_check_max_delay, (
                 f"The stream has output less than what's possible to output based on the NaN trick's output. "
-                f"Expected {out_nan_idx[0]} outputs total at step {i}, got {out_seq_ref.consumed}."
+                f"Expected {out_nan_idx[0]} outputs total at step {i}, got {total_stream_out} (max offset is "
+                f"{throughput_check_max_delay})"
             )
 
         i += 1

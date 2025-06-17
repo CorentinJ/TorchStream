@@ -169,7 +169,7 @@ class Sequence:
         self._arr_if.set_along_dim(self._buff, sli, self.dim, value)
 
     @property
-    def consumed(self) -> int:
+    def n_consumed(self) -> int:
         """
         Number of elements consumed from the buffer alongside the sequence dimension.
         """
