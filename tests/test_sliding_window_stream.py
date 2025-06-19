@@ -66,7 +66,7 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
 @pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])
 @pytest.mark.parametrize("stride", [1, 2, 3, 10, 17])
 @pytest.mark.parametrize("dilation", [1, 2, 3])
-@pytest.mark.parametrize("out_trim", [0, 1, 2, 9])
+@pytest.mark.parametrize("out_trim", [0, 1, 2, 8, 9])
 def test_conv_transpose_1d(kernel_size: int, stride: int, dilation: int, out_trim: int):
     kernel_span = (kernel_size - 1) * dilation + 1
     if stride > kernel_span:

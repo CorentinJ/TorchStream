@@ -11,12 +11,31 @@ from torchstream.stream import NotEnoughInputError, Stream
 
 
 def get_streaming_params(sli_params: SlidingWindowParams):
+    """
+    Derives parameters necessary for streaming from the sliding window parameters. Multiple sliding window parameters
+    can give rise to the same streaming parameters. Also, incorrect sliding window parameters can give rise to correct
+    but suboptimal streaming parameters that use too much context.
+
+    This function returns 5 parameters:
+    - stride_in: the stride (reduction factor) for the input sequence
+    - stride_out: the stride (multiplication factor) for the output sequence
+    - in_offset: offset for the input sequence
+    - out_offset: offset for the output sequence
+    - in_context_size: number of input elements to be buffered as context
+    """
+    # These parameters offset the effective size of the input sequence
+    in_offset = sli_params.kernel_size_in - sli_params.left_pad
+
+    # Out trimming also offsets the output sequence
+    out_offset = sli_params.out_trim
+
     # Number of windows that are wasted on the left solely due to padding. "wasted" here means that we recompute
     # these windows on each step despite them being unnecessary, simply because the transform re-pads the input
     # every time. If it is possible to remove padding from the transform and manually pad the streamed input,
     # this waste of compute can be avoided.
-    # Note that right padding wastes compute too, but we keep track of that in a different manner.
+    # Note that right padding wastes compute just as much, however it does not require any context to be stored.
     n_left_wins_wasted = int(math.ceil(sli_params.left_pad / sli_params.stride_in))
+
     # For a given output window, the number of other output windows that overlap it. Only >0 when the out stride
     # is smaller than the out kernel size.
     # Note that we need to buffer enough past context in order to have the overlapping windows neccessary in
@@ -24,23 +43,23 @@ def get_streaming_params(sli_params: SlidingWindowParams):
     # overlapping windows (e.g. a vector sum) is known. (TODO? implement)
     n_overlapping_out_wins = int(math.ceil(sli_params.kernel_size_out / sli_params.stride_out)) - 1
 
+    # Extra windows necessary to make up for windows lost on the left due to output trimming
     n_trimmed_wins = int(math.ceil(sli_params.out_trim / sli_params.stride_out))
 
-    # Number of windows that are needed as extra context on the left
-    n_wins_left_context = n_left_wins_wasted + max(n_overlapping_out_wins, n_trimmed_wins)
+    # Number of windows that are needed as context
+    windows_context_size = n_left_wins_wasted + max(n_overlapping_out_wins, n_trimmed_wins)
 
-    # Number of input elements that are needed as extra context on the right
-    n_elems_right_context = sli_params.right_pad
+    # Extra input context necessary to make up for windows lost on the right due to output trimming
+    extra_right_context = max(
+        0,
+        # TODO! verify this is correct with both ki>1 & to>1
+        int(math.ceil(sli_params.out_trim / sli_params.stride_out)) * sli_params.stride_in - sli_params.right_pad,
+    )
 
-    # Bias in computing the effective size of the input sequence
-    eff_size_bias = sli_params.kernel_size_in - sli_params.left_pad
+    # Number of input elements that are needed as context
+    in_context_size = max(0, (windows_context_size - 1) * sli_params.stride_in + in_offset + extra_right_context)
 
-    # Slope in computing the effective number of windows
-    elem_in_to_win_ratio = sli_params.stride_in
-
-    win_to_elem_out_ratio = sli_params.stride_out
-
-    return n_wins_left_context, n_elems_right_context, eff_size_bias, elem_in_to_win_ratio, win_to_elem_out_ratio
+    return sli_params.stride_in, sli_params.stride_out, in_offset, out_offset, in_context_size
 
 
 class SlidingWindowStream(Stream):
@@ -57,15 +76,13 @@ class SlidingWindowStream(Stream):
 
         self.params = sliding_window_params
         (
-            self.n_wins_left_context,
-            self.n_elems_right_context,
-            self.eff_size_bias,
-            self.elem_in_to_win_ratio,
-            self.win_to_elem_out_ratio,
+            self.stride_in,
+            self.stride_out,
+            self.in_offset,
+            self.out_offset,
+            self.in_context_size,
         ) = get_streaming_params(sliding_window_params)
-        self.n_wins_to_buffer_left = self.n_wins_left_context
 
-        self.prev_out_valid_end = 0
         self.tsfm_out_pos = 0
         self.stream_out_pos = 0
 
@@ -75,28 +92,21 @@ class SlidingWindowStream(Stream):
 
     # FIXME: signature
     def _step(self, in_seq: Sequence) -> Union[Tensor, np.ndarray, Tuple[Tensor, np.ndarray]]:
-        in_start = in_seq.n_consumed
-        in_end = in_start + in_seq.size
+        # FIXME: signature
+        out_size = self.params.get_metrics_for_input(in_seq.size)[2]
 
-        last_win_idx = (in_seq.size - self.eff_size_bias + self.n_elems_right_context) // self.params.stride_in
-        out_size = last_win_idx * self.params.stride_out + self.params.kernel_size_out - 2 * self.params.out_trim
         if in_seq.input_closed:
-            out_valid_end = self.tsfm_out_pos + out_size
+            out_trim_end = out_size
         else:
-            last_eff_win_idx = (in_seq.size - self.eff_size_bias) // self.params.stride_in
-            out_valid_end = self.tsfm_out_pos + min(
-                (last_eff_win_idx + 1) * self.params.stride_out - self.params.out_trim, out_size
-            )
+            last_eff_win_idx = (in_seq.size - self.in_offset) // self.stride_in
+            out_trim_end = min((last_eff_win_idx + 1) * self.stride_out - self.out_offset, out_size)
 
-        if in_seq.size < self.params.get_min_input_size() or out_valid_end <= self.prev_out_valid_end:
+        if in_seq.size < self.params.get_min_input_size() or self.tsfm_out_pos + out_trim_end <= self.stream_out_pos:
             if self.input_closed and self._prev_trimmed_output is not None:
                 return self._prev_trimmed_output
 
             # TODO: breakdown current state & display how much more data is needed
             raise NotEnoughInputError(f"Input sequence of size {in_seq.size} is not enough to produce any output.")
-
-        # FIXME: one less var
-        self.prev_out_valid_end = out_valid_end
 
         # Forward the input
         tsfm_out = Sequence.apply(self.transform, in_seq, self.out_spec)
@@ -107,34 +117,18 @@ class SlidingWindowStream(Stream):
                 f"input. Sliding window params: {self.params}"
             )
 
+        # Compute the slice of the output that we'll return and update the stream position
         out_trim_start = self.stream_out_pos - self.tsfm_out_pos
-        out_trim_end = out_valid_end - self.tsfm_out_pos
         assert out_trim_end > out_trim_start >= 0, "Internal error"
-        self.stream_out_pos += out_trim_end - out_trim_start
-
-        w = (
-            (self.n_wins_left_context - 1) * self.params.stride_in
-            # Don't account for windows with right padding, as it will lead to incorrect outputs
-            + self.eff_size_bias
-            + max(
-                0,
-                # TODO: doc out trim
-                # TODO! verify this is correct with both ki>1 & to>1
-                -self.n_elems_right_context
-                + int(math.ceil(self.params.out_trim / self.params.stride_out)) * self.params.stride_in,
-            )
-        )
+        self.stream_out_pos = self.tsfm_out_pos + out_trim_end
 
         # Drop input that won't be necessary in the future
-        wins_to_drop = max(0, (in_seq.size - w) // self.params.stride_in)
-        in_seq.drop(wins_to_drop * self.params.stride_in)
-        self.tsfm_out_pos += wins_to_drop * self.params.stride_out
+        wins_to_drop = max(0, (in_seq.size - self.in_context_size) // self.stride_in)
+        in_seq.drop(wins_to_drop * self.stride_in)
+        self.tsfm_out_pos += wins_to_drop * self.stride_out
 
         # If we're trimming on the right, save the trim in case the stream closes before we can compute any
         # new sliding window output.
-        if out_trim_end < tsfm_out.size:
-            self._prev_trimmed_output = tsfm_out[out_trim_end:]
-        else:
-            self._prev_trimmed_output = None
+        self._prev_trimmed_output = tsfm_out[out_trim_end:] if out_trim_end < out_size else None
 
         return tsfm_out[out_trim_start:out_trim_end]
