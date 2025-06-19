@@ -65,6 +65,7 @@ class SlidingWindowStream(Stream):
         ) = get_streaming_params(sliding_window_params)
         self.n_wins_to_buffer_left = self.n_wins_left_context
 
+        self.prev_out_valid_end = 0
         self.tsfm_out_pos = 0
         self.stream_out_pos = 0
 
@@ -77,22 +78,7 @@ class SlidingWindowStream(Stream):
         in_start = in_seq.n_consumed
         in_end = in_start + in_seq.size
 
-        # Of the windows that will be computed, find the subrange that will effectively be used in the output.
-        first_eff_win_idx = self.n_wins_left_context - self.n_wins_to_buffer_left
         last_win_idx = (in_seq.size - self.eff_size_bias + self.n_elems_right_context) // self.params.stride_in
-        if in_seq.input_closed:
-            eff_num_wins = last_win_idx - first_eff_win_idx + 1
-        else:
-            eff_num_wins = (
-                min(
-                    # Don't account for windows with right padding, as it will lead to incorrect outputs
-                    (in_seq.size - self.eff_size_bias) // self.params.stride_in,
-                    last_win_idx - int(math.ceil(self.params.out_trim / self.params.stride_out)),
-                )
-                - first_eff_win_idx
-                + 1
-            )
-
         out_size = last_win_idx * self.params.stride_out + self.params.kernel_size_out - 2 * self.params.out_trim
         if in_seq.input_closed:
             out_valid_end = self.tsfm_out_pos + out_size
@@ -102,12 +88,15 @@ class SlidingWindowStream(Stream):
                 (last_eff_win_idx + 1) * self.params.stride_out - self.params.out_trim, out_size
             )
 
-        if eff_num_wins <= 0 or out_valid_end < self.stream_out_pos:
+        if in_seq.size < self.params.get_min_input_size() or out_valid_end <= self.prev_out_valid_end:
             if self.input_closed and self._prev_trimmed_output is not None:
                 return self._prev_trimmed_output
 
             # TODO: breakdown current state & display how much more data is needed
             raise NotEnoughInputError(f"Input sequence of size {in_seq.size} is not enough to produce any output.")
+
+        # FIXME: one less var
+        self.prev_out_valid_end = out_valid_end
 
         # Forward the input
         tsfm_out = Sequence.apply(self.transform, in_seq, self.out_spec)
@@ -123,11 +112,23 @@ class SlidingWindowStream(Stream):
         assert out_trim_end > out_trim_start >= 0, "Internal error"
         self.stream_out_pos += out_trim_end - out_trim_start
 
+        w = (
+            (self.n_wins_left_context - 1) * self.params.stride_in
+            # Don't account for windows with right padding, as it will lead to incorrect outputs
+            + self.eff_size_bias
+            + max(
+                0,
+                # TODO: doc out trim
+                # TODO! verify this is correct with both ki>1 & to>1
+                -self.n_elems_right_context
+                + int(math.ceil(self.params.out_trim / self.params.stride_out)) * self.params.stride_in,
+            )
+        )
+
         # Drop input that won't be necessary in the future
-        wins_to_drop = max(0, eff_num_wins - self.n_wins_to_buffer_left)
+        wins_to_drop = max(0, (in_seq.size - w) // self.params.stride_in)
         in_seq.drop(wins_to_drop * self.params.stride_in)
         self.tsfm_out_pos += wins_to_drop * self.params.stride_out
-        self.n_wins_to_buffer_left = max(0, self.n_wins_to_buffer_left - eff_num_wins)
 
         # If we're trimming on the right, save the trim in case the stream closes before we can compute any
         # new sliding window output.
