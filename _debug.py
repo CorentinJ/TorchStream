@@ -20,6 +20,9 @@ trsfm = ConvTranspose1d(1, 1, kernel_size=3)
 
 # conv = Conv1d(1, 1, kernel_size=3, stride=3, dilation=3)
 
+# print(get_streaming_params(SlidingWindowParams(kernel_size_in=2, left_pad=1, right_pad=1)))
+print(get_streaming_params(SlidingWindowParams(kernel_size_out=3)))
+
 
 # def trsfm(x):
 #     x = torch.nn.functional.pad(x, (2, 0))
@@ -27,12 +30,12 @@ trsfm = ConvTranspose1d(1, 1, kernel_size=3)
 #     return x
 
 
-if False:  # or True:
+if False or True:
     solver = SlidingWindowParamsSolver(trsfm, SeqSpec((1, 1, -1)), max_hypotheses_per_step=20)
     while solver.nan_trick_params is not None:
         solver.step()
-    #     if len(solver.nan_trick_history) > 3:
-    #         break
+        if len(solver.nan_trick_history) > 3:
+            break
     # print("\n\n")
     # for hyp in solver.hypotheses:
     #     print(hyp.params)

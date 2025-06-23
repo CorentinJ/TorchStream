@@ -7,7 +7,7 @@ from typing import Callable, Iterable, List, Tuple
 
 import numpy as np
 import torch
-from z3 import And, Implies, Or
+from z3 import And, Implies, Not
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
@@ -234,8 +234,8 @@ class SlidingWindowParamsSolver:
             hypothesis.streaming_rejected = False
             return
 
-        nwlc, nerc, esb, eitwr, wteor = hyp_stream_params
-        sol_nwlc, sol_nerc, sol_esb, sol_eitwr, sol_wteor = self.sampler.get_streaming_params()
+        stride_in, stride_out, off_in, off_out, in_ctx = hyp_stream_params
+        sol_stride_in, sol_stride_out, sol_off_in, sol_off_out, sol_in_ctx = self.sampler.get_streaming_params()
 
         # FIXME?: A justification for the number 10
         in_size = hypothesis.params.get_min_input_size_for_num_wins(10)
@@ -263,36 +263,39 @@ class SlidingWindowParamsSolver:
             # and in current hypotheses
             self.sampler.optimizer.add(
                 Implies(
-                    And(sol_eitwr == eitwr, sol_wteor == wteor),
-                    Or(
-                        And(sol_nwlc == nwlc, sol_nerc == nerc, sol_esb == esb),
-                        sol_nwlc < nwlc,
-                        sol_nerc < nerc,
-                        sol_esb < esb,
+                    And(
+                        sol_stride_in == stride_in,
+                        sol_stride_out == stride_out,
+                        sol_off_in == off_in,
+                        sol_off_out == off_out,
                     ),
+                    sol_in_ctx <= in_ctx,
                 )
             )
             for other_hyp in list(self.hypotheses):
-                ot_nwlc, ot_nerc, ot_esb, ot_eitwr, ot_wteor = get_streaming_params(other_hyp.params)
-                if (ot_eitwr == eitwr and ot_wteor == wteor) and not (
-                    (ot_nwlc == nwlc and ot_nerc == nerc and ot_esb == esb)
-                    or ot_nwlc < nwlc
-                    or ot_nerc < nerc
-                    or ot_esb < esb
+                ot_stride_in, ot_stride_out, ot_off_in, ot_off_out, ot_in_ctx = get_streaming_params(other_hyp.params)
+                if (
+                    ot_stride_in == stride_in
+                    and ot_stride_out == stride_out
+                    and ot_off_in == off_in
+                    and ot_off_out == off_out
+                    and ot_in_ctx > in_ctx
                 ):
                     other_hyp.suboptimal_rejected = True
 
         except AssertionError:
             hypothesis.streaming_rejected = True
 
-            # The solution failed, let's reject solutions with the same streaming parameters
+            # The solution failed, let's reject solutions with the same streaming parameters and less context
             self.sampler.optimizer.add(
-                Or(
-                    sol_nwlc != nwlc,
-                    sol_nerc != nerc,
-                    sol_esb != esb,
-                    sol_eitwr != eitwr,
-                    sol_wteor != wteor,
+                Not(
+                    And(
+                        sol_stride_in == stride_in,
+                        sol_stride_out == stride_out,
+                        sol_off_in == off_in,
+                        sol_off_out == off_out,
+                        sol_in_ctx <= in_ctx,
+                    )
                 )
             )
 
