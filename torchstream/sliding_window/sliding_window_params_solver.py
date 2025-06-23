@@ -7,7 +7,7 @@ from typing import Callable, Iterable, List, Tuple
 
 import numpy as np
 import torch
-from z3 import And, Implies, Not
+from z3 import And
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
@@ -230,9 +230,12 @@ class SlidingWindowParamsSolver:
 
     def test_update_hypothesis_by_streaming(self, hypothesis: Hypothesis):
         hyp_stream_params = get_streaming_params(hypothesis.params)
-        if hyp_stream_params in self.validated_stream_params:
-            hypothesis.streaming_rejected = False
-            return
+
+        # FIXME!: this optim does check that the in/out size relation is identical. Is that always the case??
+        #   -> If yes, can be reenabled
+        # if hyp_stream_params in self.validated_stream_params:
+        #     hypothesis.streaming_rejected = False
+        #     return
 
         stride_in, stride_out, off_in, off_out, in_ctx = hyp_stream_params
         sol_stride_in, sol_stride_out, sol_off_in, sol_off_out, sol_in_ctx = self.sampler.get_streaming_params()
@@ -245,6 +248,7 @@ class SlidingWindowParamsSolver:
         try:
             # TODO: clean up the streaming impl to clearly reflect that it fails if the output size is not as expected
             # TODO! use the in/out sizes generated in streaming as data
+            # TODO? Cache the transform outputs
             test_stream_equivalent(
                 self.trsfm,
                 SlidingWindowStream(self.trsfm, hypothesis.params, in_seq.spec, self.out_spec),
@@ -261,21 +265,31 @@ class SlidingWindowParamsSolver:
             # test fails
             # Enforce solutions that are equally or more efficient on at least one aspect, both in the sampler
             # and in current hypotheses
+            # self.sampler.optimizer.add(
+            #     Implies(
+            #         And(
+            #             sol_stride_in == stride_in,
+            #             sol_stride_out == stride_out,
+            #         ),
+            #         # Or(
+            #         #     sol_off_in == off_in and sol_off_out == off_out and sol_in_ctx == in_ctx,
+            #         #     sol_off_in < off_in,
+            #         #     sol_off_out < off_out,
+            #         #     sol_in_ctx < in_ctx,
+            #         # ),
+            #         And(sol_off_in <= off_in, sol_off_out <= off_out, sol_in_ctx <= in_ctx),
+            #     )
+            # )
             self.sampler.optimizer.add(
-                Implies(
-                    And(
-                        sol_stride_in == stride_in,
-                        sol_stride_out == stride_out,
-                    ),
-                    # Or(
-                    #     sol_off_in == off_in and sol_off_out == off_out and sol_in_ctx == in_ctx,
-                    #     sol_off_in < off_in,
-                    #     sol_off_out < off_out,
-                    #     sol_in_ctx < in_ctx,
-                    # ),
-                    And(sol_off_in <= off_in, sol_off_out <= off_out, sol_in_ctx <= in_ctx),
+                And(
+                    sol_stride_in == stride_in,
+                    sol_stride_out == stride_out,
+                    sol_off_in <= off_in,
+                    sol_off_out <= off_out,
+                    sol_in_ctx <= in_ctx,
                 )
             )
+            # FIXME!! discrepancy with the above: stride is not enforced
             for other_hyp in list(self.hypotheses):
                 ot_stride_in, ot_stride_out, ot_off_in, ot_off_out, ot_in_ctx = get_streaming_params(other_hyp.params)
                 if (
@@ -288,18 +302,20 @@ class SlidingWindowParamsSolver:
         except AssertionError:
             hypothesis.streaming_rejected = True
 
-            # The solution failed, let's reject solutions with the same streaming parameters and less context
-            self.sampler.optimizer.add(
-                Not(
-                    And(
-                        sol_stride_in == stride_in,
-                        sol_stride_out == stride_out,
-                        sol_off_in <= off_in,
-                        sol_off_out <= off_out,
-                        sol_in_ctx <= in_ctx,
-                    )
-                )
-            )
+            # FIXME: this cannot work if we can't tell whether the solution was rejected due to size relation or
+            # context!
+            # # The solution failed, let's reject solutions with the same streaming parameters and less context
+            # self.sampler.optimizer.add(
+            #     Not(
+            #         And(
+            #             sol_stride_in == stride_in,
+            #             sol_stride_out == stride_out,
+            #             sol_off_in <= off_in,
+            #             sol_off_out <= off_out,
+            #             sol_in_ctx <= in_ctx,
+            #         )
+            #     )
+            # )
 
     def update_reject_hypotheses(self, hypothesis: Hypothesis):
         """
@@ -387,6 +403,8 @@ class SlidingWindowParamsSolver:
         while self.nan_trick_params is not None:
             self.step()
         logger.debug(self.hypotheses)
+
+        # TODO: sort by param complexity
         return [hypothesis.params for hypothesis in self.hypotheses]
 
 

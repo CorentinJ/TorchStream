@@ -151,6 +151,8 @@ class SlidingWindowParamsSampler:
         """
         This is a 1-to-1 equivalent to torchstream.sliding_window.sliding_window_stream.get_streaming_params(), for
         expressing new constraints.
+
+        TODO: express a function that handles both python ints and z3 Ints to avoid duplication.
         """
         in_offset = self.k_i - self.p_l
         out_offset = self.t_o
