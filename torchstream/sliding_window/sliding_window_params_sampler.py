@@ -4,6 +4,7 @@ from typing import Tuple
 from z3 import And, Bool, If, Int, Ints, Or, Solver, sat
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+from torchstream.sliding_window.sliding_window_stream_params import get_streaming_params
 
 logger = logging.getLogger(__name__)
 
@@ -149,28 +150,9 @@ class SlidingWindowParamsSampler:
 
     def get_streaming_params(self):
         """
-        This is a 1-to-1 equivalent to torchstream.sliding_window.sliding_window_stream.get_streaming_params(), for
-        expressing new constraints.
-
-        TODO: express a function that handles both python ints and z3 Ints to avoid duplication.
+        Expresses the sliding window parameters as sliding window stream parameters.
         """
-        in_offset = self.k_i - self.p_l
-        out_offset = self.t_o
-
-        n_left_wins_wasted = (self.p_l + self.s_i - 1) / self.s_i
-        n_overlapping_out_wins = (self.k_o + self.s_o - 1) / self.s_o - 1
-        n_trimmed_wins = (self.t_o + self.s_o - 1) / self.s_o
-        windows_context_size = n_left_wins_wasted + If(
-            n_overlapping_out_wins > n_trimmed_wins, n_overlapping_out_wins, n_trimmed_wins
-        )
-
-        extra_right_context = ((self.t_o + self.s_o - 1) / self.s_o) * self.s_i - self.p_r
-        extra_right_context = If(extra_right_context > 0, extra_right_context, 0)
-
-        in_context_size = (windows_context_size - 1) * self.s_i + in_offset + extra_right_context
-        in_context_size = If(in_context_size > 0, in_context_size, 0)
-
-        return self.s_i, self.s_o, in_offset, out_offset, in_context_size
+        return get_streaming_params(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
 
     def get_new_solution(self) -> SlidingWindowParams | None:
         # TODO! doc
