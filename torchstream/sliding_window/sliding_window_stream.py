@@ -26,8 +26,8 @@ class SlidingWindowStream(Stream):
         (
             self.stride_in,
             self.stride_out,
-            self.in_offset,
-            self.out_offset,
+            self.in_delay,
+            self.out_delay,
             self.in_context_size,
         ) = get_streaming_params(sliding_window_params)
 
@@ -46,8 +46,8 @@ class SlidingWindowStream(Stream):
         if in_seq.input_closed:
             out_trim_end = out_size
         else:
-            last_eff_win_idx = (in_seq.size - self.in_offset) // self.stride_in
-            out_trim_end = min((last_eff_win_idx + 1) * self.stride_out - self.out_offset, out_size)
+            last_eff_win_idx = (in_seq.size - self.in_delay) // self.stride_in
+            out_trim_end = min((last_eff_win_idx + 1) * self.stride_out - self.out_delay, out_size)
 
         if in_seq.size < self.params.get_min_input_size() or self.tsfm_out_pos + out_trim_end <= self.stream_out_pos:
             if self.input_closed and self._prev_trimmed_output is not None:

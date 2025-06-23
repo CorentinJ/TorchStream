@@ -237,8 +237,8 @@ class SlidingWindowParamsSolver:
         #     hypothesis.streaming_rejected = False
         #     return
 
-        stride_in, stride_out, off_in, off_out, in_ctx = hyp_stream_params
-        sol_stride_in, sol_stride_out, sol_off_in, sol_off_out, sol_in_ctx = self.sampler.get_streaming_params()
+        stride_in, stride_out, delay_in, delay_out, in_ctx = hyp_stream_params
+        sol_stride_in, sol_stride_out, sol_delay_in, sol_delay_out, sol_in_ctx = self.sampler.get_streaming_params()
 
         # FIXME?: A justification for the number 10
         in_size = hypothesis.params.get_min_input_size_for_num_wins(10)
@@ -265,37 +265,24 @@ class SlidingWindowParamsSolver:
             # test fails
             # Enforce solutions that are equally or more efficient on at least one aspect, both in the sampler
             # and in current hypotheses
-            # self.sampler.optimizer.add(
-            #     Implies(
-            #         And(
-            #             sol_stride_in == stride_in,
-            #             sol_stride_out == stride_out,
-            #         ),
-            #         # Or(
-            #         #     sol_off_in == off_in and sol_off_out == off_out and sol_in_ctx == in_ctx,
-            #         #     sol_off_in < off_in,
-            #         #     sol_off_out < off_out,
-            #         #     sol_in_ctx < in_ctx,
-            #         # ),
-            #         And(sol_off_in <= off_in, sol_off_out <= off_out, sol_in_ctx <= in_ctx),
-            #     )
-            # )
             self.sampler.optimizer.add(
                 And(
                     sol_stride_in == stride_in,
                     sol_stride_out == stride_out,
-                    sol_off_in <= off_in,
-                    sol_off_out <= off_out,
+                    sol_delay_in <= delay_in,
+                    sol_delay_out <= delay_out,
                     sol_in_ctx <= in_ctx,
                 )
             )
             # FIXME!! discrepancy with the above: stride is not enforced
             for other_hyp in list(self.hypotheses):
-                ot_stride_in, ot_stride_out, ot_off_in, ot_off_out, ot_in_ctx = get_streaming_params(other_hyp.params)
+                ot_stride_in, ot_stride_out, ot_delay_in, ot_delay_out, ot_in_ctx = get_streaming_params(
+                    other_hyp.params
+                )
                 if (
                     ot_stride_in == stride_in
                     and ot_stride_out == stride_out
-                    and (ot_off_in > off_in or ot_off_out > off_out or ot_in_ctx > in_ctx)
+                    and (ot_delay_in > delay_in or ot_delay_out > delay_out or ot_in_ctx > in_ctx)
                 ):
                     other_hyp.suboptimal_rejected = True
 

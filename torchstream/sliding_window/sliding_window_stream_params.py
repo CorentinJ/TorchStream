@@ -30,20 +30,22 @@ def get_streaming_params(
 ) -> Tuple[IntLike, IntLike, IntLike, IntLike, IntLike]: ...
 def get_streaming_params(*args):
     """
-    Derives parameters necessary for streaming from the sliding window parameters. Multiple sliding window parameters
-    can give rise to the same streaming parameters. Also, incorrect sliding window parameters can give rise to correct
-    but suboptimal streaming parameters that use too much context.
+    Derives parameters necessary for streaming a sliding window transform from its sliding window parameters. This
+    function handles both python ints and z3 expressions.
 
     This function returns 5 parameters:
     - stride_in: the stride (reduction factor) for the input sequence
     - stride_out: the stride (multiplication factor) for the output sequence
-      TODO? rename to "delay"
-    - in_offset: offset for the input sequence
-    - out_offset: offset for the output sequence
+    - in_delay: constant delay in processing the input sequence
+    - out_delay: constant delay in producing the output sequence
     - in_context_size: number of input elements to be buffered as context
 
-    These parameters offset the effective size of the input sequence and output sequence, and account for
-    wasted windows due to padding and trimming, as well as the context needed for overlapping windows.
+    Note that different sliding window parameters can give rise to the same values for <in_delay>, <out_delay> and
+    <in_context_size>. Also note that incorrect sliding window parameters can give rise to correct but suboptimal
+    values for these parameters:
+    - Excessively large values for the in or out delay will cause the streaming to be lagging behind where it could be.
+    - Excessively large values for the in context size will lead to the transform receiving larger inputs than
+    necessary, slowing down the process and consuming more memory than necessary.
     """
     if len(args) == 1 and isinstance(args[0], SlidingWindowParams):
         p = args[0]
@@ -61,11 +63,12 @@ def get_streaming_params(*args):
     else:
         raise TypeError("Invalid arguments for get_streaming_params")
 
-    # These parameters offset the effective size of the input sequence
-    in_offset = k_i - p_l
+    # Larger kernels induce delay in processing the input sequence, while left padding reduces it.
+    in_delay = k_i - p_l
 
-    # Out trimming also offsets the output sequence
-    out_offset = t_o
+    # FIXME! doc
+    # Out trimming also delays the output sequence
+    out_delay = t_o
 
     # Number of windows that are wasted on the left solely due to padding. "Wasted" here means that we recompute
     # these windows on each step despite them being unnecessary, simply because the transform re-pads the input
@@ -91,6 +94,6 @@ def get_streaming_params(*args):
     extra_right_context = max_(0, n_trimmed_wins * s_i - p_r)
 
     # Number of input elements that are needed as context
-    in_context_size = max_(0, (windows_context_size - 1) * s_i + in_offset + extra_right_context)
+    in_context_size = max_(0, (windows_context_size - 1) * s_i + in_delay + extra_right_context)
 
-    return s_i, s_o, in_offset, out_offset, in_context_size
+    return s_i, s_o, in_delay, out_delay, in_context_size
