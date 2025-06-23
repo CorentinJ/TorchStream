@@ -5,7 +5,7 @@ from torch.nn import Conv1d, ConvTranspose1d
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.nan_trick import get_nan_map
-from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+from torchstream.sliding_window.sliding_window_params import SlidingWindowParams, temp_eq
 from torchstream.sliding_window.sliding_window_params_solver import (
     SlidingWindowParamsSolver,
 )
@@ -16,19 +16,20 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
 trsfm = ConvTranspose1d(1, 1, kernel_size=3)
-trsfm = Conv1d(1, 1, kernel_size=3, stride=3)
-real_sol = SlidingWindowParams(kernel_size_in=3, stride_in=3)
+trsfm = Conv1d(1, 1, kernel_size=2)
 
-# def trsfm(x):
-#     x = torch.nn.functional.pad(x, (2, 0))
-#     x = conv(x)
-#     return x
+
+# def t(x):
+#     return trsfm(torch.nn.functional.pad(x, (2, 0)))
+
+
+real_sol = SlidingWindowParams(kernel_size_in=2)
 
 print(get_streaming_params(real_sol))
 
 
 if False or True:
-    solver = SlidingWindowParamsSolver(trsfm, SeqSpec((1, 1, -1)), max_hypotheses_per_step=10)
+    solver = SlidingWindowParamsSolver(trsfm, SeqSpec((1, 1, -1)), max_hypotheses_per_step=20)
     while solver.nan_trick_params is not None:
         solver.step()
         # if len(solver.nan_trick_history) > 3:
@@ -40,15 +41,16 @@ if False or True:
         print(get_streaming_params(sol))
         print(sol.kernel_in_sparsity)
         print(sol.kernel_out_sparsity)
-    quit()
 
-    print("==== REAL SOLUTION ====")
-    print(real_sol)
-    print(get_streaming_params(real_sol))
-    for violation in solver.sampler.get_violations(real_sol):
-        print(violation)
-        print("----")
-    print("====")
+    if not any(temp_eq(sol, real_sol) for sol in sols):
+        hyp = next((hyp for hyp in solver.rejected_hypotheses if temp_eq(hyp.params, real_sol)), None)
+        print("==== REAL SOLUTION WAS REJECTED ====" if hyp else "==== REAL SOLUTION WAS NOT FOUND ====")
+        print(hyp or real_sol)
+        print(get_streaming_params(real_sol))
+        for violation in solver.sampler.get_violations(real_sol):
+            print(violation)
+            print("----")
+        print("====")
 
     quit()
 

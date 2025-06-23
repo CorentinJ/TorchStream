@@ -4,6 +4,19 @@ from typing import Iterator, Tuple
 import numpy as np
 
 
+# FIXME!!
+def temp_eq(a: "SlidingWindowParams", b: "SlidingWindowParams"):
+    return (
+        a.kernel_size_in == b.kernel_size_in
+        and a.stride_in == b.stride_in
+        and a.left_pad == b.left_pad
+        and a.right_pad == b.right_pad
+        and a.kernel_size_out == b.kernel_size_out
+        and a.stride_out == b.stride_out
+        and a.out_trim == b.out_trim
+    )
+
+
 class SlidingWindowParams:
     """
     This class represents the parameters of a sliding window transform (e.g. a convolution, a moving average, ...).

@@ -50,10 +50,6 @@ class SlidingWindowParamsSampler:
         self.t_o = Int("t_o")
         self.optimizer.add(0 <= self.t_o, self.t_o < self.k_o)
 
-        # FIXME!!
-        print("--- OUT TRIM DISABLED ---")
-        self.optimizer.add(self.t_o == 0)
-
         # Blocker for guiding the solver towards simpler solutions first.
         self.cost = Int("cost")
         self.optimizer.add(self.k_i + self.s_i + self.p_l + self.p_r + self.k_o + self.s_o + self.t_o <= self.cost)

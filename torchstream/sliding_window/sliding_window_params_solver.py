@@ -7,7 +7,7 @@ from typing import Callable, Iterable, List, Tuple
 
 import numpy as np
 import torch
-from z3 import And
+from z3 import And, Or
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
@@ -261,17 +261,20 @@ class SlidingWindowParamsSolver:
             # FIXME
             logger.debug(f"Successfully streamed hypothesis {hypothesis.params}")
 
-            # TODO: keep track of the constraint in order to be able to revert it later if the equivalence
-            # test fails
+            # TODO?: keep track of the constraint in order to be able to revert it later if the hypothesis is rejected
+            #   (this has never happened yet)
             # Enforce solutions that are equally or more efficient on at least one aspect, both in the sampler
             # and in current hypotheses
             self.sampler.optimizer.add(
                 And(
                     sol_stride_in == stride_in,
                     sol_stride_out == stride_out,
-                    sol_delay_in <= delay_in,
-                    sol_delay_out <= delay_out,
-                    sol_in_ctx <= in_ctx,
+                    Or(
+                        And(sol_delay_in == delay_in, sol_delay_out == delay_out, sol_in_ctx == in_ctx),
+                        sol_delay_in < delay_in,
+                        sol_delay_out < delay_out,
+                        sol_in_ctx < in_ctx,
+                    ),
                 )
             )
             # FIXME!! discrepancy with the above: stride is not enforced
@@ -282,7 +285,12 @@ class SlidingWindowParamsSolver:
                 if (
                     ot_stride_in == stride_in
                     and ot_stride_out == stride_out
-                    and (ot_delay_in > delay_in or ot_delay_out > delay_out or ot_in_ctx > in_ctx)
+                    and not (
+                        (ot_delay_in == delay_in and ot_delay_out == delay_out and ot_in_ctx == in_ctx)
+                        or ot_delay_in < delay_in
+                        or ot_delay_out < delay_out
+                        or ot_in_ctx < in_ctx
+                    )
                 ):
                     other_hyp.suboptimal_rejected = True
 
