@@ -266,10 +266,14 @@ class SlidingWindowParamsSolver:
                     And(
                         sol_stride_in == stride_in,
                         sol_stride_out == stride_out,
-                        sol_off_in == off_in,
-                        sol_off_out == off_out,
                     ),
-                    sol_in_ctx <= in_ctx,
+                    # Or(
+                    #     sol_off_in == off_in and sol_off_out == off_out and sol_in_ctx == in_ctx,
+                    #     sol_off_in < off_in,
+                    #     sol_off_out < off_out,
+                    #     sol_in_ctx < in_ctx,
+                    # ),
+                    And(sol_off_in <= off_in, sol_off_out <= off_out, sol_in_ctx <= in_ctx),
                 )
             )
             for other_hyp in list(self.hypotheses):
@@ -277,9 +281,7 @@ class SlidingWindowParamsSolver:
                 if (
                     ot_stride_in == stride_in
                     and ot_stride_out == stride_out
-                    and ot_off_in == off_in
-                    and ot_off_out == off_out
-                    and ot_in_ctx > in_ctx
+                    and (ot_off_in > off_in or ot_off_out > off_out or ot_in_ctx > in_ctx)
                 ):
                     other_hyp.suboptimal_rejected = True
 
@@ -292,8 +294,8 @@ class SlidingWindowParamsSolver:
                     And(
                         sol_stride_in == stride_in,
                         sol_stride_out == stride_out,
-                        sol_off_in == off_in,
-                        sol_off_out == off_out,
+                        sol_off_in <= off_in,
+                        sol_off_out <= off_out,
                         sol_in_ctx <= in_ctx,
                     )
                 )

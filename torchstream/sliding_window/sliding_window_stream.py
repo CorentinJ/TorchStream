@@ -19,6 +19,7 @@ def get_streaming_params(sli_params: SlidingWindowParams):
     This function returns 5 parameters:
     - stride_in: the stride (reduction factor) for the input sequence
     - stride_out: the stride (multiplication factor) for the output sequence
+    TODO? rename to "delay"
     - in_offset: offset for the input sequence
     - out_offset: offset for the output sequence
     - in_context_size: number of input elements to be buffered as context

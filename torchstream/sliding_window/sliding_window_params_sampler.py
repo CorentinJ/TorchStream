@@ -152,14 +152,23 @@ class SlidingWindowParamsSampler:
         This is a 1-to-1 equivalent to torchstream.sliding_window.sliding_window_stream.get_streaming_params(), for
         expressing new constraints.
         """
+        in_offset = self.k_i - self.p_l
+        out_offset = self.t_o
+
         n_left_wins_wasted = (self.p_l + self.s_i - 1) / self.s_i
         n_overlapping_out_wins = (self.k_o + self.s_o - 1) / self.s_o - 1
-        n_wins_left_context = n_left_wins_wasted + n_overlapping_out_wins
-        n_elems_right_context = self.p_r
-        eff_size_bias = self.k_i - self.p_l
-        elem_in_to_win_ratio = self.s_i
-        win_to_elem_out_ratio = self.s_o
-        return n_wins_left_context, n_elems_right_context, eff_size_bias, elem_in_to_win_ratio, win_to_elem_out_ratio
+        n_trimmed_wins = (self.t_o + self.s_o - 1) / self.s_o
+        windows_context_size = n_left_wins_wasted + If(
+            n_overlapping_out_wins > n_trimmed_wins, n_overlapping_out_wins, n_trimmed_wins
+        )
+
+        extra_right_context = ((self.t_o + self.s_o - 1) / self.s_o) * self.s_i - self.p_r
+        extra_right_context = If(extra_right_context > 0, extra_right_context, 0)
+
+        in_context_size = (windows_context_size - 1) * self.s_i + in_offset + extra_right_context
+        in_context_size = If(in_context_size > 0, in_context_size, 0)
+
+        return self.s_i, self.s_o, in_offset, out_offset, in_context_size
 
     def get_new_solution(self) -> SlidingWindowParams | None:
         # TODO! doc
