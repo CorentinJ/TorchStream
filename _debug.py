@@ -1,7 +1,7 @@
 import logging
 
 import numpy as np
-from torch.nn import Conv1d, ConvTranspose1d
+from torch.nn import ConvTranspose1d
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.nan_trick import get_nan_map
@@ -15,25 +15,36 @@ from torchstream.stream_equivalence import test_stream_equivalent
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
-trsfm = ConvTranspose1d(1, 1, kernel_size=3)
-trsfm = Conv1d(1, 1, kernel_size=2)
+trsfm = ConvTranspose1d(1, 1, kernel_size=3, padding=1)
+# trsfm = Conv1d(1, 1, kernel_size=2)
 
 
 # def t(x):
 #     return trsfm(torch.nn.functional.pad(x, (2, 0)))
 
 
-real_sol = SlidingWindowParams(kernel_size_in=2)
+real_sol = SlidingWindowParams(kernel_size_out=3, out_trim=1)
+print(get_streaming_params(real_sol))
+
+real_sol = SlidingWindowParams(
+    kernel_size_in=2,
+    stride_in=1,
+    left_pad=1,
+    right_pad=1,
+    kernel_size_out=2,
+    stride_out=1,
+    out_trim=1,
+)
 
 print(get_streaming_params(real_sol))
 
 
-if False or True:
+if False:  # or True:
     solver = SlidingWindowParamsSolver(trsfm, SeqSpec((1, 1, -1)), max_hypotheses_per_step=20)
     while solver.nan_trick_params is not None:
         solver.step()
-        # if len(solver.nan_trick_history) > 3:
-        #     break
+        if len(solver.nan_trick_history) > 5:
+            break
 
     sols = [hypothesis.params for hypothesis in solver.hypotheses]
     for sol in sols:
@@ -75,8 +86,10 @@ if False:  # or True:
     quit()
 
 in_spec = SeqSpec((1, 1, -1))
-in_seq = in_spec.new_randn(100)
-test_stream_equivalent(
-    trsfm,
-    SlidingWindowStream(trsfm, SlidingWindowParams(kernel_size_out=3), in_spec),
-)
+for _ in range(10):
+    print(_)
+    test_stream_equivalent(
+        trsfm,
+        SlidingWindowStream(trsfm, real_sol, in_spec),
+        in_step_sizes=tuple(np.random.randint(1, 30, size=200)),
+    )

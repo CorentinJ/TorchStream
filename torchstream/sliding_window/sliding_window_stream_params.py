@@ -63,7 +63,7 @@ def get_streaming_params(*args):
     else:
         raise TypeError("Invalid arguments for get_streaming_params")
 
-    # Larger kernels induce delay in processing the input sequence, while left padding reduces it.
+    # The input kernel size induces a delay in processing the input sequence, while left padding reduces it.
     in_delay = k_i - p_l
 
     # FIXME! doc

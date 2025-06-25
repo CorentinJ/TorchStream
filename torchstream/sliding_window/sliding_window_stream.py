@@ -10,6 +10,14 @@ from torchstream.sliding_window.sliding_window_stream_params import get_streamin
 from torchstream.stream import NotEnoughInputError, Stream
 
 
+class IncorrectSlidingWindowParametersError(Exception):
+    """
+    TODO: doc
+    """
+
+    pass
+
+
 class SlidingWindowStream(Stream):
     def __init__(
         self,
@@ -59,7 +67,7 @@ class SlidingWindowStream(Stream):
         # Forward the input
         tsfm_out = Sequence.apply(self.transform, in_seq, self.out_spec)
         if tsfm_out.size != out_size:
-            raise ValueError(
+            raise IncorrectSlidingWindowParametersError(
                 f"Sliding window parameters are not matching {self.transform}, got a {tsfm_out.size} sized "
                 f"sequence instead of {out_size} for {in_seq.size} sized "
                 f"input. Sliding window params: {self.params}"

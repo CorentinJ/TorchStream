@@ -14,7 +14,11 @@ from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.nan_trick import determine_kernel_sparsity, get_nan_map, run_nan_trick
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_sampler import SlidingWindowParamsSampler
-from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream, get_streaming_params
+from torchstream.sliding_window.sliding_window_stream import (
+    IncorrectSlidingWindowParametersError,
+    SlidingWindowStream,
+    get_streaming_params,
+)
 from torchstream.stream_equivalence import test_stream_equivalent
 
 logger = logging.getLogger(__name__)
@@ -294,19 +298,23 @@ class SlidingWindowParamsSolver:
                 ):
                     other_hyp.suboptimal_rejected = True
 
-        except AssertionError:
+        except IncorrectSlidingWindowParametersError:
+            # TODO: can we derive more constraints from this?
             hypothesis.streaming_rejected = True
 
-            # FIXME: this cannot work if we can't tell whether the solution was rejected due to size relation or
-            # context!
+        except ValueError:
+            hypothesis.streaming_rejected = True
+
+            # # TODO: is there a possibility to get this error when the context params are correct but the size relation
+            # # is not? If yes, this constraint is problematic
             # # The solution failed, let's reject solutions with the same streaming parameters and less context
             # self.sampler.optimizer.add(
             #     Not(
             #         And(
             #             sol_stride_in == stride_in,
             #             sol_stride_out == stride_out,
-            #             sol_off_in <= off_in,
-            #             sol_off_out <= off_out,
+            #             sol_delay_in <= delay_in,
+            #             sol_delay_out <= delay_out,
             #             sol_in_ctx <= in_ctx,
             #         )
             #     )

@@ -18,7 +18,7 @@ def test_stream_equivalent(
     stream: Stream,
     # TODO: offer comparison to an output array instead, to avoid recomputing for multiple streams
     in_seq: Sequence | SeqArrayLike | None = None,
-    in_step_sizes: Tuple[int, ...] = (7, 4, 12, 1, 17),
+    in_step_sizes: Tuple[int, ...] = (7, 4, 12, 1, 17, 9),
     atol: float = 1e-5,
     throughput_check_max_delay: int | None = None,
 ):
@@ -32,7 +32,7 @@ def test_stream_equivalent(
     :param throughput_check_max_delay: TODO: doc
     """
     if in_seq is None:
-        in_seq = Sequence.randn(stream.in_spec, seq_size=50)
+        in_seq = Sequence.randn(stream.in_spec, seq_size=sum(in_step_sizes))
     elif isinstance(in_seq, Sequence):
         in_seq = in_seq.copy()
     else:
@@ -52,25 +52,21 @@ def test_stream_equivalent(
         in_stream_i = in_seq.consume(step_size)
 
         # FIXME: this is a seq
-        try:
-            out_seq_stream_i = stream(in_stream_i, is_last_input=not in_seq.size, on_starve="empty")
-        # FIXME: cleaner mechanism for bad sliding window params
-        except ValueError:
-            assert False
+        out_seq_stream_i = stream(in_stream_i, is_last_input=not in_seq.size, on_starve="empty")
 
         out_sync_i = out_seq_ref.consume(out_seq_stream_i.size)
         total_stream_out = out_seq_ref.n_consumed
 
         # Ensure the outputs are close
-        assert out_sync_i.shape == out_seq_stream_i.shape, (
-            f"Shape mismatch on step {i} (got {out_seq_stream_i.shape}, expected {out_sync_i.shape})"
-        )
+        if out_sync_i.shape != out_seq_stream_i.shape:
+            raise ValueError(f"Shape mismatch on step {i} (got {out_seq_stream_i.shape}, expected {out_sync_i.shape})")
         if out_seq_stream_i.size:
             max_error = np.abs(out_sync_i - out_seq_stream_i.data).max()
-            assert max_error <= atol, (
-                f"Error too large on step {i} (got {max_error}, expected <= {atol})\n"
-                f"Sync: {out_sync_i}\nStream: {out_seq_stream_i.data}"
-            )
+            if max_error > atol:
+                raise ValueError(
+                    f"Error too large on step {i} (got {max_error}, expected <= {atol})\n"
+                    f"Sync: {out_sync_i}\nStream: {out_seq_stream_i.data}"
+                )
 
         # Check throughput with the NaN trick
         if throughput_check_max_delay is not None and not stream.output_closed:
@@ -80,14 +76,18 @@ def test_stream_equivalent(
             out_nan_idx = get_out_nan_idx(out_nan_trick_seq_i)
 
             # FIXME: handle
-            assert len(out_nan_idx), "Transform did not output any NaN"
-            assert not out_nan_idx[0] < total_stream_out, "Internal error: stream has output more than sync"
-            assert total_stream_out >= out_nan_idx[0] - throughput_check_max_delay, (
-                f"The stream has output less than what's possible to output based on the NaN trick. "
-                f"Expected {out_nan_idx[0]} outputs total at step {i}, got {total_stream_out} (max delay is "
-                f"{throughput_check_max_delay})"
-            )
+            if not len(out_nan_idx):
+                raise ValueError("Transform did not output any NaN")
+            if out_nan_idx[0] < total_stream_out:
+                raise RuntimeError("Internal error: stream has output more than sync")
+            if total_stream_out < out_nan_idx[0] - throughput_check_max_delay:
+                raise ValueError(
+                    f"The stream has output less than what's possible to output based on the NaN trick. "
+                    f"Expected {out_nan_idx[0]} outputs total at step {i}, got {total_stream_out} (max delay is "
+                    f"{throughput_check_max_delay})"
+                )
 
         i += 1
 
-    assert out_seq_ref.output_closed, f"Stream output is too short, {out_seq_ref.size} more outputs were expected"
+    if not out_seq_ref.output_closed:
+        raise ValueError(f"Stream output is too short, {out_seq_ref.size} more outputs were expected")
