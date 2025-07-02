@@ -22,6 +22,15 @@ def max_(a: IntLike, b: IntLike) -> IntLike:
     return If(a > b, a, b)
 
 
+def divmod_(a: IntLike, b: IntLike) -> Tuple[IntLike, IntLike]:
+    """divmod() for both Python ints and z3 expressions."""
+    if isinstance(a, int) and isinstance(b, int):
+        return divmod(a, b)
+    quotient = a / b
+    remainder = a - (quotient * b)
+    return quotient, remainder
+
+
 @overload
 def get_streaming_params(sli_params: SlidingWindowParams) -> Tuple[int, int, int, int, int, int, int]: ...
 @overload
@@ -67,6 +76,9 @@ def get_streaming_params(*args):
     # Biases in computing the in/out size relation
     in_size_bias = p_l + p_r - k_i + s_i
     out_size_bias = k_o - 2 * t_o
+    # Make the biases canonical so size relation are uniquely determined by a set of parameters
+    quotient, in_size_bias = divmod_(in_size_bias, s_i)
+    out_size_bias = out_size_bias + quotient * s_o
 
     # The input kernel size induces a delay in processing the input sequence, while left padding reduces it.
     in_delay = k_i - p_l
