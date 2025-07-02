@@ -172,7 +172,9 @@ class SlidingWindowParamsSampler:
                 sol_in_size_bias == in_size_bias,
                 sol_out_size_bias == out_size_bias,
                 Or(
-                    And(sol_delay_in == delay_in, sol_delay_out == delay_out, sol_in_ctx == in_ctx),
+                    # FIXME!
+                    # And(sol_delay_in == delay_in, sol_delay_out == delay_out, sol_in_ctx == in_ctx),
+                    And(sol_delay_in == delay_in, sol_delay_out == delay_out, sol_in_ctx <= in_ctx + 1),
                     sol_delay_in < delay_in,
                     sol_delay_out < delay_out,
                     sol_in_ctx < in_ctx,

@@ -1,7 +1,7 @@
 import logging
 
 import numpy as np
-from torch.nn import ConvTranspose1d
+from torch.nn import Conv1d, ConvTranspose1d
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.nan_trick import get_nan_map
@@ -16,15 +16,16 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
 trsfm = ConvTranspose1d(1, 1, kernel_size=3, padding=1)
-# trsfm = Conv1d(1, 1, kernel_size=2)
+trsfm = Conv1d(1, 1, kernel_size=3)
 
 
-# def t(x):
-#     return trsfm(torch.nn.functional.pad(x, (2, 0)))
+def t(x):
+    return trsfm(torch.nn.functional.pad(x, (2, 0)))
+
 
 # TODO: solve context being excessive!
-real_sol = SlidingWindowParams(kernel_size_out=3, out_trim=1)
-# real_sol = SlidingWindowParams(kernel_size_in=2)
+# real_sol = SlidingWindowParams(kernel_size_out=3, out_trim=1)
+real_sol = SlidingWindowParams(kernel_size_in=3, left_pad=2)
 print(get_streaming_params(real_sol))
 
 

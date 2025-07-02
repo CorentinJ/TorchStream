@@ -65,6 +65,7 @@ class SlidingWindowParamsSolver:
         self.hypotheses: List[SlidingWindowParamsSolver.Hypothesis] = []
         self.hypotheses_to_test: List[SlidingWindowParamsSolver.Hypothesis] = []
         self.rejected_hypotheses: List[SlidingWindowParamsSolver.Hypothesis] = []
+        self.validated_streaming_params = set()
         self.nan_trick_history = []
 
         # FIXME: doc & names
@@ -231,6 +232,13 @@ class SlidingWindowParamsSolver:
             hypothesis.n_records_validated += 1
 
     def test_update_hypothesis_by_streaming(self, hypothesis: Hypothesis):
+        # If we have already validated another hypothesis with the same streaming params, we can skip any work here
+        hyp_stream_params = get_streaming_params(hypothesis.params)
+        if hyp_stream_params in self.validated_streaming_params:
+            hypothesis.streaming_rejected = False
+            logger.debug(f"Skipping already validated stream params for hypothesis {hypothesis.params}")
+            return
+
         # FIXME?: A justification for the number 10
         in_size = hypothesis.params.get_min_input_size_for_num_wins(10)
         in_seq = self.input_provider(in_size)
@@ -247,6 +255,7 @@ class SlidingWindowParamsSolver:
                 atol=self.atol,
             )
             hypothesis.streaming_rejected = False
+            self.validated_streaming_params.add(hyp_stream_params)
 
             # FIXME
             logger.debug(f"Successfully streamed hypothesis {hypothesis.params}")
