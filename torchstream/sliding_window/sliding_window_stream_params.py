@@ -76,9 +76,6 @@ def get_streaming_params(*args):
     # Biases in computing the in/out size relation
     in_size_bias = p_l + p_r - k_i + s_i
     out_size_bias = k_o - 2 * t_o
-    # Make the biases canonical so size relation are uniquely determined by a set of parameters
-    quotient, in_size_bias = divmod_(in_size_bias, s_i)
-    out_size_bias = out_size_bias + quotient * s_o
 
     # The input kernel size induces a delay in processing the input sequence, while left padding reduces it.
     in_delay = k_i - p_l
@@ -111,5 +108,12 @@ def get_streaming_params(*args):
 
     # Number of input elements that are needed as context
     in_context_size = max_(0, (windows_context_size - 1) * s_i + in_delay + extra_right_context)
+
+    # Final steps: make the biases canonical so size relations are uniquely determined by a set of parameters
+    quotient, in_size_bias = divmod_(in_size_bias, s_i)
+    out_size_bias += quotient * s_o
+    # The same goes for the delays
+    quotient, in_delay = divmod_(in_delay, s_i)
+    out_delay += quotient * s_o
 
     return s_i, s_o, in_size_bias, out_size_bias, in_delay, out_delay, in_context_size
