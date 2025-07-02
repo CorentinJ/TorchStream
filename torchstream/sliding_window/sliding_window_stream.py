@@ -37,6 +37,8 @@ class SlidingWindowStream(Stream):
             self.in_delay,
             self.out_delay,
             self.in_context_size,
+            self.in_size_bias,
+            self.out_size_bias,
         ) = get_streaming_params(sliding_window_params)
 
         self.tsfm_out_pos = 0
@@ -48,16 +50,19 @@ class SlidingWindowStream(Stream):
 
     # FIXME: signature
     def _step(self, in_seq: Sequence) -> Union[Tensor, np.ndarray, Tuple[Tensor, np.ndarray]]:
-        # FIXME: signature
-        out_size = self.params.get_metrics_for_input(in_seq.size)[2]
+        # Compute the actual output size we'll get from the transform
+        num_wins = max(0, (in_seq.size + self.in_size_bias) // self.stride_in)
+        out_size = max(0, (num_wins - 1) * self.stride_out + self.out_size_bias)
+        sufficient_input = in_seq.size and num_wins and out_size
 
+        # See where the output should be trimmed
         if in_seq.input_closed:
             out_trim_end = out_size
         else:
             last_eff_win_idx = (in_seq.size - self.in_delay) // self.stride_in
             out_trim_end = min((last_eff_win_idx + 1) * self.stride_out - self.out_delay, out_size)
 
-        if in_seq.size < self.params.get_min_input_size() or self.tsfm_out_pos + out_trim_end <= self.stream_out_pos:
+        if not sufficient_input or self.tsfm_out_pos + out_trim_end <= self.stream_out_pos:
             if self.input_closed and self._prev_trimmed_output is not None:
                 return self._prev_trimmed_output
 

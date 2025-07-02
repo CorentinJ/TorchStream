@@ -23,11 +23,11 @@ def max_(a: IntLike, b: IntLike) -> IntLike:
 
 
 @overload
-def get_streaming_params(sli_params: SlidingWindowParams) -> Tuple[int, int, int, int, int]: ...
+def get_streaming_params(sli_params: SlidingWindowParams) -> Tuple[int, int, int, int, int, int, int]: ...
 @overload
 def get_streaming_params(
-    k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_o: IntLike
-) -> Tuple[IntLike, IntLike, IntLike, IntLike, IntLike]: ...
+    k_i: ArithRef, s_i: ArithRef, p_l: ArithRef, p_r: ArithRef, k_o: ArithRef, s_o: ArithRef, t_o: ArithRef
+) -> Tuple[ArithRef, ArithRef, ArithRef, ArithRef, ArithRef, ArithRef, ArithRef]: ...
 def get_streaming_params(*args):
     """
     Derives parameters necessary for streaming a sliding window transform from its sliding window parameters. This
@@ -39,6 +39,7 @@ def get_streaming_params(*args):
     - in_delay: constant delay in processing the input sequence
     - out_delay: constant delay in producing the output sequence
     - in_context_size: number of input elements to be buffered as context
+    TODO: new params
 
     Note that different sliding window parameters can give rise to the same values for <in_delay>, <out_delay> and
     <in_context_size>. Also note that incorrect sliding window parameters can give rise to correct but suboptimal
@@ -65,7 +66,6 @@ def get_streaming_params(*args):
 
     # The input kernel size induces a delay in processing the input sequence, while left padding reduces it.
     in_delay = k_i - p_l
-
     # FIXME! doc
     # Out trimming also delays the output sequence
     out_delay = t_o
@@ -96,4 +96,8 @@ def get_streaming_params(*args):
     # Number of input elements that are needed as context
     in_context_size = max_(0, (windows_context_size - 1) * s_i + in_delay + extra_right_context)
 
-    return s_i, s_o, in_delay, out_delay, in_context_size
+    # Biases in computing the in/out size relation
+    in_size_bias = p_l + p_r - k_i + s_i
+    out_size_bias = k_o - 2 * t_o
+
+    return s_i, s_o, in_delay, out_delay, in_context_size, in_size_bias, out_size_bias
