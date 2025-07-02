@@ -55,6 +55,9 @@ class SlidingWindowParamsSampler:
         self.optimizer.add(self.k_i + self.s_i + self.p_l + self.p_r + self.k_o + self.s_o + self.t_o <= self.cost)
         self.max_cost_stack = [1_000, 100, 10]
 
+        # Constraints added to keep only new solutions
+        self.prev_sol_constraints = []
+
     # FIXME: name
     def add_in_out_range_map(
         self,
@@ -156,8 +159,8 @@ class SlidingWindowParamsSampler:
         If parameters were found to successfully stream the transform, this method will constrain the optimizer to
         yield only better or equally efficient solutions (in at least one aspect) with the same size parameters.
         """
-        stride_in, stride_out, delay_in, delay_out, in_ctx, in_size_bias, out_size_bias = get_streaming_params(params)
-        sol_stride_in, sol_stride_out, sol_delay_in, sol_delay_out, sol_in_ctx, sol_in_size_bias, sol_out_size_bias = (
+        stride_in, stride_out, in_size_bias, out_size_bias, delay_in, delay_out, in_ctx = get_streaming_params(params)
+        sol_stride_in, sol_stride_out, sol_in_size_bias, sol_out_size_bias, sol_delay_in, sol_delay_out, sol_in_ctx = (
             self._get_streaming_params()
         )
 
@@ -186,8 +189,8 @@ class SlidingWindowParamsSampler:
         If parameters were found to not stream the transform, this method will refrain the optimizer from yielding
         new solutions with the same size parameters and less context.
         """
-        stride_in, stride_out, delay_in, delay_out, in_ctx, in_size_bias, out_size_bias = get_streaming_params(params)
-        sol_stride_in, sol_stride_out, sol_delay_in, sol_delay_out, sol_in_ctx, sol_in_size_bias, sol_out_size_bias = (
+        stride_in, stride_out, in_size_bias, out_size_bias, delay_in, delay_out, in_ctx = get_streaming_params(params)
+        sol_stride_in, sol_stride_out, sol_in_size_bias, sol_out_size_bias, sol_delay_in, sol_delay_out, sol_in_ctx = (
             self._get_streaming_params()
         )
 
@@ -224,17 +227,17 @@ class SlidingWindowParamsSampler:
                 )
 
                 # Enforce new solutions only
-                self.optimizer.add(
-                    Or(
-                        self.k_i != model[self.k_i],
-                        self.s_i != model[self.s_i],
-                        self.p_l != model[self.p_l],
-                        self.p_r != model[self.p_r],
-                        self.k_o != model[self.k_o],
-                        self.s_o != model[self.s_o],
-                        self.t_o != model[self.t_o],
-                    )
+                new_sol_constraint = Or(
+                    self.k_i != model[self.k_i],
+                    self.s_i != model[self.s_i],
+                    self.p_l != model[self.p_l],
+                    self.p_r != model[self.p_r],
+                    self.k_o != model[self.k_o],
+                    self.s_o != model[self.s_o],
+                    self.t_o != model[self.t_o],
                 )
+                self.optimizer.add(new_sol_constraint)
+                self.prev_sol_constraints.append(new_sol_constraint)
 
                 # Temporarily enforce simpler solutions
                 cost = sum(model_values)
@@ -247,12 +250,15 @@ class SlidingWindowParamsSampler:
             else:
                 return None
 
-    def get_violations(self, solution: SlidingWindowParams):
+    def get_violations(self, solution: SlidingWindowParams, include_new_sol_assertions: bool = False):
         # TODO: doc
         unsat_solver = Solver()
 
         trackers = []
         for idx, assertion in enumerate(self.optimizer.assertions()):
+            if not include_new_sol_assertions and assertion in self.prev_sol_constraints:
+                continue
+
             bool_tracker = Bool(f"assertion_{idx}")
             unsat_solver.assert_and_track(assertion, bool_tracker)
             trackers.append((bool_tracker, assertion))

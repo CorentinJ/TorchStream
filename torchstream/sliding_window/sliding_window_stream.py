@@ -34,11 +34,11 @@ class SlidingWindowStream(Stream):
         (
             self.stride_in,
             self.stride_out,
+            self.in_size_bias,
+            self.out_size_bias,
             self.in_delay,
             self.out_delay,
             self.in_context_size,
-            self.in_size_bias,
-            self.out_size_bias,
         ) = get_streaming_params(sliding_window_params)
 
         self.tsfm_out_pos = 0

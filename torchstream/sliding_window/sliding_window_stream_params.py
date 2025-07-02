@@ -64,6 +64,10 @@ def get_streaming_params(*args):
     else:
         raise TypeError("Invalid arguments for get_streaming_params")
 
+    # Biases in computing the in/out size relation
+    in_size_bias = p_l + p_r - k_i + s_i
+    out_size_bias = k_o - 2 * t_o
+
     # The input kernel size induces a delay in processing the input sequence, while left padding reduces it.
     in_delay = k_i - p_l
     # FIXME! doc
@@ -96,8 +100,4 @@ def get_streaming_params(*args):
     # Number of input elements that are needed as context
     in_context_size = max_(0, (windows_context_size - 1) * s_i + in_delay + extra_right_context)
 
-    # Biases in computing the in/out size relation
-    in_size_bias = p_l + p_r - k_i + s_i
-    out_size_bias = k_o - 2 * t_o
-
-    return s_i, s_o, in_delay, out_delay, in_context_size, in_size_bias, out_size_bias
+    return s_i, s_o, in_size_bias, out_size_bias, in_delay, out_delay, in_context_size
