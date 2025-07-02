@@ -1,7 +1,7 @@
 import logging
 from typing import Tuple
 
-from z3 import And, Bool, If, Int, Ints, Or, Solver, sat
+from z3 import And, Bool, If, Int, Ints, Not, Or, Solver, sat
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_stream_params import get_streaming_params
@@ -55,6 +55,7 @@ class SlidingWindowParamsSampler:
         self.optimizer.add(self.k_i + self.s_i + self.p_l + self.p_r + self.k_o + self.s_o + self.t_o <= self.cost)
         self.max_cost_stack = [1_000, 100, 10]
 
+    # FIXME: name
     def add_in_out_range_map(
         self,
         in_len: int,
@@ -144,11 +145,65 @@ class SlidingWindowParamsSampler:
         #     # FIXME!! not the case with output trimming
         #     self.solver.add(Implies(c > 0, padded_nan_start >= self.k_i + self.s_i * (c - 1)))
 
-    def get_streaming_params(self):
+    def _get_streaming_params(self):
         """
         Expresses the sliding window parameters as sliding window stream parameters.
         """
         return get_streaming_params(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
+
+    def add_streamable_params(self, params: SlidingWindowParams):
+        """
+        If parameters were found to successfully stream the transform, this method will constrain the optimizer to
+        yield only better or equally efficient solutions (in at least one aspect) with the same size parameters.
+        """
+        stride_in, stride_out, delay_in, delay_out, in_ctx, in_size_bias, out_size_bias = get_streaming_params(params)
+        sol_stride_in, sol_stride_out, sol_delay_in, sol_delay_out, sol_in_ctx, sol_in_size_bias, sol_out_size_bias = (
+            self._get_streaming_params()
+        )
+
+        # TODO?: keep track of the constraint in order to be able to revert it later if the hypothesis is rejected
+        self.optimizer.add(
+            And(
+                sol_stride_in == stride_in,
+                sol_stride_out == stride_out,
+                in_size_bias == sol_in_size_bias,
+                out_size_bias == sol_out_size_bias,
+                Or(
+                    And(sol_delay_in == delay_in, sol_delay_out == delay_out, sol_in_ctx == in_ctx),
+                    # FIXME!!
+                    # sol_delay_in < delay_in,
+                    # sol_delay_out < delay_out,
+                    # sol_in_ctx < in_ctx,
+                    sol_delay_in < delay_in + 1,
+                    sol_delay_out < delay_out + 1,
+                    sol_in_ctx < in_ctx + 1,
+                ),
+            )
+        )
+
+    def add_non_streamable_params(self, params: SlidingWindowParams):
+        """
+        If parameters were found to not stream the transform, this method will refrain the optimizer from yielding
+        new solutions with the same size parameters and less context.
+        """
+        stride_in, stride_out, delay_in, delay_out, in_ctx, in_size_bias, out_size_bias = get_streaming_params(params)
+        sol_stride_in, sol_stride_out, sol_delay_in, sol_delay_out, sol_in_ctx, sol_in_size_bias, sol_out_size_bias = (
+            self._get_streaming_params()
+        )
+
+        self.optimizer.add(
+            Not(
+                And(
+                    sol_stride_in == stride_in,
+                    sol_stride_out == stride_out,
+                    in_size_bias == sol_in_size_bias,
+                    out_size_bias == sol_out_size_bias,
+                    sol_delay_in <= delay_in,
+                    sol_delay_out <= delay_out,
+                    sol_in_ctx <= in_ctx,
+                )
+            )
+        )
 
     def get_new_solution(self) -> SlidingWindowParams | None:
         # TODO! doc
@@ -219,3 +274,6 @@ class SlidingWindowParamsSampler:
             expression for (bool_tracker, expression) in trackers if bool_tracker in unsat_solver.unsat_core()
         ]
         return violations
+
+    def is_compatible(self, solution: SlidingWindowParams) -> bool:
+        return not self.get_violations(solution)

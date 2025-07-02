@@ -7,7 +7,6 @@ from typing import Callable, Iterable, List, Tuple
 
 import numpy as np
 import torch
-from z3 import And, Or
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
@@ -67,7 +66,6 @@ class SlidingWindowParamsSolver:
         self.hypotheses_to_test: List[SlidingWindowParamsSolver.Hypothesis] = []
         self.rejected_hypotheses: List[SlidingWindowParamsSolver.Hypothesis] = []
         self.nan_trick_history = []
-        self.validated_stream_params = set()
 
         # FIXME: doc & names
         self.nan_trick_params = self.get_next_nan_trick_params([])
@@ -233,17 +231,6 @@ class SlidingWindowParamsSolver:
             hypothesis.n_records_validated += 1
 
     def test_update_hypothesis_by_streaming(self, hypothesis: Hypothesis):
-        hyp_stream_params = get_streaming_params(hypothesis.params)
-
-        # FIXME!: this optim does check that the in/out size relation is identical. Is that always the case??
-        #   -> If yes, can be reenabled
-        # if hyp_stream_params in self.validated_stream_params:
-        #     hypothesis.streaming_rejected = False
-        #     return
-
-        stride_in, stride_out, delay_in, delay_out, in_ctx = hyp_stream_params
-        sol_stride_in, sol_stride_out, sol_delay_in, sol_delay_out, sol_in_ctx = self.sampler.get_streaming_params()
-
         # FIXME?: A justification for the number 10
         in_size = hypothesis.params.get_min_input_size_for_num_wins(10)
         in_seq = self.input_provider(in_size)
@@ -260,42 +247,14 @@ class SlidingWindowParamsSolver:
                 atol=self.atol,
             )
             hypothesis.streaming_rejected = False
-            self.validated_stream_params.add(hyp_stream_params)
 
             # FIXME
             logger.debug(f"Successfully streamed hypothesis {hypothesis.params}")
 
-            # TODO?: keep track of the constraint in order to be able to revert it later if the hypothesis is rejected
-            #   (this has never happened yet)
-            # Enforce solutions that are equally or more efficient on at least one aspect, both in the sampler
-            # and in current hypotheses
-            self.sampler.optimizer.add(
-                And(
-                    sol_stride_in == stride_in,
-                    sol_stride_out == stride_out,
-                    Or(
-                        And(sol_delay_in == delay_in, sol_delay_out == delay_out, sol_in_ctx == in_ctx),
-                        sol_delay_in < delay_in,
-                        sol_delay_out < delay_out,
-                        sol_in_ctx < in_ctx,
-                    ),
-                )
-            )
-            # FIXME!! discrepancy with the above: stride is not enforced
+            # Enforce more efficient solutions with the same size parameters
+            self.sampler.add_streamable_params(hypothesis.params)
             for other_hyp in list(self.hypotheses):
-                ot_stride_in, ot_stride_out, ot_delay_in, ot_delay_out, ot_in_ctx = get_streaming_params(
-                    other_hyp.params
-                )
-                if (
-                    ot_stride_in == stride_in
-                    and ot_stride_out == stride_out
-                    and not (
-                        (ot_delay_in == delay_in and ot_delay_out == delay_out and ot_in_ctx == in_ctx)
-                        or ot_delay_in < delay_in
-                        or ot_delay_out < delay_out
-                        or ot_in_ctx < in_ctx
-                    )
-                ):
+                if not self.sampler.is_compatible(other_hyp.params):
                     other_hyp.suboptimal_rejected = True
 
         except IncorrectSlidingWindowParametersError:
@@ -304,21 +263,7 @@ class SlidingWindowParamsSolver:
 
         except ValueError:
             hypothesis.streaming_rejected = True
-
-            # # TODO: is there a possibility to get this error when the context params are correct but the size relation
-            # # is not? If yes, this constraint is problematic
-            # # The solution failed, let's reject solutions with the same streaming parameters and less context
-            # self.sampler.optimizer.add(
-            #     Not(
-            #         And(
-            #             sol_stride_in == stride_in,
-            #             sol_stride_out == stride_out,
-            #             sol_delay_in <= delay_in,
-            #             sol_delay_out <= delay_out,
-            #             sol_in_ctx <= in_ctx,
-            #         )
-            #     )
-            # )
+            self.sampler.add_non_streamable_params(hypothesis.params)
 
     def update_reject_hypotheses(self, hypothesis: Hypothesis):
         """
