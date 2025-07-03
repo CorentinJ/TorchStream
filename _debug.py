@@ -1,6 +1,7 @@
 import logging
 
 import numpy as np
+import torch
 from torch.nn import Conv1d, ConvTranspose1d
 
 from torchstream.sequence.seq_spec import SeqSpec
@@ -17,10 +18,8 @@ logging.basicConfig(level=logging.DEBUG)
 
 trsfm = ConvTranspose1d(1, 1, kernel_size=3, padding=1)
 trsfm = Conv1d(1, 1, kernel_size=3)
-
-
-def t(x):
-    return trsfm(torch.nn.functional.pad(x, (2, 0)))
+conv = trsfm
+trsfm = lambda x: conv(torch.nn.functional.pad(x, (2, 0)))
 
 
 # TODO: solve context being excessive!

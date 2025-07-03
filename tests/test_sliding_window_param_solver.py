@@ -1,5 +1,6 @@
 import logging
 from typing import List, Tuple
+from venv import logger
 
 import numpy as np
 import pytest
@@ -10,6 +11,7 @@ from tests.rng import set_seed
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params_for_transform
+from torchstream.sliding_window.sliding_window_stream_params import get_streaming_params
 
 
 # FIXME!!
@@ -28,12 +30,14 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
 
     set_seed(0x5EED)
 
-    # expected_sol = SlidingWindowParams(
-    #     kernel_size_in=kernel_span,
-    #     stride_in=stride,
-    #     left_pad=padding[0],
-    #     right_pad=padding[1],
-    # )
+    expected_sol = SlidingWindowParams(
+        kernel_size_in=kernel_span,
+        stride_in=stride,
+        left_pad=padding[0],
+        right_pad=padding[1],
+    )
+    logger.debug(f"Expected solution: {expected_sol}")
+    logger.debug(f"Stream params: {get_streaming_params(expected_sol)}")
 
     conv = nn.Conv1d(
         in_channels=1,

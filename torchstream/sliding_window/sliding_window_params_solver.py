@@ -258,7 +258,9 @@ class SlidingWindowParamsSolver:
             self.validated_streaming_params.add(hyp_stream_params)
 
             # FIXME
-            logger.debug(f"Successfully streamed hypothesis {hypothesis.params}")
+            logger.debug(
+                f"Successfully streamed hypothesis {hypothesis.params} with streaming params {hyp_stream_params}"
+            )
 
             # Enforce more efficient solutions with the same size parameters
             self.sampler.add_streamable_params(hypothesis.params)
@@ -333,8 +335,9 @@ class SlidingWindowParamsSolver:
             # Validate them. Regardless of the outcome, we will add them to the hypotheses for infogain in order
             # to steer the sampler towards more promising candidates.
             if params:
-                print("\x1b[31m", get_streaming_params(params), "\x1b[39m", sep="")
-                print("\x1b[31m", params, "\x1b[39m", sep="")
+                # FIXME
+                # print("\x1b[31m", get_streaming_params(params), "\x1b[39m", sep="")
+                # print("\x1b[31m", params, "\x1b[39m", sep="")
                 hypothesis = SlidingWindowParamsSolver.Hypothesis(params)
                 self.hypotheses_to_test.append(hypothesis)
                 self.update_reject_hypotheses(hypothesis)
