@@ -55,9 +55,7 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
         return x
 
     # TODO: we could verify the kernel values too
-    sols = find_sliding_window_params_for_transform(
-        transform, SeqSpec((1, 1, -1)), debug_params_to_compare=expected_sol
-    )
+    sols = find_sliding_window_params_for_transform(transform, SeqSpec((1, 1, -1)), debug_ref_params=expected_sol)
     assert any(sol == expected_sol for sol in sols)
 
 

@@ -46,6 +46,18 @@ class SlidingWindowParamsSolver:
                     get_init_kernel_array(self.params.kernel_size_out),
                 )
 
+        def __eq__(self, other):
+            if not isinstance(other, SlidingWindowParamsSolver.Hypothesis):
+                return False
+            return (
+                self.params == other.params
+                and np.array_equal(self.kernels[0], other.kernels[0])
+                and np.array_equal(self.kernels[1], other.kernels[1])
+            )
+
+        def __hash__(self):
+            return hash((self.params, tuple(self.kernels[0].flatten()), tuple(self.kernels[1].flatten())))
+
     def __init__(
         self,
         trsfm: Callable,
@@ -55,7 +67,7 @@ class SlidingWindowParamsSolver:
         max_in_seq_size: int = 10_000,
         max_hypotheses_per_step: int = 20,
         atol: float = 1e-5,
-        debug_params_to_compare: SlidingWindowParams | None = None,
+        debug_ref_params: SlidingWindowParams | None = None,
     ):
         if max_hypotheses_per_step <= 1:
             raise ValueError("max_hypotheses_per_step must be greater than 1")
@@ -82,7 +94,10 @@ class SlidingWindowParamsSolver:
         # FIXME: doc & names
         self.nan_trick_params = self.get_next_nan_trick_params([])
 
-        self.debug_ref_params = debug_params_to_compare
+        self.debug_ref_params = debug_ref_params
+
+        # FIXME!
+        # self.hypotheses.append(SlidingWindowParamsSolver.Hypothesis(params=debug_ref_params))
 
     # def _get_infogain(category_counts: Iterable[int]) -> float:
     #     category_counts = list(category_counts)
@@ -254,7 +269,7 @@ class SlidingWindowParamsSolver:
             return
 
         # FIXME?: A justification for the number 10
-        in_size = hypothesis.params.get_min_input_size_for_num_wins(10)
+        in_size = max(50, hypothesis.params.get_min_input_size_for_num_wins(10))
         in_seq = self.input_provider(in_size)
 
         # FIXME! not relying on a try/catch mechanism
@@ -331,6 +346,9 @@ class SlidingWindowParamsSolver:
                     logger.debug(f"{colors.RED}Reference hypothesis {other_hyp.params} was rejected{colors.RESET}")
 
     def _debug_check_ref_params(self, event: str, other_params: SlidingWindowParams | None = None):
+        """
+        Debugging method for checking why a good reference hypothesis gets rejected.
+        """
         if (
             self.debug_ref_params
             and (violations := self.sampler.get_violations(self.debug_ref_params))
@@ -348,6 +366,26 @@ class SlidingWindowParamsSolver:
                 f"the sampler after {event}:\n{other_hyp_str}"
                 f"{colors.YELLOW}Violations:\n\t{violations_str}{colors.RESET}"
             )
+
+            if other_params:
+                in_size = max(50, other_params.get_min_input_size_for_num_wins(10))
+                in_seq = self.input_provider(in_size)
+                try:
+                    test_stream_equivalent(
+                        self.trsfm,
+                        SlidingWindowStream(self.trsfm, other_params, in_seq.spec, self.out_spec),
+                        in_seq,
+                        atol=self.atol,
+                    )
+                except:
+                    pass
+                test_stream_equivalent(
+                    self.trsfm,
+                    SlidingWindowStream(self.trsfm, self.debug_ref_params, in_seq.spec, self.out_spec),
+                    in_seq,
+                    atol=self.atol,
+                )
+
             self.debug_ref_params = None
 
     def step(self):
@@ -435,7 +473,7 @@ def find_sliding_window_params_for_transform(
     max_in_seq_size: int = 10_000,
     max_hypotheses_per_step: int = 20,
     atol: float = 1e-5,
-    debug_params_to_compare: SlidingWindowParams | None = None,
+    debug_ref_params: SlidingWindowParams | None = None,
 ) -> List[SlidingWindowParams]:
     """
     Given a sequence-to-sequence transform (neural net, single layer, time series analysis function, ...),
@@ -471,5 +509,5 @@ def find_sliding_window_params_for_transform(
         max_in_seq_size=max_in_seq_size,
         max_hypotheses_per_step=max_hypotheses_per_step,
         atol=atol,
-        debug_params_to_compare=debug_params_to_compare,
+        debug_ref_params=debug_ref_params,
     ).solve()

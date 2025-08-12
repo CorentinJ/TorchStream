@@ -45,7 +45,7 @@ class SlidingWindowStream(Stream):
         self.stream_out_pos = 0
 
         # Buffer for held back output. This is only returned in the special case where the stream is closed without
-        # being to compute any new window, and some previous output has not been returned yet.
+        # being requested to compute any new window, and some previous output has not been returned yet.
         self._prev_trimmed_output = None
 
     # FIXME: signature
