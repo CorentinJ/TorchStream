@@ -82,7 +82,7 @@ class SlidingWindowParamsSolver:
         # FIXME: doc & names
         self.nan_trick_params = self.get_next_nan_trick_params([])
 
-        self.debug_params_to_compare = debug_params_to_compare
+        self.debug_ref_params = debug_params_to_compare
 
     # def _get_infogain(category_counts: Iterable[int]) -> float:
     #     category_counts = list(category_counts)
@@ -215,6 +215,7 @@ class SlidingWindowParamsSolver:
         # Provide the nan trick results to the sampler
         out_nan_range = (out_nan_idx[0], out_nan_idx[-1] + 1) if len(out_nan_idx) else None
         self.sampler.add_in_out_range_map(in_seq_size, out_seq.size, in_nan_range, out_nan_range)
+        self._debug_check_ref_params("running the nan trick")
 
         return in_seq_size, in_nan_range, out_seq.size, out_nan_idx
 
@@ -271,21 +272,21 @@ class SlidingWindowParamsSolver:
             self.validated_streaming_params.add(hyp_stream_params)
 
             # FIXME
-            if self.debug_params_to_compare is None:
+            if self.debug_ref_params is None:
                 logger.debug(
                     f"Successfully streamed hypothesis {hypothesis.params} with streaming params {hyp_stream_params}"
                 )
-            elif self.debug_params_to_compare == hypothesis.params:
+            elif self.debug_ref_params == hypothesis.params:
                 logger.debug(
                     f"{colors.GREEN}Successfully streamed REFERENCE hypothesis {hypothesis.params} with "
                     f"streaming params {hyp_stream_params}{colors.RESET}"
                 )
             else:
                 stream_param_comp_str = ", ".join(
-                    f"{p} "
+                    f"{p}"
                     + ("" if p == p_ref else (f"{colors.RED}(>{p_ref})" if p > p_ref else f"{colors.GREEN}(<{p_ref})"))
                     + colors.RESET
-                    for p, p_ref in zip(hyp_stream_params, get_streaming_params(self.debug_params_to_compare))
+                    for p, p_ref in zip(hyp_stream_params, get_streaming_params(self.debug_ref_params))
                 )
                 logger.debug(
                     f"Successfully streamed DIFFERENT hypothesis {hypothesis.params} with "
@@ -294,6 +295,7 @@ class SlidingWindowParamsSolver:
 
             # Enforce more efficient solutions with the same size parameters
             self.sampler.add_streamable_params(hypothesis.params)
+            self._debug_check_ref_params("accepting an hypothesis for streaming", hypothesis.params)
             for other_hyp in list(self.hypotheses):
                 if not self.sampler.is_compatible(other_hyp.params):
                     other_hyp.suboptimal_rejected = True
@@ -305,6 +307,7 @@ class SlidingWindowParamsSolver:
         except ValueError:
             hypothesis.streaming_rejected = True
             self.sampler.add_non_streamable_params(hypothesis.params)
+            self._debug_check_ref_params("rejecting an hypothesis for streaming", hypothesis.params)
 
     def update_reject_hypotheses(self, hypothesis: Hypothesis):
         """
@@ -324,16 +327,28 @@ class SlidingWindowParamsSolver:
             if other_hyp.rejected:
                 self.hypotheses.remove(other_hyp)
                 self.rejected_hypotheses.append(other_hyp)
-                if other_hyp.params == self.debug_params_to_compare:
+                if other_hyp.params == self.debug_ref_params:
                     logger.debug(f"{colors.RED}Reference hypothesis {other_hyp.params} was rejected{colors.RESET}")
 
-        if self.debug_params_to_compare and (violations := self.sampler.get_violations(self.debug_params_to_compare)):
+    def _debug_check_ref_params(self, event: str, other_params: SlidingWindowParams | None = None):
+        if (
+            self.debug_ref_params
+            and (violations := self.sampler.get_violations(self.debug_ref_params))
+            and not any(hyp.params == self.debug_ref_params for hyp in self.hypotheses)
+        ):
+            other_hyp_str = (
+                f"Other hyp params: {other_params} with streaming params {get_streaming_params(other_params)}\n\n"
+                if other_params
+                else ""
+            )
             violations_str = "\n\n\t".join(str(v) for v in violations)
             logger.debug(
-                f"{colors.RED}Reference hypothesis {self.debug_params_to_compare} became incompatible with "
-                f"the sampler due to:{colors.YELLOW}\n\t{violations_str}{colors.RESET}"
+                f"{colors.RED}Reference hypothesis {self.debug_ref_params} with streaming params "
+                f"{get_streaming_params(self.debug_ref_params)}\nbecame incompatible with "
+                f"the sampler after {event}:\n{other_hyp_str}"
+                f"{colors.YELLOW}Violations:\n\t{violations_str}{colors.RESET}"
             )
-            self.debug_params_to_compare = None
+            self.debug_ref_params = None
 
     def step(self):
         # Run the nan trick
