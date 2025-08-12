@@ -7,6 +7,7 @@ from typing import Callable, Iterable, List, Tuple
 
 import numpy as np
 import torch
+from colorama import Fore as colors
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
@@ -54,6 +55,7 @@ class SlidingWindowParamsSolver:
         max_in_seq_size: int = 10_000,
         max_hypotheses_per_step: int = 20,
         atol: float = 1e-5,
+        debug_params_to_compare: SlidingWindowParams | None = None,
     ):
         if max_hypotheses_per_step <= 1:
             raise ValueError("max_hypotheses_per_step must be greater than 1")
@@ -79,6 +81,8 @@ class SlidingWindowParamsSolver:
 
         # FIXME: doc & names
         self.nan_trick_params = self.get_next_nan_trick_params([])
+
+        self.debug_params_to_compare = debug_params_to_compare
 
     # def _get_infogain(category_counts: Iterable[int]) -> float:
     #     category_counts = list(category_counts)
@@ -267,9 +271,26 @@ class SlidingWindowParamsSolver:
             self.validated_streaming_params.add(hyp_stream_params)
 
             # FIXME
-            logger.debug(
-                f"Successfully streamed hypothesis {hypothesis.params} with streaming params {hyp_stream_params}"
-            )
+            if self.debug_params_to_compare is None:
+                logger.debug(
+                    f"Successfully streamed hypothesis {hypothesis.params} with streaming params {hyp_stream_params}"
+                )
+            elif self.debug_params_to_compare == hypothesis.params:
+                logger.debug(
+                    f"{colors.GREEN}Successfully streamed REFERENCE hypothesis {hypothesis.params} with "
+                    f"streaming params {hyp_stream_params}{colors.RESET}"
+                )
+            else:
+                stream_param_comp_str = ", ".join(
+                    f"{p} "
+                    + ("" if p == p_ref else (f"{colors.RED}(>{p_ref})" if p > p_ref else f"{colors.GREEN}(<{p_ref})"))
+                    + colors.RESET
+                    for p, p_ref in zip(hyp_stream_params, get_streaming_params(self.debug_params_to_compare))
+                )
+                logger.debug(
+                    f"Successfully streamed DIFFERENT hypothesis {hypothesis.params} with "
+                    f"streaming params ({stream_param_comp_str})"
+                )
 
             # Enforce more efficient solutions with the same size parameters
             self.sampler.add_streamable_params(hypothesis.params)
@@ -303,6 +324,15 @@ class SlidingWindowParamsSolver:
             if other_hyp.rejected:
                 self.hypotheses.remove(other_hyp)
                 self.rejected_hypotheses.append(other_hyp)
+                if other_hyp.params == self.debug_params_to_compare:
+                    logger.debug(f"{colors.RED}Reference hypothesis {other_hyp.params} was rejected{colors.RESET}")
+
+        if self.debug_params_to_compare and not self.sampler.is_compatible(self.debug_params_to_compare):
+            logger.debug(
+                f"{colors.RED}Reference hypothesis {self.debug_params_to_compare} became incompatible with "
+                f"the sampler{colors.RESET}"
+            )
+            self.debug_params_to_compare = None
 
     def step(self):
         # Run the nan trick
@@ -346,8 +376,8 @@ class SlidingWindowParamsSolver:
             # to steer the sampler towards more promising candidates.
             if params:
                 # FIXME
-                print("\x1b[31m", get_streaming_params(params), "\x1b[39m", sep="")
-                print("\x1b[31m", params, "\x1b[39m", sep="")
+                # print("\x1b[31m", get_streaming_params(params), "\x1b[39m", sep="")
+                # print("\x1b[31m", params, "\x1b[39m", sep="")
                 hypothesis = SlidingWindowParamsSolver.Hypothesis(params)
                 self.hypotheses_to_test.append(hypothesis)
                 self.update_reject_hypotheses(hypothesis)
@@ -389,6 +419,7 @@ def find_sliding_window_params_for_transform(
     max_in_seq_size: int = 10_000,
     max_hypotheses_per_step: int = 20,
     atol: float = 1e-5,
+    debug_params_to_compare: SlidingWindowParams | None = None,
 ) -> List[SlidingWindowParams]:
     """
     Given a sequence-to-sequence transform (neural net, single layer, time series analysis function, ...),
@@ -424,4 +455,5 @@ def find_sliding_window_params_for_transform(
         max_in_seq_size=max_in_seq_size,
         max_hypotheses_per_step=max_hypotheses_per_step,
         atol=atol,
+        debug_params_to_compare=debug_params_to_compare,
     ).solve()

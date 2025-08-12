@@ -9,7 +9,6 @@ class SlidingWindowParams:
 
     def __init__(
         self,
-        # TODO: overload where the kernel can be specified directly
         kernel_size_in: int = 1,
         stride_in: int = 1,
         left_pad: int = 0,
