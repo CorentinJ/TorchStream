@@ -63,6 +63,8 @@ def run_nan_trick(
 # TODO: tests
 def determine_kernel_sparsity(
     params: SlidingWindowParams,
+    kernel_in_prior: np.ndarray,
+    kernel_out_prior: np.ndarray,
     in_len: int,
     in_nan_range: Tuple[int, int],
     out_nan_idx: np.ndarray,
@@ -77,12 +79,12 @@ def determine_kernel_sparsity(
     kernel_out = [Bool("kernel_out_" + str(i)) for i in range(params.kernel_size_out)]
 
     # Apply the kernel priors
-    for idx, val in enumerate(params.kernel_in_sparsity):
+    for idx, val in enumerate(kernel_in_prior):
         if val == 0:
             solver.add(kernel_in[idx] == False)
         elif val == 2:
             solver.add(kernel_in[idx] == True)
-    for idx, val in enumerate(params.kernel_out_sparsity):
+    for idx, val in enumerate(kernel_out_prior):
         if val == 0:
             solver.add(kernel_out[idx] == False)
         elif val == 2:
@@ -143,6 +145,7 @@ def determine_kernel_sparsity(
     return kernel_in_values, kernel_out_values
 
 
+# FIXME! Include the kernel sparsity array?
 def get_nan_map(
     params: SlidingWindowParams,
     in_len: int,

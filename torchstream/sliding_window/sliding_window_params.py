@@ -1,21 +1,6 @@
 import math
 from typing import Iterator, Tuple
 
-import numpy as np
-
-
-# FIXME!!
-def temp_eq(a: "SlidingWindowParams", b: "SlidingWindowParams"):
-    return (
-        a.kernel_size_in == b.kernel_size_in
-        and a.stride_in == b.stride_in
-        and a.left_pad == b.left_pad
-        and a.right_pad == b.right_pad
-        and a.kernel_size_out == b.kernel_size_out
-        and a.stride_out == b.stride_out
-        and a.out_trim == b.out_trim
-    )
-
 
 class SlidingWindowParams:
     """
@@ -34,8 +19,8 @@ class SlidingWindowParams:
         out_trim: int = 0,
     ):
         """
-        :param kernel_size_in: The kernel size of the input. For dilated (à trous) convolutions, this is the span of the
-        entire kernel.
+        :param kernel_size_in: The kernel size of the input. For dilated (à trous) convolutions, this is the span of
+        the entire kernel.
         :param left_pad: The static number of elements to pad on the left side of the input.
         :param right_pad: The maximum number of elements to pad on the right side of the input. Due to windows not
         necessarily lining up with the input size with stride_in > 1, the effective right padding might be less than
@@ -49,13 +34,8 @@ class SlidingWindowParams:
         NOTE: So far I haven't met a model that had different left/right values, output padding or trimming
         larger than the kernel size.
         """
-        # The kernels are represented with integer numpy arrays, where a 0 means the kernel does not cover the elements
-        # at that index, a 2 means it does, and a 1 means it is unknown.
-        self.kernel_in_sparsity = np.ones(int(kernel_size_in), dtype=np.int64)
-        self.kernel_in_sparsity[0] = self.kernel_in_sparsity[-1] = 2
-        self.kernel_out_sparsity = np.ones(int(kernel_size_out), dtype=np.int64)
-        self.kernel_out_sparsity[0] = self.kernel_out_sparsity[-1] = 2
-
+        self.kernel_size_in = int(kernel_size_in)
+        self.kernel_size_out = int(kernel_size_out)
         self.stride_in = int(stride_in)
         self.left_pad = int(left_pad)
         self.right_pad = int(right_pad)
@@ -76,14 +56,6 @@ class SlidingWindowParams:
             raise ValueError("right_pad must be at least 0 and at most kernel_size_in - 1.")
         if self.out_trim < 0 or self.out_trim >= self.kernel_size_out:
             raise ValueError("out_trim must be at least 0 and at most kernel_size_out - 1.")
-
-    @property
-    def kernel_size_in(self) -> int:
-        return len(self.kernel_in_sparsity)
-
-    @property
-    def kernel_size_out(self) -> int:
-        return len(self.kernel_out_sparsity)
 
     def get_metrics_for_input(self, in_len: int) -> Tuple[Tuple[int, int], int, int]:
         """
@@ -206,8 +178,8 @@ class SlidingWindowParams:
         if not isinstance(other, SlidingWindowParams):
             return False
         return (
-            np.array_equal(self.kernel_in_sparsity, other.kernel_in_sparsity)
-            and np.array_equal(self.kernel_out_sparsity, other.kernel_out_sparsity)
+            self.kernel_size_in == other.kernel_size_in
+            and self.kernel_size_out == other.kernel_size_out
             and self.stride_in == other.stride_in
             and self.left_pad == other.left_pad
             and self.right_pad == other.right_pad
@@ -218,8 +190,8 @@ class SlidingWindowParams:
     def __hash__(self):
         return hash(
             (
-                tuple(self.kernel_in_sparsity),
-                tuple(self.kernel_out_sparsity),
+                self.kernel_size_in,
+                self.kernel_size_out,
                 self.stride_in,
                 self.left_pad,
                 self.right_pad,

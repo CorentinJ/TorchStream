@@ -10,6 +10,7 @@ import torch
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
+from torchstream.sliding_window.kernel_sparsity import get_init_kernel_array
 from torchstream.sliding_window.nan_trick import determine_kernel_sparsity, get_nan_map, run_nan_trick
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_sampler import SlidingWindowParamsSampler
@@ -27,6 +28,7 @@ class SlidingWindowParamsSolver:
     @dataclass
     class Hypothesis:
         params: SlidingWindowParams
+        kernels: Tuple[np.ndarray, np.ndarray] | None = None
         n_records_validated: int = 0
         nan_trick_rejected: bool = False
         streaming_rejected: bool | None = None
@@ -35,6 +37,13 @@ class SlidingWindowParamsSolver:
         @property
         def rejected(self) -> bool:
             return self.nan_trick_rejected or (self.streaming_rejected is True) or self.suboptimal_rejected
+
+        def __post_init__(self):
+            if self.kernels is None:
+                self.kernels = (
+                    get_init_kernel_array(self.params.kernel_size_in),
+                    get_init_kernel_array(self.params.kernel_size_out),
+                )
 
     def __init__(
         self,
@@ -186,7 +195,7 @@ class SlidingWindowParamsSolver:
                 f"maximum input size (={self.max_in_seq_size}) and NaNs at {in_nan_range}. This likely means that "
                 f"an operation in your transform broadcasts an input element to all output elements, like a mean, "
                 f"batchnorm, etc... We can't determine sliding window parameters nor stream exactly these types "
-                f"of transforms as their kernel size is technically infinite."
+                f"of transforms as their output kernel size is technically infinite."
             )
 
         # Keep track of the outcome in the history
@@ -215,19 +224,19 @@ class SlidingWindowParamsSolver:
 
             # Reject if the nan trick's output is not compatible with the hypothesis
             if record["in_nan_range"] is not None:
-                kernel_in, kernel_out = determine_kernel_sparsity(
+                new_kernels = determine_kernel_sparsity(
                     hypothesis.params,
+                    *hypothesis.kernels,
                     record["in_seq"].size,
                     record["in_nan_range"],
                     record["out_nan_idx"],
                 )
-                if kernel_in is None or kernel_out is None:
+                if new_kernels[0] is None:
                     hypothesis.nan_trick_rejected = True
                     return
 
                 # Update the hypothesis in place
-                hypothesis.params.kernel_in_sparsity = kernel_in
-                hypothesis.params.kernel_out_sparsity = kernel_out
+                hypothesis.kernels = new_kernels
 
             hypothesis.n_records_validated += 1
 
@@ -316,10 +325,11 @@ class SlidingWindowParamsSolver:
             self.update_reject_hypotheses(hypothesis)
         if len(self.nan_trick_history) > 1:
             assert len(self.hypotheses_to_test) > len(self.hypotheses), "Internal error: no hypotheses were rejected"
-        logger.info(
-            f"Step {len(self.nan_trick_history)}: "
-            f"rejected {len(self.hypotheses_to_test) - len(self.hypotheses)}/{len(self.hypotheses_to_test)} hypotheses"
-        )
+        if len(self.nan_trick_history):
+            logger.info(
+                f"Step {len(self.nan_trick_history)}: "
+                f"rejected {len(self.hypotheses_to_test) - len(self.hypotheses)}/{len(self.hypotheses_to_test)} hypotheses"
+            )
 
         # Get new hypotheses
         sampler_times = []
@@ -336,8 +346,8 @@ class SlidingWindowParamsSolver:
             # to steer the sampler towards more promising candidates.
             if params:
                 # FIXME
-                # print("\x1b[31m", get_streaming_params(params), "\x1b[39m", sep="")
-                # print("\x1b[31m", params, "\x1b[39m", sep="")
+                print("\x1b[31m", get_streaming_params(params), "\x1b[39m", sep="")
+                print("\x1b[31m", params, "\x1b[39m", sep="")
                 hypothesis = SlidingWindowParamsSolver.Hypothesis(params)
                 self.hypotheses_to_test.append(hypothesis)
                 self.update_reject_hypotheses(hypothesis)

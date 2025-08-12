@@ -6,7 +6,7 @@ from torch.nn import Conv1d, ConvTranspose1d
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.nan_trick import get_nan_map
-from torchstream.sliding_window.sliding_window_params import SlidingWindowParams, temp_eq
+from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_solver import (
     SlidingWindowParamsSolver,
 )
@@ -42,8 +42,8 @@ if False or True:
         print(sol.kernel_in_sparsity)
         print(sol.kernel_out_sparsity)
 
-    if not any(temp_eq(sol, real_sol) for sol in sols):
-        hyp = next((hyp for hyp in solver.rejected_hypotheses if temp_eq(hyp.params, real_sol)), None)
+    if not any(sol == real_sol for sol in sols):
+        hyp = next((hyp for hyp in solver.rejected_hypotheses if hyp.params == real_sol), None)
         print("==== REAL SOLUTION WAS REJECTED ====" if hyp else "==== REAL SOLUTION WAS NOT FOUND ====")
         print(hyp or real_sol)
         print(get_streaming_params(real_sol))
