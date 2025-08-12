@@ -2,8 +2,9 @@ import logging
 
 import numpy as np
 import torch
-from torch.nn import Conv1d, ConvTranspose1d
+from torch.nn import Conv1d
 
+from tests.rng import set_seed
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.nan_trick import get_nan_map
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
@@ -16,19 +17,25 @@ from torchstream.stream_equivalence import test_stream_equivalent
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
-trsfm = ConvTranspose1d(1, 1, kernel_size=3, padding=1)
+set_seed(10)
+
+
+# trsfm = ConvTranspose1d(1, 1, kernel_size=3, padding=1)
 trsfm = Conv1d(1, 1, kernel_size=3)
 conv = trsfm
-trsfm = lambda x: conv(torch.nn.functional.pad(x, (2, 0)))
 
 
-# TODO: solve context being excessive!
-# real_sol = SlidingWindowParams(kernel_size_out=3, out_trim=1)
+def trsfm(x):
+    print("\x1b[31m", x, "\x1b[39m", sep="")
+    return conv(torch.nn.functional.pad(x, (2, 0)))
+
+
 real_sol = SlidingWindowParams(kernel_size_in=3, left_pad=2)
 print(get_streaming_params(real_sol))
+real_sol = (1, 1, 0, 1, 0, 2, 2)
 
 
-if False or True:
+if False:  # or True:
     solver = SlidingWindowParamsSolver(trsfm, SeqSpec((1, 1, -1)), max_hypotheses_per_step=10)
     while solver.nan_trick_params is not None:
         solver.step()
@@ -75,10 +82,10 @@ if False:  # or True:
     quit()
 
 in_spec = SeqSpec((1, 1, -1))
-for _ in range(10):
+for _ in range(1):
     print(_)
     test_stream_equivalent(
         trsfm,
         SlidingWindowStream(trsfm, real_sol, in_spec),
-        in_step_sizes=tuple(np.random.randint(1, 30, size=200)),
+        # in_step_sizes=tuple(np.random.randint(1, 30, size=200)),
     )

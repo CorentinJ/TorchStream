@@ -22,7 +22,8 @@ class SlidingWindowStream(Stream):
     def __init__(
         self,
         transform: Callable,
-        sliding_window_params: SlidingWindowParams,
+        # TODO: class for sliding window stream params
+        sliding_window_params: SlidingWindowParams | Tuple,
         input_spec: SeqSpec,
         output_spec: SeqSpec | None = None,
     ):
@@ -30,7 +31,6 @@ class SlidingWindowStream(Stream):
 
         self.transform = transform
 
-        self.params = sliding_window_params
         (
             self.stride_in,
             self.stride_out,
@@ -39,7 +39,11 @@ class SlidingWindowStream(Stream):
             self.in_delay,
             self.out_delay,
             self.in_context_size,
-        ) = get_streaming_params(sliding_window_params)
+        ) = (
+            get_streaming_params(sliding_window_params)
+            if isinstance(sliding_window_params, SlidingWindowParams)
+            else sliding_window_params
+        )
 
         self.tsfm_out_pos = 0
         self.stream_out_pos = 0
@@ -74,8 +78,7 @@ class SlidingWindowStream(Stream):
         if tsfm_out.size != out_size:
             raise IncorrectSlidingWindowParametersError(
                 f"Sliding window parameters are not matching {self.transform}, got a {tsfm_out.size} sized "
-                f"sequence instead of {out_size} for {in_seq.size} sized "
-                f"input. Sliding window params: {self.params}"
+                f"sequence instead of {out_size} for {in_seq.size} sized input."
             )
 
         # Compute the slice of the output that we'll return and update the stream position

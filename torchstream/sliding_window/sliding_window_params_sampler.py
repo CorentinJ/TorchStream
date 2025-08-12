@@ -199,8 +199,11 @@ class SlidingWindowParamsSampler:
                     sol_stride_out == stride_out,
                     in_size_bias == sol_in_size_bias,
                     out_size_bias == sol_out_size_bias,
-                    sol_delay_in <= delay_in,
-                    sol_delay_out <= delay_out,
+                    # FIXME?: It used to be possible to put <= for the delays here, but I changed the way I compute
+                    # the stream offsets and now a smaller delay might actually yield a valid solution...
+                    # See my personal notes for an example of this issue in practice.
+                    sol_delay_in == delay_in,
+                    sol_delay_out == delay_out,
                     sol_in_ctx <= in_ctx,
                 )
             )
