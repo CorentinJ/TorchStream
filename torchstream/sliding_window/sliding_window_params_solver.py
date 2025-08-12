@@ -327,10 +327,11 @@ class SlidingWindowParamsSolver:
                 if other_hyp.params == self.debug_params_to_compare:
                     logger.debug(f"{colors.RED}Reference hypothesis {other_hyp.params} was rejected{colors.RESET}")
 
-        if self.debug_params_to_compare and not self.sampler.is_compatible(self.debug_params_to_compare):
+        if self.debug_params_to_compare and (violations := self.sampler.get_violations(self.debug_params_to_compare)):
+            violations_str = "\n\n\t".join(str(v) for v in violations)
             logger.debug(
                 f"{colors.RED}Reference hypothesis {self.debug_params_to_compare} became incompatible with "
-                f"the sampler{colors.RESET}"
+                f"the sampler due to:{colors.YELLOW}\n\t{violations_str}{colors.RESET}"
             )
             self.debug_params_to_compare = None
 
