@@ -309,13 +309,28 @@ class Sequence:
 
     # TODO: multiple inputs/outputs support
     @classmethod
-    def apply(cls, trsfm: Callable, in_seq: "Sequence", out_spec: SeqSpec | None = None) -> "Sequence":
+    def apply(
+        cls,
+        trsfm: Callable,
+        in_seq: "Sequence",
+        out_spec: SeqSpec | None = None,
+        catch_zero_size_errors: bool = False,
+    ) -> "Sequence":
         out_spec = out_spec or in_seq
         out_spec = out_spec.spec if isinstance(out_spec, Sequence) else out_spec
 
         with torch.inference_mode():
-            out_arr = trsfm(in_seq.data)
-            out_seq = cls(out_spec, out_arr, close_input=True)
+            try:
+                out_arr = trsfm(in_seq.data)
+            except RuntimeError:
+                # We'll assume that RuntimeError are conv errors for a too small input size
+                # TODO: more reliable mechanism
+                # TODO: handle errors due to nans
+                if not catch_zero_size_errors:
+                    raise
+                out_arr = Sequence.empty(out_spec)
+
+            out_seq = out_arr if isinstance(out_arr, Sequence) else cls(out_spec, out_arr, close_input=True)
 
         return out_seq
 

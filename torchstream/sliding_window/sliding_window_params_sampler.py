@@ -57,6 +57,11 @@ class SlidingWindowParamsSampler:
 
         # Constraints added to keep only new solutions
         self.prev_sol_constraints = []
+        # Constraints that are specific to a same in/out relation (the first 4 parameters)
+        self.in_out_rel_constraints = []
+
+        # Indicates if more solutions are available
+        self.exhausted = False
 
     # FIXME: name
     def add_in_out_range_map(
@@ -164,23 +169,25 @@ class SlidingWindowParamsSampler:
             self._get_streaming_params()
         )
 
-        # TODO?: keep track of the constraint in order to be able to revert it later if the hypothesis is rejected
-        self.optimizer.add(
-            And(
-                sol_stride_in == stride_in,
-                sol_stride_out == stride_out,
-                sol_in_size_bias == in_size_bias,
-                sol_out_size_bias == out_size_bias,
-                Or(
-                    # FIXME!
-                    # And(sol_delay_in == delay_in, sol_delay_out == delay_out, sol_in_ctx == in_ctx),
-                    And(sol_delay_in == delay_in, sol_delay_out == delay_out, sol_in_ctx <= in_ctx + 1),
-                    sol_delay_in < delay_in,
-                    sol_delay_out < delay_out,
-                    sol_in_ctx < in_ctx,
-                ),
-            )
+        # Constraints that are specific to a same in/out relation (the first 4 parameters)
+        in_out_rel_constraint = And(
+            sol_stride_in == stride_in,
+            sol_stride_out == stride_out,
+            sol_in_size_bias == in_size_bias,
+            sol_out_size_bias == out_size_bias,
         )
+        if not self.in_out_rel_constraints:
+            self.in_out_rel_constraints.append(in_out_rel_constraint)
+            self.optimizer.add(in_out_rel_constraint)
+
+        context_constraint = Or(
+            And(sol_delay_in == delay_in, sol_delay_out == delay_out, sol_in_ctx == in_ctx),
+            sol_delay_in < delay_in,
+            sol_delay_out < delay_out,
+            sol_in_ctx < in_ctx,
+        )
+        self.in_out_rel_constraints.append(context_constraint)
+        self.optimizer.add(context_constraint)
 
     def add_non_streamable_params(self, params: SlidingWindowParams):
         """
@@ -208,6 +215,26 @@ class SlidingWindowParamsSampler:
                 )
             )
         )
+
+    def unlock_in_out_rel_constraints(self) -> bool:
+        # TODO doc
+        if not self.in_out_rel_constraints:
+            return False
+
+        # Recreate a new optimizer without any of the constraints in <self.in_out_rel_constraints>
+        new_optimizer = Solver()
+        for constraint in self.optimizer.assertions():
+            if constraint not in self.in_out_rel_constraints:
+                new_optimizer.add(constraint)
+
+        # Prevent the optimizer from considering the previous in/out relation
+        new_optimizer.add(Not(self.in_out_rel_constraints[0]))
+
+        self.optimizer = new_optimizer
+        self.in_out_rel_constraints.clear()
+        self.exhausted = False
+
+        return True
 
     def get_new_solution(self) -> SlidingWindowParams | None:
         # TODO! doc
@@ -249,6 +276,7 @@ class SlidingWindowParamsSampler:
             elif constraint:
                 self.max_cost_stack.pop(-1)
             else:
+                self.exhausted = True
                 return None
 
     def get_violations(self, solution: SlidingWindowParams, include_new_sol_assertions: bool = False):

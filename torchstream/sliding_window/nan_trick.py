@@ -11,7 +11,10 @@ from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 logger = logging.getLogger(__name__)
 
 
-def get_out_nan_idx(x: Sequence) -> np.ndarray:
+def get_seq_nan_idx(x: Sequence) -> np.ndarray:
+    if not x.size:
+        return np.empty(0, dtype=np.int64)
+
     # TODO! doc
     # TODO: numpy() function
     # TODO: is_nan -> any reduction instead
@@ -42,19 +45,9 @@ def run_nan_trick(
         in_seq[slice(*in_nan_range)] = float("nan")
 
     # Forward the input through the transform
-    logger.debug(f"Running transform with input size {in_seq.size} and nans at {in_nan_range}")
-    try:
-        out_seq = Sequence.apply(trsfm, in_seq, out_spec)
-    except RuntimeError as e:
-        # We'll assume that RuntimeError are conv errors for a too small input size
-        # TODO: more reliable mechanism
-        # TODO: handle errors due to nans
+    out_seq = Sequence.apply(trsfm, in_seq, out_spec, catch_zero_size_errors=True)
 
-        logger.info(f"Transformed failed with {type(e).__name__}, assuming input too short")
-
-        return Sequence.empty(out_spec), np.empty(0, dtype=np.int64)
-
-    out_nan_idx = get_out_nan_idx(out_seq)
+    out_nan_idx = get_seq_nan_idx(out_seq)
     logger.debug(f"Got a {tuple(out_seq.shape)} shaped output with nans at {out_nan_idx}")
 
     return out_seq, out_nan_idx

@@ -7,7 +7,7 @@ import torch
 
 from torchstream.sequence.dtype import SeqArrayLike
 from torchstream.sequence.sequence import Sequence
-from torchstream.sliding_window.nan_trick import get_out_nan_idx
+from torchstream.sliding_window.nan_trick import get_seq_nan_idx
 from torchstream.stream import Stream
 
 
@@ -73,7 +73,7 @@ def test_stream_equivalent(
             in_nan_trick_seq_i = in_nan_trick_seq.copy()
             in_nan_trick_seq_i[in_seq.n_consumed :] = float("nan")
             out_nan_trick_seq_i = Sequence.apply(sync_fn, in_nan_trick_seq_i, stream.out_spec)
-            out_nan_idx = get_out_nan_idx(out_nan_trick_seq_i)
+            out_nan_idx = get_seq_nan_idx(out_nan_trick_seq_i)
 
             # FIXME: handle
             if not len(out_nan_idx):
