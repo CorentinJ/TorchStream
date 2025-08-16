@@ -52,6 +52,7 @@ class SlidingWindowParamsSampler:
 
         # Blocker for guiding the solver towards simpler solutions first.
         self.cost = Int("cost")
+        # *_, in_delay, out_delay, in_ctx = self._get_streaming_params()
         self.optimizer.add(self.k_i + self.s_i + self.p_l + self.p_r + self.k_o + self.s_o + self.t_o <= self.cost)
         self.max_cost_stack = [1_000, 100, 10]
 
@@ -59,6 +60,7 @@ class SlidingWindowParamsSampler:
         self.prev_sol_constraints = []
         # Constraints that are specific to a same in/out relation (the first 4 parameters)
         self.in_out_rel_constraints = []
+        self.seen_in_out_pairs = set()
 
         # Indicates if more solutions are available
         self.exhausted = False
@@ -89,12 +91,14 @@ class SlidingWindowParamsSampler:
 
         # Model the input to output size relation with the number of windows
         constraint_idx = len(self.optimizer.assertions())
-        c = Int(f"c_{constraint_idx}")
-        padded_in_len = self.p_l + in_len + self.p_r
-        self.optimizer.add(
-            c == If(padded_in_len >= self.k_i, (padded_in_len - self.k_i) / self.s_i + 1, 0),
-            out_len == If(c > 0, (c - 1) * self.s_o + self.k_o - 2 * self.t_o, 0),
-        )
+        if (in_len, out_len) not in self.seen_in_out_pairs:
+            c = Int(f"c_{constraint_idx}")
+            padded_in_len = self.p_l + in_len + self.p_r
+            self.optimizer.add(
+                c == If(padded_in_len >= self.k_i, (padded_in_len - self.k_i) / self.s_i + 1, 0),
+                out_len == If(c > 0, (c - 1) * self.s_o + self.k_o - 2 * self.t_o, 0),
+            )
+            self.seen_in_out_pairs.add((in_len, out_len))
 
         # Nan trick - it has many edge cases:
         #   - Input kernels may have gaps (e.g. dilation) and thus not scan all of their inputs
