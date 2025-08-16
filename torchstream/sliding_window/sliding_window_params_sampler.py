@@ -5,8 +5,11 @@ from z3 import And, Bool, If, Int, Ints, Not, Or, Solver, sat
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_stream_params import get_streaming_params
+from torchstream.sliding_window.threshold_harvester import ThresholdHarvester
 
 logger = logging.getLogger(__name__)
+
+_MAX_COST_LIMIT = 10_000
 
 
 class SlidingWindowParamsSampler:
@@ -51,10 +54,10 @@ class SlidingWindowParamsSampler:
         self.optimizer.add(0 <= self.t_o, self.t_o < self.k_o)
 
         # Blocker for guiding the solver towards simpler solutions first.
-        self.cost = Int("cost")
+        self.max_cost = Int("max_cost")
         # *_, in_delay, out_delay, in_ctx = self._get_streaming_params()
-        self.optimizer.add(self.k_i + self.s_i + self.p_l + self.p_r + self.k_o + self.s_o + self.t_o <= self.cost)
-        self.max_cost_stack = [1_000, 100, 10]
+        self.optimizer.add(self.k_i + self.s_i + self.p_l + self.p_r + self.k_o + self.s_o + self.t_o <= self.max_cost)
+        self.max_cost_sampler = ThresholdHarvester(lower_bound=4, initial=20)
 
         # Constraints added to keep only new solutions
         self.prev_sol_constraints = []
@@ -133,29 +136,6 @@ class SlidingWindowParamsSampler:
             self.p_l + in_nan_range[0] < cre * self.s_i + self.k_i,
             self.p_l + in_nan_range[1] >= crs * self.s_i,
         )
-
-        # if not in_nan_range:
-        #     return
-        # padded_nan_start, padded_nan_stop = self.p_l + in_nan_range[0], self.p_l + in_nan_range[1]
-        # if out_nan_range:
-        #     # The start of both the input and the output range correspond to the same window. The same can be said
-        #     # for the end of the ranges.
-        #     # FIXME: notation difference: c above is the number of windows, cs and ce are window indices
-        #     crs, cre = Ints(f"c_{constraint_idx}_rs c_{constraint_idx}_re")
-        #     self.solver.add(0 <= crs, crs <= cre, cre < c)
-
-        #     self.solver.add(out_nan_range[0] == crs * self.s_o - self.t_o)
-        #     self.solver.add(
-        #         crs == (If(padded_nan_start >= self.k_i, padded_nan_start - self.k_i + 1, 0) + self.s_i - 1) / self.s_i
-        #     )
-
-        #     self.solver.add(out_nan_range[1] == cre * self.s_o + self.k_o - self.t_o)
-        #     self.solver.add(cre == If(padded_nan_stop > (c - 1) * self.s_i, c - 1, (padded_nan_stop - 1) / self.s_i))
-        # else:
-        #     # When there's an output but no in->out range, it necessarily means that the input range was dropped
-        #     # due to windows not lining up. Therefore, the input range is fully contained after the last window.
-        #     # FIXME!! not the case with output trimming
-        #     self.solver.add(Implies(c > 0, padded_nan_start >= self.k_i + self.s_i * (c - 1)))
 
     def _get_streaming_params(self):
         """
@@ -245,7 +225,9 @@ class SlidingWindowParamsSampler:
         # TODO! iter_new_solutions, mark emitted ones, simplify constraints.
 
         while True:
-            constraint = [self.cost <= self.max_cost_stack[-1]] if self.max_cost_stack else []
+            max_cost_value = self.max_cost_sampler.next_p()
+            logger.info(f"\x1b[31m Sampled {max_cost_value} \x1b[39m")
+            constraint = [self.max_cost <= max_cost_value] if max_cost_value < _MAX_COST_LIMIT else []
             if self.optimizer.check(constraint) == sat:
                 model = self.optimizer.model()
                 model_values = (
@@ -271,15 +253,16 @@ class SlidingWindowParamsSampler:
                 self.optimizer.add(new_sol_constraint)
                 self.prev_sol_constraints.append(new_sol_constraint)
 
-                # Temporarily enforce simpler solutions
+                # Inform our sampler of the result
                 cost = sum(model_values)
-                if not self.max_cost_stack or self.max_cost_stack[-1] > cost:
-                    self.max_cost_stack.append(cost)
+                logger.info(f"\x1b[32m Got {cost} \x1b[39m")
+                self.max_cost_sampler.update(cost)
 
                 return SlidingWindowParams(*model_values)
             elif constraint:
-                self.max_cost_stack.pop(-1)
+                self.max_cost_sampler.update(None)
             else:
+                self.max_cost_sampler.update(None)
                 self.exhausted = True
                 return None
 
