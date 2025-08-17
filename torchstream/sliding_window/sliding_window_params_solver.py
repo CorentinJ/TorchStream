@@ -420,13 +420,7 @@ class SlidingWindowParamsSolver:
             # FIXME more interesting timing infos
             sampler_start_time = time.perf_counter()
             params = self.sampler.get_new_solution()
-
-            # If the sampler is exhausted, evaluate if we should stop here (if we have any solution) or loosen
-            # constraints to possibly find more solutions.
             if params is None:
-                if not self.hypotheses and self.sampler.unlock_in_out_rel_constraints():
-                    logger.debug("Got no valid solution so far, loosening constraints")
-                    continue
                 break
             sampler_times.append(time.perf_counter() - sampler_start_time)
 
@@ -449,8 +443,7 @@ class SlidingWindowParamsSolver:
                 f"Step {len(sampler_times)}: "
                 f"{'REJECTED' if hypothesis.rejected else 'ACCEPTED'} ("
                 f"kernel={((colors.RED + 'FAIL') if hypothesis.nan_trick_rejected else (colors.GREEN + 'OK')) + colors.RESET}, "
-                f"stream={((colors.RED + 'FAIL') if hypothesis.streaming_rejected else (colors.GREEN + 'OK')) + colors.RESET}, "
-                f"optim={((colors.RED + 'FAIL') if hypothesis.suboptimal_rejected else (colors.GREEN + 'OK')) + colors.RESET}) "
+                f"stream={((colors.RED + 'FAIL') if hypothesis.streaming_rejected else (colors.GREEN + 'OK')) + colors.RESET}) "
                 f"new hypothesis {hypothesis.params} "
                 f"with streaming params ({stream_param_comp_str})"
             )

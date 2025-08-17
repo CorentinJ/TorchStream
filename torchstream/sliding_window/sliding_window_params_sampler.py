@@ -57,12 +57,11 @@ class SlidingWindowParamsSampler:
         self.max_cost = Int("max_cost")
         # *_, in_delay, out_delay, in_ctx = self._get_streaming_params()
         self.optimizer.add(self.k_i + self.s_i + self.p_l + self.p_r + self.k_o + self.s_o + self.t_o <= self.max_cost)
-        self.max_cost_sampler = ThresholdHarvester(lower_bound=4, initial=20)
+        self.max_cost_sampler = ThresholdHarvester(lower_bound=4)
 
         # Constraints added to keep only new solutions
         self.prev_sol_constraints = []
-        # Constraints that are specific to a same in/out relation (the first 4 parameters)
-        self.in_out_rel_constraints = []
+        self.stream_param_shape_constraint = None
         self.seen_in_out_pairs = set()
 
         # Indicates if more solutions are available
@@ -94,8 +93,8 @@ class SlidingWindowParamsSampler:
 
         # Model the input to output size relation with the number of windows
         constraint_idx = len(self.optimizer.assertions())
+        c = Int(f"c_{constraint_idx}")
         if (in_len, out_len) not in self.seen_in_out_pairs:
-            c = Int(f"c_{constraint_idx}")
             padded_in_len = self.p_l + in_len + self.p_r
             self.optimizer.add(
                 c == If(padded_in_len >= self.k_i, (padded_in_len - self.k_i) / self.s_i + 1, 0),
@@ -153,24 +152,23 @@ class SlidingWindowParamsSampler:
             self._get_streaming_params()
         )
 
-        # Constraints that are specific to a same in/out relation (the first 4 parameters)
+        # Constraint that keeps the same in/out relation (the first 4 parameters)
         in_out_rel_constraint = And(
             sol_stride_in == stride_in,
             sol_stride_out == stride_out,
             sol_in_size_bias == in_size_bias,
             sol_out_size_bias == out_size_bias,
         )
-        if not self.in_out_rel_constraints:
-            self.in_out_rel_constraints.append(in_out_rel_constraint)
-            self.optimizer.add(in_out_rel_constraint)
+        if self.stream_param_shape_constraint is None:
+            self.stream_param_shape_constraint = in_out_rel_constraint
 
+        # Constraint that ensures better or equivalent context size
         context_constraint = Or(
             And(sol_delay_in == delay_in, sol_delay_out == delay_out, sol_in_ctx == in_ctx),
             sol_delay_in < delay_in,
             sol_delay_out < delay_out,
             sol_in_ctx < in_ctx,
         )
-        self.in_out_rel_constraints.append(context_constraint)
         self.optimizer.add(context_constraint)
 
     def add_non_streamable_params(self, params: SlidingWindowParams):
@@ -200,34 +198,19 @@ class SlidingWindowParamsSampler:
             )
         )
 
-    def unlock_in_out_rel_constraints(self) -> bool:
-        # TODO doc
-        if not self.in_out_rel_constraints:
-            return False
-
-        # Recreate a new optimizer without any of the constraints in <self.in_out_rel_constraints>
-        new_optimizer = Solver()
-        for constraint in self.optimizer.assertions():
-            if constraint not in self.in_out_rel_constraints:
-                new_optimizer.add(constraint)
-
-        # Prevent the optimizer from considering the previous in/out relation
-        new_optimizer.add(Not(self.in_out_rel_constraints[0]))
-
-        self.optimizer = new_optimizer
-        self.in_out_rel_constraints.clear()
-        self.exhausted = False
-
-        return True
-
     def get_new_solution(self) -> SlidingWindowParams | None:
         # TODO! doc
         # TODO! iter_new_solutions, mark emitted ones, simplify constraints.
 
         while True:
+            guide_constraints = []
             max_cost_value = self.max_cost_sampler.next_p()
-            constraint = [self.max_cost <= max_cost_value] if max_cost_value < _MAX_COST_LIMIT else []
-            if self.optimizer.check(constraint) == sat:
+            if max_cost_value < _MAX_COST_LIMIT:
+                guide_constraints.append(self.max_cost <= max_cost_value)
+            if self.stream_param_shape_constraint is not None:
+                guide_constraints.append(self.stream_param_shape_constraint)
+
+            if self.optimizer.check(guide_constraints) == sat:
                 model = self.optimizer.model()
                 model_values = (
                     model[self.k_i].as_long(),
@@ -254,12 +237,21 @@ class SlidingWindowParamsSampler:
 
                 # Inform our sampler of the result
                 cost = sum(model_values)
+                logger.debug(f"Sampled with max cost={max_cost_value}, got solution with cost={cost}")
                 self.max_cost_sampler.update(cost)
 
                 return SlidingWindowParams(*model_values)
-            elif constraint:
+
+            elif guide_constraints:
+                logger.debug(f"Sampled with max cost={max_cost_value}, got nothing")
                 self.max_cost_sampler.update(None)
+
+                if max_cost_value >= _MAX_COST_LIMIT:
+                    logger.debug("Unlocking shape constraint")
+                    self.stream_param_shape_constraint = None
+
             else:
+                logger.debug("Sampled without constraint, got nothing")
                 self.max_cost_sampler.update(None)
                 self.exhausted = True
                 return None

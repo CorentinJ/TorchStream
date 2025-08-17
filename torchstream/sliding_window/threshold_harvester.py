@@ -1,7 +1,6 @@
 # TODO: doc
 class ThresholdHarvester:
-    def __init__(self, lower_bound: int = 0, initial: int = 10):
-        assert 0 <= lower_bound <= initial
+    def __init__(self, lower_bound: int = 0):
         self.lower_bound = lower_bound
         self.last_nonempty = None
         self.gallop_value = 1
