@@ -2,7 +2,7 @@ import itertools
 import logging
 import time
 from dataclasses import dataclass
-from functools import partial
+from functools import lru_cache, partial
 from typing import Callable, Iterable, List, Tuple
 
 import numpy as np
@@ -11,8 +11,8 @@ from colorama import Fore as colors
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
-from torchstream.sliding_window.kernel_sparsity import get_init_kernel_array
-from torchstream.sliding_window.nan_trick import determine_kernel_sparsity, get_nan_map, get_seq_nan_idx
+from torchstream.sliding_window.kernel_sparsity import determine_kernel_sparsity, get_init_kernel_array
+from torchstream.sliding_window.nan_trick import get_nan_map, get_seq_nan_idx
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_sampler import SlidingWindowParamsSampler
 from torchstream.sliding_window.sliding_window_stream import (
@@ -73,7 +73,7 @@ class SlidingWindowParamsSolver:
             input_provider = partial(Sequence.randn, in_spec)
 
         self._trsfm = trsfm
-        self.input_provider = input_provider
+        self.input_provider = lru_cache()(input_provider)
         self.out_spec = out_spec
         self.init_seq_size = init_seq_size
         self.max_in_seq_size = max_in_seq_size
@@ -100,6 +100,16 @@ class SlidingWindowParamsSolver:
         if not in_seq.size:
             raise ValueError(f"Input sequence size must be greater than 0, got {in_seq.size}")
 
+        # TODO!!: cleaner cache impl
+        # cached_record = next(
+        #     (rec for rec in self.nan_trick_history if torch.equal(rec["in_seq"].data, in_seq.data)), None
+        # )
+        # if cached_record:
+        #     logger.debug(f"Cache hit for {in_seq.shape}, constraints={len(self.sampler.optimizer.assertions())}")
+        #     v2 = cached_record["out_seq"].copy()
+        #     v2.close_input()
+        #     return v2
+
         in_nan_idx = get_seq_nan_idx(in_seq)
         # FIXME: discrepancy
         in_nan_range = (in_nan_idx[0], in_nan_idx[-1] + 1) if len(in_nan_idx) else None
@@ -110,7 +120,7 @@ class SlidingWindowParamsSolver:
         out_nan_range = (out_nan_idx[0], out_nan_idx[-1] + 1) if len(out_nan_idx) else None
 
         # TODO! In/out details
-        logger.debug(f"Got a {tuple(out_seq.shape)} shaped output with nans at {out_nan_idx}")
+        logger.debug(f"Forward {in_seq.size}->{out_seq.size} with nans {in_nan_idx}->{out_nan_idx}")
 
         # Keep track of the outcome in the history
         record = {
@@ -220,7 +230,7 @@ class SlidingWindowParamsSolver:
             raise ValueError(f"Nan range must be positive and within the input sequence size, got {in_nan_range}")
 
         # Get an input of said size and perform the nan trick on the actual transform
-        in_seq = self.input_provider(in_seq_size)
+        in_seq = self.input_provider(in_seq_size).copy()  # FIXME!
         if not isinstance(in_seq, Sequence):
             raise TypeError(
                 f"The input_provider function {self.input_provider} returned a {type(in_seq)} "
@@ -286,12 +296,11 @@ class SlidingWindowParamsSolver:
         hyp_stream_params = get_streaming_params(hypothesis.params)
         if hyp_stream_params in self.validated_streaming_params:
             hypothesis.streaming_rejected = False
-            logger.debug(f"Skipping already validated stream params for hypothesis {hypothesis.params}")
             return
 
         # FIXME?: A justification for the number 10
         in_size = max(50, hypothesis.params.get_min_input_size_for_num_wins(10))
-        in_seq = self.input_provider(in_size)
+        in_seq = self.input_provider(in_size).copy()  # FIXME!
 
         # FIXME! not relying on a try/catch mechanism
         try:
@@ -305,28 +314,6 @@ class SlidingWindowParamsSolver:
             )
             hypothesis.streaming_rejected = False
             self.validated_streaming_params.add(hyp_stream_params)
-
-            # FIXME
-            if self.debug_ref_params is None:
-                logger.debug(
-                    f"Successfully streamed hypothesis {hypothesis.params} with streaming params {hyp_stream_params}"
-                )
-            elif self.debug_ref_params == hypothesis.params:
-                logger.debug(
-                    f"{colors.GREEN}Successfully streamed REFERENCE hypothesis {hypothesis.params} with "
-                    f"streaming params {hyp_stream_params}{colors.RESET}"
-                )
-            else:
-                stream_param_comp_str = ", ".join(
-                    f"{p}"
-                    + ("" if p == p_ref else (f"{colors.RED}(>{p_ref})" if p > p_ref else f"{colors.GREEN}(<{p_ref})"))
-                    + colors.RESET
-                    for p, p_ref in zip(hyp_stream_params, get_streaming_params(self.debug_ref_params))
-                )
-                logger.debug(
-                    f"Successfully streamed DIFFERENT hypothesis {hypothesis.params} with "
-                    f"streaming params ({stream_param_comp_str})"
-                )
 
             # Enforce more efficient solutions with the same size parameters
             # FIXME: not elegant given caller
@@ -353,9 +340,11 @@ class SlidingWindowParamsSolver:
         cause other suboptimal hypotheses to be rejected in the process.
         """
         for hypothesis in self.hypotheses:
+            # TODO: rename
             self.test_update_hypothesis_against_nan_trick_history(hypothesis)
 
-            # FIXME!! Should we really test all hypotheses for streaming?
+            # TODO!: We test hypothesis for streaming even when they fail the kernel check because it lets us
+            # validate streaming parameters. Reflect on why we do this.
             if hypothesis.streaming_rejected is None:
                 self.test_update_hypothesis_by_streaming(hypothesis)
 
@@ -388,7 +377,7 @@ class SlidingWindowParamsSolver:
 
             if other_params:
                 in_size = max(50, other_params.get_min_input_size_for_num_wins(10))
-                in_seq = self.input_provider(in_size)
+                in_seq = self.input_provider(in_size).copy()  # FIXME!
                 try:
                     test_stream_equivalent(
                         self._trsfm,
@@ -446,9 +435,24 @@ class SlidingWindowParamsSolver:
             hypothesis = SlidingWindowParamsSolver.Hypothesis(params)
             self.hypotheses.append(hypothesis)
             self.update_all_hypotheses()
+
+            assert self.debug_ref_params
+            hyp_stream_params = get_streaming_params(hypothesis.params)
+            # TODO!! self.debug_ref_params == hypothesis.params
+            stream_param_comp_str = ", ".join(
+                f"{p}"
+                + ("" if p == p_ref else (f"{colors.RED}(>{p_ref})" if p > p_ref else f"{colors.GREEN}(<{p_ref})"))
+                + colors.RESET
+                for p, p_ref in zip(hyp_stream_params, get_streaming_params(self.debug_ref_params))
+            )
             logger.debug(
-                f"Step {len(sampler_times)}: {'rejected' if hypothesis.rejected else 'accepted'} "
-                f"new hypothesis {hypothesis.params}"
+                f"Step {len(sampler_times)}: "
+                f"{'REJECTED' if hypothesis.rejected else 'ACCEPTED'} ("
+                f"kernel={((colors.RED + 'FAIL') if hypothesis.nan_trick_rejected else (colors.GREEN + 'OK')) + colors.RESET}, "
+                f"stream={((colors.RED + 'FAIL') if hypothesis.streaming_rejected else (colors.GREEN + 'OK')) + colors.RESET}, "
+                f"optim={((colors.RED + 'FAIL') if hypothesis.suboptimal_rejected else (colors.GREEN + 'OK')) + colors.RESET}) "
+                f"new hypothesis {hypothesis.params} "
+                f"with streaming params ({stream_param_comp_str})"
             )
 
             # In the event we now have multiple compatible hypotheses, we can search for a specific input that will
