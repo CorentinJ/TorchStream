@@ -226,7 +226,6 @@ class SlidingWindowParamsSampler:
 
         while True:
             max_cost_value = self.max_cost_sampler.next_p()
-            logger.info(f"\x1b[31m Sampled {max_cost_value} \x1b[39m")
             constraint = [self.max_cost <= max_cost_value] if max_cost_value < _MAX_COST_LIMIT else []
             if self.optimizer.check(constraint) == sat:
                 model = self.optimizer.model()
@@ -255,7 +254,6 @@ class SlidingWindowParamsSampler:
 
                 # Inform our sampler of the result
                 cost = sum(model_values)
-                logger.info(f"\x1b[32m Got {cost} \x1b[39m")
                 self.max_cost_sampler.update(cost)
 
                 return SlidingWindowParams(*model_values)

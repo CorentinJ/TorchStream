@@ -3,28 +3,35 @@ class ThresholdHarvester:
     def __init__(self, lower_bound: int = 0, initial: int = 10):
         assert 0 <= lower_bound <= initial
         self.lower_bound = lower_bound
-        self.upper_bound = initial
         self.last_nonempty = None
+        self.gallop_value = 1
 
-    def next_p(self):
+    def next_p(self) -> int:
+        # If we have not found anything yet in the current range, sample at the upper bound of the range
+        # so we can gallop on to the next one immediately after if this one turns out to be empty as well
         if self.last_nonempty is None:
-            return self.upper_bound
-        if self.last_nonempty >= self.lower_bound:
-            return (self.lower_bound + self.last_nonempty) // 2
-        else:
-            return (self.lower_bound + self.upper_bound) // 2
+            return self.lower_bound + self.gallop_value
 
-    def update(self, result):
+        # If we have harvested a value in the current range, sample halfway between that value and the
+        # known lower bound so we increase our chances of harvesting the minimum while quickly exploring
+        # the range at the same time
+        return (self.lower_bound + self.last_nonempty) // 2
+
+    def update(self, result: int):
         p = self.next_p()
 
         if result is None:
+            if self.last_nonempty is None:
+                self.gallop_value *= 2
+
             self.lower_bound = p + 1
 
-            if p == self.upper_bound:
-                self.upper_bound *= 2
+            if self.last_nonempty is not None and p >= self.last_nonempty:
+                self.last_nonempty = None
 
         else:
             self.last_nonempty = result
+            self.gallop_value = 1
 
 
 # import random
@@ -43,8 +50,8 @@ class ThresholdHarvester:
 
 
 # stack = defaultdict(int)
-# for _ in range(5):
-#     stack[randint(0, 1000) + 300] += 1
+# for _ in range(30):
+#     stack[randint(0, 20) + 300] += 1
 # stack = {k: v for k, v in sorted(stack.items(), key=lambda item: item[0])}
 
 
