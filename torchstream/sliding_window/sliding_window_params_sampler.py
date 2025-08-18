@@ -1,7 +1,7 @@
 import logging
 from typing import List, Tuple
 
-from z3 import And, Bool, If, Int, Ints, Not, Or, Solver, sat
+from z3 import And, Bool, Implies, Int, Ints, Not, Or, Solver, sat
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_stream_params import get_streaming_params
@@ -55,9 +55,7 @@ class SlidingWindowParamsSampler:
         self.optimizer.add(0 <= self.t_o, self.t_o < self.k_o)
 
         # Blocker for guiding the solver towards simpler solutions first.
-        self.max_cost = Int("max_cost")
-        # *_, in_delay, out_delay, in_ctx = self._get_streaming_params()
-        self.optimizer.add(self.k_i + self.s_i + self.p_l + self.p_r + self.k_o + self.s_o + self.t_o <= self.max_cost)
+        self.solution_cost = self.k_i + self.s_i + self.p_l + self.p_r + self.k_o + self.s_o + self.t_o
         self.max_cost_sampler = ThresholdHarvester(lower_bound=4)
 
         # Constraints added to keep only new solutions
@@ -97,9 +95,28 @@ class SlidingWindowParamsSampler:
         c = Int(f"c_{constraint_idx}")
         if (in_len, out_len) not in self.seen_in_out_pairs:
             padded_in_len = self.p_l + in_len + self.p_r
+            rem = Int(f"rem_{constraint_idx}")
             self.optimizer.add(
-                c == If(padded_in_len >= self.k_i, (padded_in_len - self.k_i) / self.s_i + 1, 0),
-                out_len == If(c > 0, (c - 1) * self.s_o + self.k_o - 2 * self.t_o, 0),
+                # Two cases: either we have enough input to get one window, either we don't
+                Implies(padded_in_len < self.k_i, c == 0),
+                Implies(padded_in_len >= self.k_i, c >= 1),
+                # c == If(padded_in_len >= self.k_i, (padded_in_len - self.k_i) / self.s_i + 1, 0),
+                Implies(
+                    c >= 1,
+                    And(
+                        padded_in_len - self.k_i == (c - 1) * self.s_i + rem,
+                        0 <= rem,
+                        rem < self.s_i,
+                    ),
+                ),
+                # Output length relation
+                Implies(c == 0, out_len == 0),
+                Implies(
+                    c >= 1,
+                    # FIXME? This doesn't seem to handle the case where we technically get a negative output size due
+                    # to out trimming (out_len would still be 0 but this equality wouldn't hold?)
+                    out_len == (c - 1) * self.s_o + self.k_o - 2 * self.t_o,
+                ),
             )
             self.seen_in_out_pairs.add((in_len, out_len))
 
@@ -215,11 +232,17 @@ class SlidingWindowParamsSampler:
             max_cost_value = self.max_cost_sampler.next_p()
             max_cost_reached = max_cost_value >= max_cost_limit
             max_cost_value = min(max_cost_value, max_cost_limit)
-            guide_constraints = [self.max_cost <= max_cost_value]
+            guide_constraints = [self.solution_cost <= max_cost_value]
             if self.stream_param_shape_constraint is not None:
                 guide_constraints.append(self.stream_param_shape_constraint)
 
-            if self.optimizer.check(guide_constraints) == sat:
+            import time
+
+            start = time.perf_counter()
+            check = self.optimizer.check(guide_constraints)
+            print(f"CHECK: {time.perf_counter() - start:.03f}s - {len(self.optimizer.assertions())} assertions")
+
+            if check == sat:
                 model = self.optimizer.model()
                 model_values = (
                     model[self.k_i].as_long(),

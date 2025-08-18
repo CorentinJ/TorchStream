@@ -1,7 +1,6 @@
 import logging
 
 import numpy as np
-import torch
 from torch.nn import Conv1d
 
 from tests.rng import set_seed
@@ -9,9 +8,9 @@ from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.nan_trick import get_nan_map
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_solver import (
-    SlidingWindowParamsSolver,
+    find_sliding_window_params_for_transform,
 )
-from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream, get_streaming_params
+from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 from torchstream.stream_equivalence import test_stream_equivalent
 
 logger = logging.getLogger(__name__)
@@ -21,44 +20,27 @@ set_seed(10)
 
 
 # trsfm = ConvTranspose1d(1, 1, kernel_size=3, padding=1)
-trsfm = Conv1d(1, 1, kernel_size=3)
-conv = trsfm
+trsfm = Conv1d(1, 1, kernel_size=10)
+# conv = trsfm
 
 
-def trsfm(x):
-    print("\x1b[31m", x, "\x1b[39m", sep="")
-    return conv(torch.nn.functional.pad(x, (2, 0)))
+# def trsfm(x):
+#     print("\x1b[31m", x, "\x1b[39m", sep="")
+#     return conv(torch.nn.functional.pad(x, (2, 0)))
 
 
-real_sol = SlidingWindowParams(kernel_size_in=3, left_pad=2)
-print(get_streaming_params(real_sol))
-real_sol = (1, 1, 0, 1, 0, 2, 2)
+real_sol = SlidingWindowParams(
+    kernel_size_in=10,
+    stride_in=1,
+    left_pad=0,
+    right_pad=0,
+    kernel_size_out=1,
+    stride_out=1,
+    out_trim=0,
+)
 
-
-if False:  # or True:
-    solver = SlidingWindowParamsSolver(trsfm, SeqSpec((1, 1, -1)), max_hypotheses_per_step=10)
-    while solver.nan_trick_params is not None:
-        solver.step()
-        if len(solver.nan_trick_history) > 5:
-            break
-
-    sols = [hypothesis.params for hypothesis in solver.hypotheses]
-    for sol in sols:
-        print("\n\nSolution:\n", sol)
-        print(get_streaming_params(sol))
-        print(sol.kernel_in_sparsity)
-        print(sol.kernel_out_sparsity)
-
-    if not any(sol == real_sol for sol in sols):
-        hyp = next((hyp for hyp in solver.rejected_hypotheses if hyp.params == real_sol), None)
-        print("==== REAL SOLUTION WAS REJECTED ====" if hyp else "==== REAL SOLUTION WAS NOT FOUND ====")
-        print(hyp or real_sol)
-        print(get_streaming_params(real_sol))
-        for violation in solver.sampler.get_violations(real_sol):
-            print(violation)
-            print("----")
-        print("====")
-
+if False or True:
+    sols = find_sliding_window_params_for_transform(trsfm, SeqSpec((1, 1, -1)), debug_ref_params=real_sol)
     quit()
 
 

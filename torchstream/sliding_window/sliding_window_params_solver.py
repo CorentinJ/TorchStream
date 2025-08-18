@@ -319,9 +319,10 @@ class SlidingWindowParamsSolver:
             # FIXME: not elegant given caller
             self.sampler.add_streamable_params(hypothesis.params)
             self._debug_check_ref_params("accepting an hypothesis for streaming", hypothesis.params)
-            for other_hyp in list(self.hypotheses):
-                if not self.sampler.is_compatible(other_hyp.params):
-                    other_hyp.suboptimal_rejected = True
+            # FIXME!! RESTORE
+            # for other_hyp in list(self.hypotheses):
+            #     if not self.sampler.is_compatible(other_hyp.params):
+            #         other_hyp.suboptimal_rejected = True
 
         except IncorrectSlidingWindowParametersError:
             hypothesis.streaming_rejected = True
