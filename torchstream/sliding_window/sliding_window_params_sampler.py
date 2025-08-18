@@ -1,5 +1,5 @@
 import logging
-from typing import Tuple
+from typing import List, Tuple
 
 from z3 import And, Bool, If, Int, Ints, Not, Or, Solver, sat
 
@@ -9,7 +9,8 @@ from torchstream.sliding_window.threshold_harvester import ThresholdHarvester
 
 logger = logging.getLogger(__name__)
 
-_MAX_COST_LIMIT = 10_000
+_MAX_COST_FLAT_LIMIT = 100_000
+_MAX_COST_REL_LIMIT = 3.0
 
 
 class SlidingWindowParamsSampler:
@@ -198,15 +199,23 @@ class SlidingWindowParamsSampler:
             )
         )
 
-    def get_new_solution(self) -> SlidingWindowParams | None:
+    def get_new_solution(self, valid_sols: List[SlidingWindowParams] | None = None) -> SlidingWindowParams | None:
+        valid_sols = valid_sols or []
+
         # TODO! doc
         # TODO! iter_new_solutions, mark emitted ones, simplify constraints.
 
+        max_cost_limit = (
+            int(_MAX_COST_REL_LIMIT * max(sum(sol.as_tuple()) for sol in valid_sols))
+            if valid_sols
+            else _MAX_COST_FLAT_LIMIT
+        )
+
         while True:
-            guide_constraints = []
             max_cost_value = self.max_cost_sampler.next_p()
-            if max_cost_value < _MAX_COST_LIMIT:
-                guide_constraints.append(self.max_cost <= max_cost_value)
+            max_cost_reached = max_cost_value >= max_cost_limit
+            max_cost_value = min(max_cost_value, max_cost_limit)
+            guide_constraints = [self.max_cost <= max_cost_value]
             if self.stream_param_shape_constraint is not None:
                 guide_constraints.append(self.stream_param_shape_constraint)
 
@@ -242,19 +251,18 @@ class SlidingWindowParamsSampler:
 
                 return SlidingWindowParams(*model_values)
 
-            elif guide_constraints:
+            else:
                 logger.debug(f"Sampled with max cost={max_cost_value}, got nothing")
                 self.max_cost_sampler.update(None)
 
-                if max_cost_value >= _MAX_COST_LIMIT:
-                    logger.debug("Unlocking shape constraint")
-                    self.stream_param_shape_constraint = None
-
-            else:
-                logger.debug("Sampled without constraint, got nothing")
-                self.max_cost_sampler.update(None)
-                self.exhausted = True
-                return None
+                if max_cost_reached:
+                    if self.stream_param_shape_constraint is not None:
+                        logger.debug("Unlocking shape constraint")
+                        self.stream_param_shape_constraint = None
+                    else:
+                        self.max_cost_sampler.update(None)
+                        self.exhausted = True
+                        return None
 
     def get_violations(self, solution: SlidingWindowParams, include_new_sol_assertions: bool = False):
         # TODO: doc

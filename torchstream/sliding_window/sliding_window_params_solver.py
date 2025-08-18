@@ -419,7 +419,7 @@ class SlidingWindowParamsSolver:
             # Sample sliding window parameters
             # FIXME more interesting timing infos
             sampler_start_time = time.perf_counter()
-            params = self.sampler.get_new_solution()
+            params = self.sampler.get_new_solution([hyp.params for hyp in self.hypotheses])
             if params is None:
                 break
             sampler_times.append(time.perf_counter() - sampler_start_time)

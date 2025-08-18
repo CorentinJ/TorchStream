@@ -173,6 +173,17 @@ class SlidingWindowParams:
 
         return out_map
 
+    def as_tuple(self) -> Tuple[int, int, int, int, int, int, int]:
+        return (
+            self.kernel_size_in,
+            self.stride_in,
+            self.left_pad,
+            self.right_pad,
+            self.kernel_size_out,
+            self.stride_out,
+            self.out_trim,
+        )
+
     def __eq__(self, other):
         if not isinstance(other, SlidingWindowParams):
             return False
