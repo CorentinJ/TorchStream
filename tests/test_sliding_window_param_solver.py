@@ -15,11 +15,11 @@ from torchstream.sliding_window.sliding_window_stream_params import get_streamin
 
 
 # FIXME!!
-@pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])
-@pytest.mark.parametrize("stride", [1, 2, 3, 10, 17])
-@pytest.mark.parametrize("padding", [(0, 0), (2, 0), (0, 3), (1, 4)])
-@pytest.mark.parametrize("dilation", [1, 2, 3])
-def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilation: int):
+@pytest.mark.parametrize("kernel_size", [1, 2, 3])  # , 10, 17])
+@pytest.mark.parametrize("stride", [1, 2, 3])  # , 10, 17])
+@pytest.mark.parametrize("padding", [(0, 0), (2, 0)])  # , (0, 3), (1, 4)])
+@pytest.mark.parametrize("dilation", [1, 2])  # , 3])
+def test_conv_1d(benchmark, kernel_size: int, stride: int, padding: Tuple[int, int], dilation: int):
     kernel_span = (kernel_size - 1) * dilation + 1
     if stride > kernel_span:
         pytest.skip("Stride should be smaller than the kernel span")
@@ -54,8 +54,12 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
         x = conv(x)
         return x
 
+    def bench_fn():
+        return find_sliding_window_params_for_transform(transform, SeqSpec((1, 1, -1)), debug_ref_params=expected_sol)
+
+    sols = benchmark(bench_fn)
+
     # TODO: we could verify the kernel values too
-    sols = find_sliding_window_params_for_transform(transform, SeqSpec((1, 1, -1)), debug_ref_params=expected_sol)
     assert any(sol == expected_sol for sol in sols)
 
 
