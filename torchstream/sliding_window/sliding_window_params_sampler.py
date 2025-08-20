@@ -54,6 +54,15 @@ class SlidingWindowParamsSampler:
         self.t_o = Int("t_o")
         self.optimizer.add(0 <= self.t_o, self.t_o < self.k_o)
 
+        # Streaming params
+        _, _, self.in_size_bias, self.out_size_bias, self.in_delay, self.out_delay, self.in_context_size = (
+            get_streaming_params(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
+        )
+        # FIXME!
+        self.optimizer.add(
+            self.in_size_bias >= 0, self.in_size_bias < self.s_i, self.in_delay >= 0, self.in_delay < self.s_i
+        )
+
         # Blocker for guiding the solver towards simpler solutions first.
         self.solution_cost = self.k_i + self.s_i + self.p_l + self.p_r + self.k_o + self.s_o + self.t_o
         self.max_cost_sampler = ThresholdHarvester(lower_bound=4)
@@ -154,40 +163,32 @@ class SlidingWindowParamsSampler:
             self.p_l + in_nan_range[1] >= crs * self.s_i,
         )
 
-    def _get_streaming_params(self):
-        """
-        Expresses the sliding window parameters as sliding window stream parameters.
-        """
-        return get_streaming_params(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
-
     def add_streamable_params(self, params: SlidingWindowParams):
         """
         If parameters were found to successfully stream the transform, this method will constrain the optimizer to
         yield only better or equally efficient solutions (in at least one aspect) with the same size parameters.
         """
         stride_in, stride_out, in_size_bias, out_size_bias, delay_in, delay_out, in_ctx = get_streaming_params(params)
-        sol_stride_in, sol_stride_out, sol_in_size_bias, sol_out_size_bias, sol_delay_in, sol_delay_out, sol_in_ctx = (
-            self._get_streaming_params()
-        )
 
         # Constraint that keeps the same in/out relation (the first 4 parameters)
         in_out_rel_constraint = And(
-            sol_stride_in == stride_in,
-            sol_stride_out == stride_out,
-            sol_in_size_bias == in_size_bias,
-            sol_out_size_bias == out_size_bias,
+            self.s_i == stride_in,
+            self.s_o == stride_out,
+            self.in_size_bias == in_size_bias,
+            self.out_size_bias == out_size_bias,
         )
         if self.stream_param_shape_constraint is None:
             self.stream_param_shape_constraint = in_out_rel_constraint
 
         # Constraint that ensures better or equivalent context size
-        context_constraint = Or(
-            And(sol_delay_in == delay_in, sol_delay_out == delay_out, sol_in_ctx == in_ctx),
-            sol_delay_in < delay_in,
-            sol_delay_out < delay_out,
-            sol_in_ctx < in_ctx,
+        self.optimizer.add(
+            Or(
+                And(self.in_delay == delay_in, self.out_delay == delay_out, self.in_context_size == in_ctx),
+                self.in_delay < delay_in,
+                self.out_delay < delay_out,
+                self.in_context_size < in_ctx,
+            )
         )
-        self.optimizer.add(context_constraint)
 
     def add_non_streamable_params(self, params: SlidingWindowParams):
         """
@@ -195,23 +196,20 @@ class SlidingWindowParamsSampler:
         new solutions with the same size parameters and less context.
         """
         stride_in, stride_out, in_size_bias, out_size_bias, delay_in, delay_out, in_ctx = get_streaming_params(params)
-        sol_stride_in, sol_stride_out, sol_in_size_bias, sol_out_size_bias, sol_delay_in, sol_delay_out, sol_in_ctx = (
-            self._get_streaming_params()
-        )
 
         self.optimizer.add(
             Not(
                 And(
-                    sol_stride_in == stride_in,
-                    sol_stride_out == stride_out,
-                    in_size_bias == sol_in_size_bias,
-                    out_size_bias == sol_out_size_bias,
+                    self.s_i == stride_in,
+                    self.s_o == stride_out,
+                    self.in_size_bias == in_size_bias,
+                    self.out_size_bias == out_size_bias,
                     # FIXME?: It used to be possible to put <= for the delays here, but I changed the way I compute
                     # the stream offsets and now a smaller delay might actually yield a valid solution...
                     # See my personal notes for an example of this issue in practice.
-                    sol_delay_in == delay_in,
-                    sol_delay_out == delay_out,
-                    sol_in_ctx <= in_ctx,
+                    self.in_delay == delay_in,
+                    self.out_delay == delay_out,
+                    self.in_context_size <= in_ctx,
                 )
             )
         )
