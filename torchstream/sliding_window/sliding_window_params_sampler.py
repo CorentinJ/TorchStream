@@ -144,10 +144,10 @@ class SlidingWindowParamsSampler:
             # crs is the index of the first window that could possibly output the first nan in the output (we have no
             # guarantee that it is indeed that window, this is a lower bound).
             crs >= 0,
-            crs >= (out_nan_range[0] - self.k_o + 1 + self.t_o) / self.s_o,
+            crs * self.s_o >= out_nan_range[0] - self.k_o + 1 + self.t_o,
             # Likewise, cre is the index of the last window that could possibly have output the last nan in the output.
             cre < c,
-            cre <= (out_nan_range[1] + self.t_o) / self.s_o,
+            cre * self.s_o <= out_nan_range[1] + self.t_o,
             # [crs, cre] defines a range of windows which necessarily overlaps the input nans. We have no guarantee
             # it fully contains them due to the edge cases listed above.
             self.p_l + in_nan_range[0] < cre * self.s_i + self.k_i,
@@ -240,7 +240,8 @@ class SlidingWindowParamsSampler:
 
             start = time.perf_counter()
             check = self.optimizer.check(guide_constraints)
-            print(f"CHECK: {time.perf_counter() - start:.03f}s - {len(self.optimizer.assertions())} assertions")
+            # print(f"CHECK: {time.perf_counter() - start:.03f}s - {len(self.optimizer.assertions())} assertions")
+            # print("\x1b[31m", self.optimizer.statistics(), "\x1b[39m", sep="")
 
             if check == sat:
                 model = self.optimizer.model()
