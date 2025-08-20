@@ -1,7 +1,7 @@
 import math
 from typing import Tuple, Union, overload
 
-from z3 import ArithRef, If
+from z3 import ArithRef, If, Ints
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 
@@ -20,15 +20,6 @@ def max_(a: IntLike, b: IntLike) -> IntLike:
     if isinstance(a, int) and isinstance(b, int):
         return max(a, b)
     return If(a > b, a, b)
-
-
-def divmod_(a: IntLike, b: IntLike) -> Tuple[IntLike, IntLike]:
-    """divmod() for both Python ints and z3 expressions."""
-    if isinstance(a, int) and isinstance(b, int):
-        return divmod(a, b)
-    quotient = a / b
-    remainder = a - (quotient * b)
-    return quotient, remainder
 
 
 @overload
@@ -109,11 +100,17 @@ def get_streaming_params(*args):
     # Number of input elements that are needed as context
     in_context_size = max_(0, (windows_context_size - 1) * s_i + in_delay + extra_right_context)
 
-    # Final steps: make the biases canonical so size relations are uniquely determined by a set of parameters
-    quotient, in_size_bias = divmod_(in_size_bias, s_i)
-    out_size_bias += quotient * s_o
-    # The same goes for the delays
-    quotient, in_delay = divmod_(in_delay, s_i)
-    out_delay += quotient * s_o
+    # Final steps: make the biases & delays canonical so size relations are uniquely determined by a set of parameters
+    if isinstance(s_i, int):
+        quotient_bias, in_size_bias_canon = divmod(in_size_bias, s_i)
+        quotient_delay, in_delay_canon = divmod(in_delay, s_i)
+    else:
+        quotient_bias, quotient_delay = Ints("quotient_bias quotient_delay")
+        # FIXME! the bounds on these two vars are set outside this function, yikes
+        in_size_bias_canon = in_size_bias - quotient_bias * s_i
+        in_delay_canon = in_delay - quotient_delay * s_i
 
-    return s_i, s_o, in_size_bias, out_size_bias, in_delay, out_delay, in_context_size
+    out_size_bias_canon = out_size_bias + quotient_bias * s_o
+    out_delay_canon = out_delay + quotient_delay * s_o
+
+    return s_i, s_o, in_size_bias_canon, out_size_bias_canon, in_delay_canon, out_delay_canon, in_context_size
