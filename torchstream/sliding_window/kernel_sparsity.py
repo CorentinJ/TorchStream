@@ -69,24 +69,13 @@ def determine_kernel_sparsity(
             solver.add(corrupted_wins[win_idx] == False)
 
     for out_idx, inv_map in enumerate(params.get_inverse_kernel_map(in_len)):
-        if out_idx in out_nan_idx:
-            solver.add(
-                Or(
-                    *[
-                        And(corrupted_wins[win_idx], kernel_out[kernel_out_idx])
-                        for win_idx, in_start, _, kernel_out_idx in inv_map
-                    ]
-                )
-            )
-        else:
-            solver.add(
-                And(
-                    *[
-                        Not(And(corrupted_wins[win_idx], kernel_out[kernel_out_idx]))
-                        for win_idx, in_start, _, kernel_out_idx in inv_map
-                    ]
-                )
-            )
+        any_corrupted_constraint = Or(
+            *[
+                And(corrupted_wins[win_idx], kernel_out[kernel_out_idx])
+                for win_idx, in_start, _, kernel_out_idx in inv_map
+            ]
+        )
+        solver.add(any_corrupted_constraint if out_idx in out_nan_idx else Not(any_corrupted_constraint))
 
     if solver.check() == unsat:
         return None, None
