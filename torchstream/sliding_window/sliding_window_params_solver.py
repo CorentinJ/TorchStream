@@ -431,15 +431,25 @@ class SlidingWindowParamsSolver:
             self.hypotheses.append(hypothesis)
             self.update_all_hypotheses()
 
-            assert self.debug_ref_params
             hyp_stream_params = get_streaming_params(hypothesis.params)
-            # TODO!! self.debug_ref_params == hypothesis.params
-            stream_param_comp_str = ", ".join(
-                f"{p}"
-                + ("" if p == p_ref else (f"{colors.RED}(>{p_ref})" if p > p_ref else f"{colors.GREEN}(<{p_ref})"))
-                + colors.RESET
-                for p, p_ref in zip(hyp_stream_params, get_streaming_params(self.debug_ref_params))
-            )
+            if self.debug_ref_params:
+                debug_ref_stream_params = get_streaming_params(self.debug_ref_params)
+                if debug_ref_stream_params != hyp_stream_params:
+                    stream_param_comp_str = ", ".join(
+                        f"{p}"
+                        + (
+                            ""
+                            if p == p_ref
+                            else (f"{colors.RED}(>{p_ref})" if p > p_ref else f"{colors.GREEN}(<{p_ref})")
+                        )
+                        + colors.RESET
+                        for p, p_ref in zip(hyp_stream_params, debug_ref_stream_params)
+                    )
+                else:
+                    stream_param_comp_str = colors.GREEN + ", ".join(map(str, hyp_stream_params)) + colors.RESET
+            else:
+                stream_param_comp_str = ", ".join(map(str, hyp_stream_params))
+
             logger.debug(
                 f"Step {len(sampler_times)}: "
                 f"{'REJECTED' if hypothesis.rejected else 'ACCEPTED'} ("
