@@ -13,26 +13,32 @@ _MAX_COST_FLAT_LIMIT = 100_000
 _MAX_COST_REL_LIMIT = 3.0
 
 
-class SlidingWindowParamsSampler:
-    def __init__(self, sliding_window_stream_params):
-        (
-            self.s_i,
-            self.s_o,
-            self.in_size_bias_canon,
-            self.out_size_bias_canon,
-            self.in_delay_canon,
-            self.out_delay_canon,
-            self.in_context_size,
-        ) = sliding_window_stream_params
+class SlidingWindowStreamParamsSampler:
+    """
+    TODO: doc
+    TODO: sort these out
+    - The input size to the number of windows is a deterministic, stepwise monotonic linear function.
 
+    TODO: padding
+    - The most common padding is constant, with zeroes. But there are other padding methods such as reflect or
+    circular that sample from the input array to determine the padding values. How does this compromise results from
+    the nan trick? Does the transform still qualify as a sliding window approach (e.g. if it reads in the middle of
+    the vector to get padding values)?
+    """
+
+    def __init__(self):
         # Define the parameters we're trying to uniquely determine
         self.optimizer = Solver()
-        # k_i and k_o are the input/output kernel sizes (NOTE: it's technically the kernel span, i.e. the whole span
-        # of the kernel if dilation > 1)
-        self.k_i, self.k_o = Ints("k_i k_o")
-        # It would be highly unusual to have a stride larger than the kernel size, leading to inputs being unused or
-        # to gaps in the output
-        self.optimizer.add(self.k_i >= self.s_i, self.k_o >= self.s_o)
+        # k_i and s_i are respectively the input kernel size and stride (NOTE: it's technically the kernel span,
+        # i.e. the whole span of the kernel if dilation > 1)
+        self.k_i, self.s_i = Ints("k_i s_i")
+        # It would be highly unusual to have a stride larger than the kernel size, leading to inputs being dropped.
+        self.optimizer.add(self.k_i >= self.s_i, self.s_i > 0)
+        # k_o and s_o are respectively the output kernel size and stride. These are both 1 for normal convolutions,
+        # but not for transposed convolutions.
+        self.k_o, self.s_o = Ints("k_o s_o")
+        # Again, it would be strange to have a stride larger than the kernel size, leading to gaps in the output.
+        self.optimizer.add(self.k_o >= self.s_o, self.s_o > 0)
         # The left input padding. I have not yet seen a case where varying the left padding is useful, so we'll
         # assume it constant. Also, there is no point in making the padding higher than the kernel size, as it would
         # waste compute on constant values.
@@ -44,8 +50,6 @@ class SlidingWindowParamsSampler:
         # Output trimming. See SlidingWindowParams for details.
         self.t_o = Int("t_o")
         self.optimizer.add(0 <= self.t_o, self.t_o < self.k_o)
-
-        #### HERE
 
         # Streaming params
         _, _, self.in_size_bias, self.out_size_bias, self.in_delay, self.out_delay, self.in_context_size = (

@@ -55,6 +55,7 @@ class SlidingWindowStream(Stream):
     # FIXME: signature
     def _step(self, in_seq: Sequence) -> Union[Tensor, np.ndarray, Tuple[Tensor, np.ndarray]]:
         # Compute the actual output size we'll get from the transform
+        # FIXME: due to canonicalization of parameters, num_wins is not actually the number of windows
         num_wins = max(0, (in_seq.size + self.in_size_bias) // self.stride_in)
         out_size = max(0, (num_wins - 1) * self.stride_out + self.out_size_bias)
         sufficient_input = in_seq.size and num_wins and out_size
@@ -90,6 +91,12 @@ class SlidingWindowStream(Stream):
         wins_to_drop = max(0, (in_seq.size - self.in_context_size) // self.stride_in)
         in_seq.drop(wins_to_drop * self.stride_in)
         self.tsfm_out_pos += wins_to_drop * self.stride_out
+
+        # if self._prev_trimmed_output is not None:
+        #     min_size = min(self._prev_trimmed_output.shape[-1], tsfm_out[out_trim_start:out_trim_end].shape[-1])
+        #     for i in range(1, min_size + 1):
+        #         diff = self._prev_trimmed_output[..., :i] - tsfm_out[out_trim_start : out_trim_start + i]
+        #         assert abs(diff.sum().item()) > 1e-5
 
         # If we're trimming on the right, save the trim in case the stream closes before we can compute any
         # new sliding window output.
