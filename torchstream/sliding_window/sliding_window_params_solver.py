@@ -3,6 +3,7 @@ import logging
 import time
 from dataclasses import dataclass
 from functools import lru_cache, partial
+from random import random
 from typing import Callable, Iterable, List, Tuple
 
 import numpy as np
@@ -397,7 +398,7 @@ class SlidingWindowParamsSolver:
 
             self.debug_ref_params = None
 
-    def solve(self) -> List[SlidingWindowParams]:
+    def solve__(self) -> List[SlidingWindowParams]:
         # In the first part of the process, we'll forward inputs to the transform and stop as soon as we get a
         # output sequence of non-zero size
         while True:
@@ -420,7 +421,7 @@ class SlidingWindowParamsSolver:
             # Sample sliding window parameters
             # FIXME more interesting timing infos
             sampler_start_time = time.perf_counter()
-            params = self.sampler.get_new_solution([hyp.params for hyp in self.hypotheses])
+            params = self.sampler.get_new_sli_solution([hyp.params for hyp in self.hypotheses])
             if params is None:
                 break
             sampler_times.append(time.perf_counter() - sampler_start_time)
@@ -488,6 +489,55 @@ class SlidingWindowParamsSolver:
 
         # TODO: sort by param complexity
         return [hypothesis.params for hypothesis in self.hypotheses]
+
+    def solve(self) -> List[SlidingWindowParams]:
+        # In the first part of the process, we'll forward inputs to the transform and stop as soon as we get a
+        # output sequence of non-zero size
+        while True:
+            # Use sane defaults for the NaN trick
+            out_seq, _ = self.run_nan_trick(self.init_seq_size, (self.init_seq_size // 2, self.init_seq_size // 2 + 1))
+            if out_seq.size:
+                break
+
+            # As long as we haven't had a valid output, we'll increase the input size. We do this before involving
+            # the sampler, otherwise we may be stuck sampling for a while before getting decent candidates.
+            self.init_seq_size = min(10 * self.init_seq_size, self.max_in_seq_size)
+            logger.info(
+                f"Transform failed with input size {self.nan_trick_history[-1]['in_seq'].size}. "
+                f"Increasing init sequence size to {self.init_seq_size}"
+            )
+
+        real_sol = get_streaming_params(self.debug_ref_params)[:-1]
+
+        for step in range(1, 1000000):
+            hyp_stream_params = self.sampler.get_new_stream_solutions([hyp.params for hyp in self.hypotheses])
+            if not len(hyp_stream_params):
+                return []
+            if len(hyp_stream_params) == 1 and hyp_stream_params == real_sol:
+                return [self.debug_ref_params]
+
+            log_str = f"Step {step} Params:\n\t"
+            for params in hyp_stream_params:
+                if real_sol != params:
+                    stream_param_comp_str = ", ".join(
+                        f"{p}"
+                        + (
+                            ""
+                            if p == p_ref
+                            else (f"{colors.RED}(>{p_ref})" if p > p_ref else f"{colors.GREEN}(<{p_ref})")
+                        )
+                        + colors.RESET
+                        for p, p_ref in zip(params, real_sol)
+                    )
+                else:
+                    stream_param_comp_str = colors.GREEN + ", ".join(map(str, params)) + colors.RESET
+
+                log_str += f"\n\t{stream_param_comp_str}"
+            logger.info(log_str)
+
+            in_size = random.randint(1, 200)
+            nan_idx = (in_size // 2, in_size // 2 + 1) if in_size > 10 else None
+            self.run_nan_trick(in_size, nan_idx)
 
 
 # TODO: allow transforms with multiple sequential inputs
