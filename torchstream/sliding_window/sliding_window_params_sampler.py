@@ -5,64 +5,82 @@ from z3 import And, Bool, Implies, Int, Ints, Not, Or, Solver, sat
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_stream_params import get_streaming_params
-from torchstream.sliding_window.threshold_harvester import ThresholdHarvester
 
 logger = logging.getLogger(__name__)
 
-_MAX_COST_FLAT_LIMIT = 100_000
-_MAX_COST_REL_LIMIT = 3.0
-
 
 class SlidingWindowParamsSampler:
-    def __init__(self, sliding_window_stream_params):
-        (
-            self.s_i,
-            self.s_o,
-            self.in_size_bias_canon,
-            self.out_size_bias_canon,
-            self.in_delay_canon,
-            self.out_delay_canon,
-            self.in_context_size,
-        ) = sliding_window_stream_params
-
-        # Define the parameters we're trying to uniquely determine
-        self.optimizer = Solver()
-        # k_i and k_o are the input/output kernel sizes (NOTE: it's technically the kernel span, i.e. the whole span
-        # of the kernel if dilation > 1)
+    def __init__(self):
+        ## Sliding window parameters
+        # Input and output strides of the sliding window.
+        # NOTE: these are the only two parameters shared as is between the two optimizers
+        self.s_i, self.s_o = Ints("s_i s_o")
+        # Input and output kernel sizes
+        # NOTE: it's technically the kernel span, i.e. the whole span of the kernel even when dilation > 1
         self.k_i, self.k_o = Ints("k_i k_o")
-        # It would be highly unusual to have a stride larger than the kernel size, leading to inputs being unused or
-        # to gaps in the output
-        self.optimizer.add(self.k_i >= self.s_i, self.k_o >= self.s_o)
         # The left input padding. I have not yet seen a case where varying the left padding is useful, so we'll
-        # assume it constant. Also, there is no point in making the padding higher than the kernel size, as it would
-        # waste compute on constant values.
+        # assume it constant.
         self.p_l = Int("p_l")
-        self.optimizer.add(0 <= self.p_l, self.p_l < self.k_i)
-        # TODO doc
+        # Maximum right input padding. Unlike the left padding the actual right padding varies in practice to line
+        # up with windows when stride_in > 1
         self.p_r = Int("p_r")
-        self.optimizer.add(0 <= self.p_r, self.p_r < self.k_i)
-        # Output trimming. See SlidingWindowParams for details.
+        # Output trimming: this many output elements are removed both on the left and right of the output. Often used
+        # for transposed convolutions
         self.t_o = Int("t_o")
-        self.optimizer.add(0 <= self.t_o, self.t_o < self.k_o)
 
-        #### HERE
-
-        # Streaming params
-        _, _, self.in_size_bias, self.out_size_bias, self.in_delay, self.out_delay, self.in_context_size = (
-            get_streaming_params(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
+        # Optimizer dedicated to finding sliding window parameter values
+        self.sli_optimizer = Solver()
+        self.sli_optimizer.add(
+            # It would be highly unusual to have a stride larger than the kernel size, leading to inputs being unused or
+            # to gaps in the output
+            self.k_i >= self.s_i,
+            self.k_o >= self.s_o,
+            # There is no point in making the padding higher than the kernel size, as it would waste compute on
+            # constant values.
+            0 <= self.p_l,
+            self.p_l < self.k_i,
+            0 <= self.p_r,
+            self.p_r < self.k_i,
+            # Same for output trimming, if we're discarding more than an entire kernel, then we're effectively wasting
+            # inputs
+            0 <= self.t_o,
+            self.t_o < self.k_o,
         )
+
+        ## Sliding window stream parameters
+        # Input and output size biases in computation, canonicalized to ensure uniqueness of the relation
+        self.isbc, self.osbc = Ints("isbc osbc")
+        # Input and output delays in computation, canonicalized to ensure uniqueness of the relation
+        self.idc, self.odc = Ints("idc odc")
+        # Input context size: minimum number of elements necessary as permanent input context in streaming
+        self.ictx = Int("ictx")
+
+        # Optimizer dedicated to finding sliding window stream parameter values
+        self.stream_optimizer = Solver()
+        self.stream_optimizer.add(
+            self.isbc >= 0,
+            # osbc is the only parameter that can be negative -> no constraint here
+            self.idc >= 0,
+            self.odc >= 0,
+            self.ictx >= 0,
+        )
+
         # FIXME!
-        self.optimizer.add(
-            self.in_size_bias >= 0, self.in_size_bias < self.s_i, self.in_delay >= 0, self.in_delay < self.s_i
-        )
+        # Bounds for the input size bias: -k_i < isb <= 2 * (k_i - 1)
+        # With canonicalization we have 0 <= isbc < s_i (remainder of the division of isb by s_i)
+        # Bounds for the output size bias: 2 - k_o <= osb <= k_o
+        # With canonicalization we have osbc = osb + (isb // s_i) * s_o
+        # Bounds for the input delay: 0 < id <= k_i
+        # With canonicalization we have 0 <= idc < s_i (remainder of the division of id by s_i)
+        # Bounds for the output delay: 0 <= od < k_o
+        # With canonicalization we have odc = od + (isb // s_i) * s_o
 
         # Blocker for guiding the solver towards simpler solutions first.
         self.solution_cost = self.k_i + self.s_i + self.p_l + self.p_r + self.k_o + self.s_o + self.t_o
-        self.max_cost_sampler = ThresholdHarvester(lower_bound=4)
+        # self.max_cost_sampler = ThresholdHarvester(lower_bound=4)
 
         # Constraints added to keep only new solutions
         self.prev_sol_constraints = []
-        self.stream_param_shape_constraint = None
         self.seen_in_out_pairs = set()
 
         # Indicates if more solutions are available
@@ -168,6 +186,11 @@ class SlidingWindowParamsSampler:
         If parameters were found to successfully stream the transform, this method will constrain the optimizer to
         yield only better or equally efficient solutions (in at least one aspect) with the same size parameters.
         """
+        # FIXME!!
+        # # Streaming params
+        # _, _, self.in_size_bias, self.out_size_bias, self.in_delay, self.out_delay, self.in_context_size = (
+        #     get_streaming_params(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
+        # )
         stride_in, stride_out, in_size_bias, out_size_bias, delay_in, delay_out, in_ctx = get_streaming_params(params)
 
         # Constraint that keeps the same in/out relation (the first 4 parameters)
@@ -177,8 +200,6 @@ class SlidingWindowParamsSampler:
             self.in_size_bias == in_size_bias,
             self.out_size_bias == out_size_bias,
         )
-        if self.stream_param_shape_constraint is None:
-            self.stream_param_shape_constraint = in_out_rel_constraint
 
         # Constraint that ensures better or equivalent context size
         self.optimizer.add(
@@ -220,24 +241,22 @@ class SlidingWindowParamsSampler:
         # TODO! doc
         # TODO! iter_new_solutions, mark emitted ones, simplify constraints.
 
-        max_cost_limit = (
-            int(_MAX_COST_REL_LIMIT * max(sum(sol.as_tuple()) for sol in valid_sols))
-            if valid_sols
-            else _MAX_COST_FLAT_LIMIT
-        )
+        # max_cost_limit = (
+        #     int(_MAX_COST_REL_LIMIT * max(sum(sol.as_tuple()) for sol in valid_sols))
+        #     if valid_sols
+        #     else _MAX_COST_FLAT_LIMIT
+        # )
 
         while True:
-            max_cost_value = self.max_cost_sampler.next_p()
-            max_cost_reached = max_cost_value >= max_cost_limit
-            max_cost_value = min(max_cost_value, max_cost_limit)
-            guide_constraints = [self.solution_cost <= max_cost_value]
-            if self.stream_param_shape_constraint is not None:
-                guide_constraints.append(self.stream_param_shape_constraint)
+            # max_cost_value = self.max_cost_sampler.next_p()
+            # max_cost_reached = max_cost_value >= max_cost_limit
+            # max_cost_value = min(max_cost_value, max_cost_limit)
+            # guide_constraints = [self.solution_cost <= max_cost_value]
 
             import time
 
             start = time.perf_counter()
-            check = self.optimizer.check(guide_constraints)
+            check = self.optimizer.check()  # guide_constraints)
             # print(f"CHECK: {time.perf_counter() - start:.03f}s - {len(self.optimizer.assertions())} assertions")
             # print("\x1b[31m", self.optimizer.statistics(), "\x1b[39m", sep="")
 
@@ -267,24 +286,21 @@ class SlidingWindowParamsSampler:
                 self.prev_sol_constraints.append(new_sol_constraint)
 
                 # Inform our sampler of the result
-                cost = sum(model_values)
-                logger.debug(f"Sampled with max cost={max_cost_value}, got solution with cost={cost}")
-                self.max_cost_sampler.update(cost)
+                # cost = sum(model_values)
+                # logger.debug(f"Sampled with max cost={max_cost_value}, got solution with cost={cost}")
+                # self.max_cost_sampler.update(cost)
 
                 return SlidingWindowParams(*model_values)
 
             else:
-                logger.debug(f"Sampled with max cost={max_cost_value}, got nothing")
-                self.max_cost_sampler.update(None)
+                # logger.debug(f"Sampled with max cost={max_cost_value}, got nothing")
+                # self.max_cost_sampler.update(None)
 
-                if max_cost_reached:
-                    if self.stream_param_shape_constraint is not None:
-                        logger.debug("Unlocking shape constraint")
-                        self.stream_param_shape_constraint = None
-                    else:
-                        self.max_cost_sampler.update(None)
-                        self.exhausted = True
-                        return None
+                # if max_cost_reached:
+                # self.exhausted = True
+                # return None
+                self.exhausted = True
+                return None
 
     def get_violations(self, solution: SlidingWindowParams, include_new_sol_assertions: bool = False):
         # TODO: doc
