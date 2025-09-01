@@ -1,8 +1,7 @@
 import logging
-from ast import If
 from typing import List, Tuple
 
-from z3 import And, Bool, Implies, Int, Ints, Or, Solver, sat
+from z3 import And, Bool, If, Implies, Int, Ints, Or, Solver, sat
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 
@@ -31,6 +30,8 @@ class SlidingWindowParamsSampler:
         # Optimizer dedicated to finding sliding window parameter values
         self.sli_optimizer = Solver()
         self.sli_optimizer.add(
+            self.s_i > 0,
+            self.s_o > 0,
             # It would be highly unusual to have a stride larger than the kernel size, leading to inputs being unused or
             # to gaps in the output.
             # In general, since we allow kernels with gaps, the stride is at most the largest number of consecutive
@@ -60,9 +61,13 @@ class SlidingWindowParamsSampler:
         # Optimizer dedicated to finding sliding window stream parameter values
         self.stream_optimizer = Solver()
         self.stream_optimizer.add(
+            self.s_i > 0,
+            self.s_o > 0,
             self.isbc >= 0,
+            self.isbc < self.s_i,
             # osbc is the only parameter that can be negative -> no constraint here
             self.idc >= 0,
+            self.idc < self.s_i,
             self.odc >= 0,
             self.ictx >= 0,
         )

@@ -1,9 +1,9 @@
 import itertools
 import logging
+import random
 import time
 from dataclasses import dataclass
 from functools import lru_cache, partial
-from random import random
 from typing import Callable, Iterable, List, Tuple
 
 import numpy as np
@@ -510,13 +510,13 @@ class SlidingWindowParamsSolver:
         real_sol = get_streaming_params(self.debug_ref_params)[:-1]
 
         for step in range(1, 1000000):
-            hyp_stream_params = self.sampler.get_new_stream_solutions([hyp.params for hyp in self.hypotheses])
+            hyp_stream_params = self.sampler.get_new_stream_solutions()
             if not len(hyp_stream_params):
                 return []
-            if len(hyp_stream_params) == 1 and hyp_stream_params == real_sol:
+            if len(hyp_stream_params) == 1 and hyp_stream_params[0] == real_sol:
                 return [self.debug_ref_params]
 
-            log_str = f"Step {step} Params:\n\t"
+            log_str = f"Step {step} params:"
             for params in hyp_stream_params:
                 if real_sol != params:
                     stream_param_comp_str = ", ".join(
@@ -530,7 +530,7 @@ class SlidingWindowParamsSolver:
                         for p, p_ref in zip(params, real_sol)
                     )
                 else:
-                    stream_param_comp_str = colors.GREEN + ", ".join(map(str, params)) + colors.RESET
+                    stream_param_comp_str = colors.BLUE + ", ".join(map(str, params)) + colors.RESET
 
                 log_str += f"\n\t{stream_param_comp_str}"
             logger.info(log_str)
