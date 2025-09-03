@@ -513,15 +513,16 @@ class SlidingWindowParamsSolver:
 
         real_sol = get_streaming_params(self.debug_ref_params)[:4]
 
+        shape_params_hyps = []
         for step in range(1, 1000000):
             import time
 
             start = time.perf_counter()
-            hyp_stream_params = self.in_out_rel_sampler.get_all_solutions()
+            shape_params_hyps = self.in_out_rel_sampler.get_new_solutions(shape_params_hyps)
             logger.debug(f"SOMETHING: {time.perf_counter() - start:.03f}s")
 
             log_str = f"Step {step} params:"
-            for params in hyp_stream_params:
+            for params in shape_params_hyps:
                 if real_sol != params:
                     stream_param_comp_str = ", ".join(
                         f"{p}"
@@ -538,27 +539,34 @@ class SlidingWindowParamsSolver:
                 log_str += f"\n\t{stream_param_comp_str or '/'}"
             logger.info(log_str)
 
-            if not len(hyp_stream_params):
+            if not len(shape_params_hyps):
                 return []
-            if len(hyp_stream_params) == 1:
-                assert hyp_stream_params[0] == real_sol
+            if len(shape_params_hyps) == 1:
+                assert shape_params_hyps[0] == real_sol
                 return [self.debug_ref_params]
 
             # TODO: use infogain
             np_si, np_so, np_isbc, np_osbc = [
-                np.array(param_group)[..., None] for param_group in zip(*hyp_stream_params)
+                np.array(param_group)[..., None] for param_group in zip(*shape_params_hyps)
             ]
-            out_sizes = np.stack([np.arange(1, 200)] * len(hyp_stream_params))
+            # FIXME! size
+            out_sizes = np.stack([np.arange(1, 200)] * len(shape_params_hyps))
             out_sizes = np.maximum(((out_sizes + np_isbc) // np_si) * np_so + np_osbc, 0)
             unique_counts = [len(np.unique(out_sizes[:, i])) for i in range(out_sizes.shape[1])]
             in_size = np.argmax(unique_counts) + 1
             assert unique_counts[in_size - 1] > 1
-            # TODO assert reduction in sols
 
-            # TODO: only exclude known sols
-
+            # FIXME! nan idx
             nan_idx = (in_size // 2, in_size // 2 + 1) if in_size > 10 else None
-            self.run_nan_trick(in_size, nan_idx)
+            out_seq, _ = self.run_nan_trick(in_size, nan_idx)
+
+            # Exclude known solutions
+            prev_n_hyps = len(shape_params_hyps)
+            shape_params_hyps = [
+                params for idx, params in enumerate(shape_params_hyps) if out_sizes[idx, in_size - 1] == out_seq.size
+            ]
+            assert prev_n_hyps > len(shape_params_hyps), "Internal error: did not reject any shape hypotheses"
+            logger.info(f"Step {step}: rejected {prev_n_hyps - len(shape_params_hyps)}/{prev_n_hyps} hypotheses")
 
 
 # TODO: allow transforms with multiple sequential inputs

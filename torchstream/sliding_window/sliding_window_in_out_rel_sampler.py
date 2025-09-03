@@ -1,4 +1,5 @@
 import logging
+from typing import List
 
 from z3 import And, If, Ints, Not, Or, Solver, sat
 
@@ -21,9 +22,6 @@ class SlidingWindowInOutRelSampler:
             # osbc is the only parameter that can be negative -> no constraint here
         )
 
-        # Solutions computed on the last get_all_solutions() call
-        self.prev_sols = []
-
         # Indicates if more solutions are available
         self.exhausted = False
 
@@ -45,19 +43,13 @@ class SlidingWindowInOutRelSampler:
         out_len_var = z3max(0, out_len_t1 * self.s_o + self.osbc)
         self.optimizer.add(out_len == out_len_var)
 
-    def get_all_solutions(self, max_sols=10):
-        # Verify which of the previous solutions are still valid (faster than reiterating to find them)
-        out_sols = []
-        for sol in self.prev_sols:
-            self.optimizer.push()
-            self.optimizer.add(self.s_i == sol[0], self.s_o == sol[1], self.isbc == sol[2], self.osbc == sol[3])
-            if self.optimizer.check() == sat:
-                out_sols.append(sol)
-            self.optimizer.pop()
+    def get_new_solutions(self, known_sols: List, max_sols=10):
+        # TODO: doc
+        out_sols = list(known_sols)
 
         # Exclude previous solutions from the search
         self.optimizer.push()
-        for sol in self.prev_sols:
+        for sol in out_sols:
             self.optimizer.add(
                 Not(And(self.s_i == sol[0], self.s_o == sol[1], self.isbc == sol[2], self.osbc == sol[3]))
             )
@@ -87,5 +79,4 @@ class SlidingWindowInOutRelSampler:
                 break
         self.optimizer.pop()
 
-        self.prev_sols = out_sols
         return out_sols
