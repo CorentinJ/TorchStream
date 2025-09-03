@@ -14,6 +14,7 @@ from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.kernel_sparsity import determine_kernel_sparsity, get_init_kernel_array
 from torchstream.sliding_window.nan_trick import get_nan_map, get_seq_nan_idx
+from torchstream.sliding_window.sliding_window_in_out_rel_sampler import SlidingWindowInOutRelSampler
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_sampler import SlidingWindowParamsSampler
 from torchstream.sliding_window.sliding_window_stream import (
@@ -74,13 +75,15 @@ class SlidingWindowParamsSolver:
             input_provider = partial(Sequence.randn, in_spec)
 
         self._trsfm = trsfm
+        # FIXME!
         self.input_provider = lru_cache()(input_provider)
         self.out_spec = out_spec
         self.init_seq_size = init_seq_size
         self.max_in_seq_size = max_in_seq_size
         self.atol = atol
 
-        self.sampler = SlidingWindowParamsSampler()
+        self.in_out_rel_sampler = SlidingWindowInOutRelSampler()
+        self.sli_params_sampler = SlidingWindowParamsSampler()
         self.hypotheses: List[SlidingWindowParamsSolver.Hypothesis] = []
         self.rejected_hypotheses: List[SlidingWindowParamsSolver.Hypothesis] = []
         self.validated_streaming_params = set()
@@ -133,7 +136,8 @@ class SlidingWindowParamsSolver:
         self.nan_trick_history.append(record)
 
         # Provide the results to the sampler
-        self.sampler.add_in_out_range_map(in_seq.size, out_seq.size, in_nan_range, out_nan_range)
+        self.in_out_rel_sampler.add_in_out_size(in_seq.size, out_seq.size)
+        self.sli_params_sampler.add_in_out_range_map(in_seq.size, out_seq.size, in_nan_range, out_nan_range)
         self._debug_check_ref_params("running the transform")
 
         return out_seq
@@ -318,7 +322,7 @@ class SlidingWindowParamsSolver:
 
             # Enforce more efficient solutions with the same size parameters
             # FIXME: not elegant given caller
-            self.sampler.add_streamable_params(hypothesis.params)
+            self.sli_params_sampler.add_streamable_params(hypothesis.params)
             self._debug_check_ref_params("accepting an hypothesis for streaming", hypothesis.params)
             # FIXME!! RESTORE
             # for other_hyp in list(self.hypotheses):
@@ -330,7 +334,7 @@ class SlidingWindowParamsSolver:
 
         except ValueError:
             hypothesis.streaming_rejected = True
-            self.sampler.add_non_streamable_params(hypothesis.params)
+            self.sli_params_sampler.add_non_streamable_params(hypothesis.params)
             self._debug_check_ref_params("rejecting an hypothesis for streaming", hypothesis.params)
 
     # FIXME: "update" does not convey much sense
@@ -361,7 +365,7 @@ class SlidingWindowParamsSolver:
         """
         if (
             self.debug_ref_params
-            and (violations := self.sampler.get_violations(self.debug_ref_params))
+            and (violations := self.sli_params_sampler.get_violations(self.debug_ref_params))
             and not any(hyp.params == self.debug_ref_params for hyp in self.hypotheses)
         ):
             other_hyp_str = (
@@ -421,7 +425,7 @@ class SlidingWindowParamsSolver:
             # Sample sliding window parameters
             # FIXME more interesting timing infos
             sampler_start_time = time.perf_counter()
-            params = self.sampler.get_new_sli_solution([hyp.params for hyp in self.hypotheses])
+            params = self.sli_params_sampler.get_new_sli_solution([hyp.params for hyp in self.hypotheses])
             if params is None:
                 break
             sampler_times.append(time.perf_counter() - sampler_start_time)
@@ -510,7 +514,11 @@ class SlidingWindowParamsSolver:
         real_sol = get_streaming_params(self.debug_ref_params)[:4]
 
         for step in range(1, 1000000):
-            hyp_stream_params = self.sampler.get_new_stream_solutions()
+            import time
+
+            start = time.perf_counter()
+            hyp_stream_params = self.in_out_rel_sampler.get_all_solutions()
+            logger.debug(f"SOMETHING: {time.perf_counter() - start:.03f}s")
 
             log_str = f"Step {step} params:"
             for params in hyp_stream_params:
@@ -527,13 +535,13 @@ class SlidingWindowParamsSolver:
                     )
                 else:
                     stream_param_comp_str = colors.BLUE + ", ".join(map(str, params)) + colors.RESET
-
                 log_str += f"\n\t{stream_param_comp_str or '/'}"
             logger.info(log_str)
 
             if not len(hyp_stream_params):
                 return []
-            if len(hyp_stream_params) == 1 and hyp_stream_params[0] == real_sol:
+            if len(hyp_stream_params) == 1:
+                assert hyp_stream_params[0] == real_sol
                 return [self.debug_ref_params]
 
             # TODO: use infogain
@@ -546,6 +554,8 @@ class SlidingWindowParamsSolver:
             in_size = np.argmax(unique_counts) + 1
             assert unique_counts[in_size - 1] > 1
             # TODO assert reduction in sols
+
+            # TODO: only exclude known sols
 
             nan_idx = (in_size // 2, in_size // 2 + 1) if in_size > 10 else None
             self.run_nan_trick(in_size, nan_idx)
