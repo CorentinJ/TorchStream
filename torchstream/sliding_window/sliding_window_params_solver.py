@@ -1,6 +1,6 @@
 import itertools
 import logging
-import random
+import math
 import time
 from dataclasses import dataclass
 from functools import lru_cache, partial
@@ -138,12 +138,12 @@ class SlidingWindowParamsSolver:
 
         return out_seq
 
-    # def _get_infogain(category_counts: Iterable[int]) -> float:
-    #     category_counts = list(category_counts)
-    #     infogain = math.log(sum(category_counts))
-    #     for category_count in category_counts:
-    #         infogain -= (category_count * math.log(category_count)) / sum(category_counts)
-    #     return infogain
+    def _get_infogain(category_counts: Iterable[int]) -> float:
+        category_counts = list(category_counts)
+        infogain = math.log(sum(category_counts))
+        for category_count in category_counts:
+            infogain -= (category_count * math.log(category_count)) / sum(category_counts)
+        return infogain
 
     @staticmethod
     def _get_infogain_for_hypotheses(hypotheses: List[Hypothesis], input_size: int, in_nan_idx: Iterable[int]):
@@ -536,7 +536,17 @@ class SlidingWindowParamsSolver:
             if len(hyp_stream_params) == 1 and hyp_stream_params[0] == real_sol:
                 return [self.debug_ref_params]
 
-            in_size = random.randint(1, 200)
+            # TODO: use infogain
+            np_si, np_so, np_isbc, np_osbc = [
+                np.array(param_group)[..., None] for param_group in zip(*hyp_stream_params)
+            ]
+            out_sizes = np.stack([np.arange(1, 200)] * len(hyp_stream_params))
+            out_sizes = np.maximum(((out_sizes + np_isbc) // np_si) * np_so + np_osbc, 0)
+            unique_counts = [len(np.unique(out_sizes[:, i])) for i in range(out_sizes.shape[1])]
+            in_size = np.argmax(unique_counts) + 1
+            assert unique_counts[in_size - 1] > 1
+            # TODO assert reduction in sols
+
             nan_idx = (in_size // 2, in_size // 2 + 1) if in_size > 10 else None
             self.run_nan_trick(in_size, nan_idx)
 
