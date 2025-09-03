@@ -66,10 +66,10 @@ class SlidingWindowParamsSampler:
             self.isbc >= 0,
             self.isbc < self.s_i,
             # osbc is the only parameter that can be negative -> no constraint here
-            self.idc >= 0,
-            self.idc < self.s_i,
-            self.odc >= 0,
-            self.ictx >= 0,
+            # self.idc >= 0,
+            # self.idc < self.s_i,
+            # self.odc >= 0,
+            # self.ictx >= 0,
         )
 
         # FIXME!
@@ -151,8 +151,8 @@ class SlidingWindowParamsSampler:
         def z3max(a, b):
             return If(a > b, a, b)
 
-        num_wins = z3max(0, (in_len + self.isbc) / self.s_i)
-        out_len_var = z3max(0, (num_wins - 1) * self.s_o + self.osbc)
+        out_len_t1 = (in_len + self.isbc) / self.s_i
+        out_len_var = z3max(0, out_len_t1 * self.s_o + self.osbc)
         self.stream_optimizer.add(out_len == out_len_var)
 
         # Nan trick - it has many edge cases:
@@ -191,10 +191,19 @@ class SlidingWindowParamsSampler:
         )
 
         # TODO!!
-        if out_nan_range[0] > 0:
-            last_eff_win_idx = (in_nan_range[0] - self.idc) / self.s_i
-            out_trim_end = (last_eff_win_idx + 1) * self.s_o - self.odc
-            self.stream_optimizer.add(out_trim_end == out_nan_range[0])
+        # if out_nan_range[0] > 0:
+        #     out_trim_end_t1 = (in_nan_range[0] - self.idc) / self.s_i
+        #     out_trim_end = out_trim_end_t1 * self.s_o - self.odc
+        #     self.stream_optimizer.add(
+        #         Or(
+        #             # Either the first nan we see is the very first the model could produce with this input
+        #             out_trim_end == out_nan_range[0],
+        #             # Either the model would be able to output a nan even earlier if the input nan came later in the
+        #             # input
+        #             # FIXME! neq 0?
+        #             # out_trim_end <= 0,
+        #         )
+        #     )
 
     # def add_streamable_params(self, params: SlidingWindowParams):
     #     """
@@ -304,8 +313,8 @@ class SlidingWindowParamsSampler:
                         model[self.s_o].as_long(),
                         model[self.isbc].as_long(),
                         model[self.osbc].as_long(),
-                        model[self.idc].as_long(),
-                        model[self.odc].as_long(),
+                        # model[self.idc].as_long(),
+                        # model[self.odc].as_long(),
                     )
 
                     # Enforce new solutions only
@@ -314,8 +323,8 @@ class SlidingWindowParamsSampler:
                         self.s_o != model[self.s_o],
                         self.isbc != model[self.isbc],
                         self.osbc != model[self.osbc],
-                        self.idc != model[self.idc],
-                        self.odc != model[self.odc],
+                        # self.idc != model[self.idc],
+                        # self.odc != model[self.odc],
                     )
                     temp_optimizer.add(new_sol_constraint)
 

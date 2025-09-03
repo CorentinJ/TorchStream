@@ -507,14 +507,10 @@ class SlidingWindowParamsSolver:
                 f"Increasing init sequence size to {self.init_seq_size}"
             )
 
-        real_sol = get_streaming_params(self.debug_ref_params)[:-1]
+        real_sol = get_streaming_params(self.debug_ref_params)[:4]
 
         for step in range(1, 1000000):
             hyp_stream_params = self.sampler.get_new_stream_solutions()
-            if not len(hyp_stream_params):
-                return []
-            if len(hyp_stream_params) == 1 and hyp_stream_params[0] == real_sol:
-                return [self.debug_ref_params]
 
             log_str = f"Step {step} params:"
             for params in hyp_stream_params:
@@ -532,8 +528,13 @@ class SlidingWindowParamsSolver:
                 else:
                     stream_param_comp_str = colors.BLUE + ", ".join(map(str, params)) + colors.RESET
 
-                log_str += f"\n\t{stream_param_comp_str}"
+                log_str += f"\n\t{stream_param_comp_str or '/'}"
             logger.info(log_str)
+
+            if not len(hyp_stream_params):
+                return []
+            if len(hyp_stream_params) == 1 and hyp_stream_params[0] == real_sol:
+                return [self.debug_ref_params]
 
             in_size = random.randint(1, 200)
             nan_idx = (in_size // 2, in_size // 2 + 1) if in_size > 10 else None
