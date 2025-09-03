@@ -14,7 +14,6 @@ from torchstream.sliding_window.sliding_window_params_solver import find_sliding
 from torchstream.sliding_window.sliding_window_stream_params import get_streaming_params
 
 
-# FIXME!!
 @pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])
 @pytest.mark.parametrize("stride", [1, 2, 3, 10, 17])
 @pytest.mark.parametrize("padding", [(0, 0), (2, 0), (0, 3), (1, 4)])
@@ -96,7 +95,11 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, padding: int, dilation
         # TODO: handle output padding?
     )
 
-    sols = find_sliding_window_params_for_transform(conv, SeqSpec((1, 1, -1)))
+    sols = find_sliding_window_params_for_transform(
+        conv,
+        SeqSpec((1, 1, -1)),
+        debug_ref_params=expected_sol,
+    )
     assert expected_sol in sols
 
 

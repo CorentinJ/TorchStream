@@ -3,7 +3,7 @@ import logging
 import math
 import time
 from dataclasses import dataclass
-from functools import lru_cache, partial
+from functools import partial
 from typing import Callable, Iterable, List, Tuple
 
 import numpy as np
@@ -76,7 +76,8 @@ class SlidingWindowParamsSolver:
 
         self._trsfm = trsfm
         # FIXME!
-        self.input_provider = lru_cache()(input_provider)
+        # self.input_provider = lru_cache()(input_provider)
+        self.input_provider = input_provider
         self.out_spec = out_spec
         self.init_seq_size = init_seq_size
         self.max_in_seq_size = max_in_seq_size
@@ -363,6 +364,8 @@ class SlidingWindowParamsSolver:
         """
         Debugging method for checking why a good reference hypothesis gets rejected.
         """
+        # FIXME! disabling for perfs & because of bugs
+        return
         if (
             self.debug_ref_params
             and (violations := self.sli_params_sampler.get_violations(self.debug_ref_params))
@@ -550,7 +553,7 @@ class SlidingWindowParamsSolver:
                 np.array(param_group)[..., None] for param_group in zip(*shape_params_hyps)
             ]
             # FIXME! size
-            out_sizes = np.stack([np.arange(1, 200)] * len(shape_params_hyps))
+            out_sizes = np.stack([np.arange(1, 1000)] * len(shape_params_hyps))
             out_sizes = np.maximum(((out_sizes + np_isbc) // np_si) * np_so + np_osbc, 0)
             unique_counts = [len(np.unique(out_sizes[:, i])) for i in range(out_sizes.shape[1])]
             in_size = np.argmax(unique_counts) + 1
