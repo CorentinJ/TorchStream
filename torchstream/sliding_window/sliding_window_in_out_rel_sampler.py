@@ -1,6 +1,7 @@
 import logging
 from typing import List
 
+import numpy as np
 from z3 import And, If, Ints, Not, Or, Solver, sat
 
 logger = logging.getLogger(__name__)
@@ -80,3 +81,73 @@ class SlidingWindowInOutRelSampler:
         self.optimizer.pop()
 
         return out_sols
+
+
+def most_discriminative_input_size(shape_params: list[tuple], max_input_size=10_000) -> tuple[int, np.ndarray]:
+    # TODO: use infogain
+    si, so, isbc, osbc = [np.array(param_group)[..., None] for param_group in zip(*shape_params)]
+
+    out_sizes = np.stack([np.arange(0, max_input_size)] * len(shape_params))
+    out_sizes = np.maximum(((out_sizes + isbc) // si) * so + osbc, 0)
+    # Vectorized method for counting unique values
+    unique_counts = 1 + np.count_nonzero(np.diff(np.sort(out_sizes, axis=0), axis=0), axis=0)
+
+    in_size = int(np.argmax(unique_counts[1:])) + 1
+    assert unique_counts[in_size] > 1
+
+    return in_size, out_sizes[:, in_size]
+
+    R, C = out_sizes.shape  # here R=10, C=10000
+    s = np.sort(out_sizes, axis=0)  # sort each column
+    sf = s.ravel(order="F")  # stack columns (Fortran order)
+
+    # mark run starts in the flattened array (treat NaNs as equal)
+    breaks = np.empty(R * C, dtype=bool)
+    breaks[0] = True
+    at_col_start = np.zeros(R * C, dtype=bool)
+    at_col_start[::R] = True
+
+    same = sf[1:] == sf[:-1]
+    breaks[1:] = at_col_start[1:] | (~same)
+
+    # run-lengths and their column ids
+    start = np.flatnonzero(breaks)  # start index of each run
+    end = np.r_[start[1:], R * C]  # end index (exclusive)
+    lens = end - start  # run lengths = counts per unique value
+    cols = start // R  # which column each run belongs to
+
+    # entropy per column: H = -∑ (len/R) log2(len/R)
+    H = np.zeros(C, dtype=float)
+    p = lens.astype(float) / float(R)
+    np.add.at(H, cols, -(p * np.log2(p)))
+
+    # NOTE: I started writing this more efficient version but then I realized the above clocks at 1ms, and we're not
+    # going to use input sizes that are magnitudes larger than 10^4 anyway.
+
+    # k_min = np.maximum(0, np.ceil(-osbc / so).astype(int))
+    # x_min = k_min * si - isbc
+    # x_start = max(1, np.min(x_min))
+
+    # slopes = so / si
+    # c_mat = np.zeros((len(shape_params), len(shape_params)))
+    # b_mat = np.zeros_like(c_mat, dtype=int)
+    # for i, j in itertools.combinations(range(len(shape_params)), 2):
+    #     if slopes[i] != slopes[j]:
+    #         c_mat[i, j] = (so[i] * isbc[i]) / si[i] + osbc[i] - (so[j] * isbc[j]) / si[j] - osbc[j]
+    #         b_mat[i, j] = np.ceil(
+    #             (np.abs(c_mat[i, j]) + so[i] + so[j] + 1) / np.abs(slopes[i] - slopes[j])
+    #         ).astype(int)
+
+    # import matplotlib.pyplot as plt
+
+    # plt.plot(unique_counts)
+    # plt.vlines(
+    #     [x_start, np.max(x_min), in_size, np.max(b_mat)],
+    #     0,
+    #     len(shape_params),
+    #     colors=["green", "orange", "red", "blue"],
+    # )
+    # logger.info(x_min)
+    # logger.info(b_mat)
+    # logger.info(c_mat)
+    # plt.show()

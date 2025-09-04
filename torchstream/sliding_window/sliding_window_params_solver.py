@@ -14,7 +14,10 @@ from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.kernel_sparsity import determine_kernel_sparsity, get_init_kernel_array
 from torchstream.sliding_window.nan_trick import get_nan_map, get_seq_nan_idx
-from torchstream.sliding_window.sliding_window_in_out_rel_sampler import SlidingWindowInOutRelSampler
+from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
+    SlidingWindowInOutRelSampler,
+    most_discriminative_input_size,
+)
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_sampler import SlidingWindowParamsSampler
 from torchstream.sliding_window.sliding_window_stream import (
@@ -548,19 +551,7 @@ class SlidingWindowParamsSolver:
                 assert shape_params_hyps[0] == real_sol
                 return [self.debug_ref_params]
 
-            # TODO: use infogain
-            si, so, isbc, osbc = [np.array(param_group)[..., None] for param_group in zip(*shape_params_hyps)]
-            # FIXME! size
-            out_sizes = np.stack([np.arange(1, 1000)] * len(shape_params_hyps))
-            out_sizes = np.maximum(((out_sizes + isbc) // si) * so + osbc, 0)
-            unique_counts = [len(np.unique(out_sizes[:, i])) for i in range(out_sizes.shape[1])]
-            in_size = np.argmax(unique_counts) + 1
-            assert unique_counts[in_size - 1] > 1
-
-            ########
-            kmin = np.maximum(0, np.ceil(-osbc / so).astype(int))
-
-            ########
+            in_size, out_sizes = most_discriminative_input_size(shape_params_hyps, self.max_in_seq_size)
 
             # FIXME! nan idx
             nan_idx = (in_size // 2, in_size // 2 + 1) if in_size > 10 else None
@@ -569,7 +560,7 @@ class SlidingWindowParamsSolver:
             # Exclude known solutions
             prev_n_hyps = len(shape_params_hyps)
             shape_params_hyps = [
-                params for idx, params in enumerate(shape_params_hyps) if out_sizes[idx, in_size - 1] == out_seq.size
+                params for idx, params in enumerate(shape_params_hyps) if out_sizes[idx] == out_seq.size
             ]
             assert prev_n_hyps > len(shape_params_hyps), "Internal error: did not reject any shape hypotheses"
             logger.info(f"Step {step}: rejected {prev_n_hyps - len(shape_params_hyps)}/{prev_n_hyps} hypotheses")
