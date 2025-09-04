@@ -103,6 +103,21 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, padding: int, dilation
     assert expected_sol in sols
 
 
+# NOTE: our solver has the following modeling limitation: on any layer with an input stride > 1, the current combined
+# stride of the model must be expressible as either 1 / x or x / 1. A couple of examples:
+#   - L1: transposed conv with output stride = 3, L2: conv with input stride = 6
+#       -> after L1 our combined stride is 3 (3 / 1 -> OK) and after L2 it's 3 / 6 = 1 / 2 -> OK. We can model this.
+#   - L1: conv with input stride = 2, L2: conv with input stride = 3
+#       -> after L1 our combined stride is 1 / 2, and after L2 it's 1 / 6. All OK
+#   - L1: transposed conv with output stride = 3, L2: conv with input stride = 2
+#       -> after L1 our combined stride is 3 (3 / 1 -> OK) and after L2 it's 3 / 2 -> NOT OK. The solver will fail.
+#   - L1: conv with input stride = 2, L2: transposed conv with output stride = 3
+#       -> After L1 our combined stride is 1 / 2, and after L2 it's 3 / 2 BUT the check only needs to hold on layers
+#       with an input stride > 1. E.g. adding another conv with input stride = 2 as L3 will fail the solver.
+# Note that in practice, models will almost always meet this requirement. Indeed, most models either only upsample,
+# downsample, or downsample first before upsampling. Only in the case where a model upsamples before downsampling
+# could we have this issue (provided the strides do not meet the condition) - and I don't know yet of such a model.
+# TODO! This should be a comment within the solver
 @pytest.mark.parametrize(
     "conv_params",
     [

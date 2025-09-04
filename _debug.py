@@ -6,13 +6,11 @@ from torch.nn import Conv1d
 
 from tests.rng import set_seed
 from torchstream.sequence.seq_spec import SeqSpec
-from torchstream.sliding_window.nan_trick import get_nan_map
+from torchstream.sliding_window.sliding_window_in_out_rel_sampler import SlidingWindowInOutRelSampler
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_solver import (
     find_sliding_window_params_for_transform,
 )
-from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
-from torchstream.stream_equivalence import test_stream_equivalent
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
@@ -30,35 +28,54 @@ def trsfm(x):
 
 real_sol = SlidingWindowParams(kernel_size_in=3, left_pad=2)
 
-if False or True:
+if False:  # or True:
     sols = find_sliding_window_params_for_transform(trsfm, SeqSpec((1, 1, -1)), debug_ref_params=real_sol)
     quit()
 
 
-if False:  # or True:
-    # in_len, in_nan_idx = find_nan_trick_params_by_infogain(hypotheses)
-    # print(f"{in_len=}, {in_nan_idx=}")
-    # print()
+def f(x):
+    x = (x + 2) // 3 + 3
+    x = (x - 2) * 2 - 3
+    x = (x + 2) // 4 + 3
+    x = (x - 3) * 7 - 1
+    return max(x, 0)
 
-    # gt_hyp = hypotheses[0]
-    # in_nan_idx = 2
-    # nan_map = get_nan_map(gt_hyp, 7, (in_nan_idx, in_nan_idx + 1))
-    # out_nan_idx = np.where(nan_map > 0)[0]
 
-    for i in hypotheses:
-        print("NaN map:", get_nan_map(i, 7, (2, 3)))
-        for j, x in enumerate(i.get_inverse_kernel_map(10)):
-            print("Inv map", j, x)
-        check_nan_trick(i, 7, 3, (2, 3), np.array([0, 1]))
-        print("---\n")
+in_out_rel_sampler = SlidingWindowInOutRelSampler()
+in_out_rel_sampler.add_in_out_size(1, f(1))
 
-    quit()
+shape_params_hyps = []
+for step in range(1, 1000000):
+    shape_params_hyps = in_out_rel_sampler.get_new_solutions(shape_params_hyps)
+    print("step", step, shape_params_hyps)
 
-in_spec = SeqSpec((1, 1, -1))
-for _ in range(1):
-    print(_)
-    test_stream_equivalent(
-        trsfm,
-        SlidingWindowStream(trsfm, real_sol, in_spec),
-        # in_step_sizes=tuple(np.random.randint(1, 30, size=200)),
-    )
+    if len(shape_params_hyps) <= 1:
+        params = shape_params_hyps[0]
+
+        def g(x):
+            return max(0, ((x + params[2]) // params[0]) * params[1] + params[3])
+
+        for i in range(200):
+            assert f(i) == g(i), (i, f(i), g(i))
+        print("passed")
+        quit()
+
+    # TODO: use infogain
+    np_si, np_so, np_isbc, np_osbc = [np.array(param_group)[..., None] for param_group in zip(*shape_params_hyps)]
+    # FIXME! size
+    out_sizes = np.stack([np.arange(1, 1000)] * len(shape_params_hyps))
+    out_sizes = np.maximum(((out_sizes + np_isbc) // np_si) * np_so + np_osbc, 0)
+    unique_counts = [len(np.unique(out_sizes[:, i])) for i in range(out_sizes.shape[1])]
+    in_size = int(np.argmax(unique_counts)) + 1
+    assert unique_counts[in_size - 1] > 1
+
+    out_size = f(in_size)
+    in_out_rel_sampler.add_in_out_size(in_size, out_size)
+
+    # Exclude known solutions
+    prev_n_hyps = len(shape_params_hyps)
+    shape_params_hyps = [
+        params for idx, params in enumerate(shape_params_hyps) if out_sizes[idx, in_size - 1] == out_size
+    ]
+    assert prev_n_hyps > len(shape_params_hyps), "Internal error: did not reject any shape hypotheses"
+    print(f"Step {step}: rejected {prev_n_hyps - len(shape_params_hyps)}/{prev_n_hyps} hypotheses")
