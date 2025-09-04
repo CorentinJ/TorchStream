@@ -10,6 +10,8 @@ license-files = ["LICENSE"]
 requires-python = ">=3.8"
 dependencies = [
     "numpy>=1.23.0",
+    # FIXME! only for development
+    "pandas>=2.0.3",
     "pytest-profiling>=1.8.1",
     "pytest>=8.3.4",
     "torch>=1.11.0",
@@ -22,7 +24,7 @@ Repository = "https://github.com/CorentinJ/TorchStream"
 [tool.setuptools.packages.find]
 include = ["torchstream*"]
 
-# Defining a build system lets us install the project as a dev packagei
+# Defining a build system lets us install the project as a dev package
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"

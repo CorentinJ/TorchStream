@@ -549,15 +549,18 @@ class SlidingWindowParamsSolver:
                 return [self.debug_ref_params]
 
             # TODO: use infogain
-            np_si, np_so, np_isbc, np_osbc = [
-                np.array(param_group)[..., None] for param_group in zip(*shape_params_hyps)
-            ]
+            si, so, isbc, osbc = [np.array(param_group)[..., None] for param_group in zip(*shape_params_hyps)]
             # FIXME! size
             out_sizes = np.stack([np.arange(1, 1000)] * len(shape_params_hyps))
-            out_sizes = np.maximum(((out_sizes + np_isbc) // np_si) * np_so + np_osbc, 0)
+            out_sizes = np.maximum(((out_sizes + isbc) // si) * so + osbc, 0)
             unique_counts = [len(np.unique(out_sizes[:, i])) for i in range(out_sizes.shape[1])]
             in_size = np.argmax(unique_counts) + 1
             assert unique_counts[in_size - 1] > 1
+
+            ########
+            kmin = np.maximum(0, np.ceil(-osbc / so).astype(int))
+
+            ########
 
             # FIXME! nan idx
             nan_idx = (in_size // 2, in_size // 2 + 1) if in_size > 10 else None
