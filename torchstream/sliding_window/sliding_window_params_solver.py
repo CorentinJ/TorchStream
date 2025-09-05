@@ -521,11 +521,7 @@ class SlidingWindowParamsSolver:
 
         shape_params_hyps = []
         for step in range(1, 1000000):
-            import time
-
-            start = time.perf_counter()
             shape_params_hyps = self.in_out_rel_sampler.get_new_solutions(shape_params_hyps)
-            logger.debug(f"SOMETHING: {time.perf_counter() - start:.03f}s")
 
             log_str = f"Step {step} params:"
             for params in shape_params_hyps:
@@ -551,7 +547,13 @@ class SlidingWindowParamsSolver:
                 assert shape_params_hyps[0] == real_sol
                 return [self.debug_ref_params]
 
-            in_size, out_sizes = most_discriminative_input_size(shape_params_hyps, self.max_in_seq_size)
+            in_size, out_sizes = most_discriminative_input_size(
+                shape_params_hyps,
+                # Heuristic: we don't need the full input size range to discriminate between hypotheses, so we take
+                # a fraction of it to avoid having too many large inputs, with virtually the same infogain at each
+                # step.
+                self.max_in_seq_size // 3,
+            )
 
             # FIXME! nan idx
             nan_idx = (in_size // 2, in_size // 2 + 1) if in_size > 10 else None

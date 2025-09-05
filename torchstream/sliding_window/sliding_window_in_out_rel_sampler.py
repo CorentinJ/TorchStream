@@ -45,7 +45,7 @@ class SlidingWindowInOutRelSampler:
         out_len_var = self.s_o * quotient + self.osbc
         self.optimizer.add((out_len_var <= 0) if out_len == 0 else (out_len_var == out_len))
 
-    def get_new_solutions(self, known_sols: List, max_sols=10):
+    def get_new_solutions(self, known_sols: List, max_sols=2):
         # TODO: doc
         out_sols = list(known_sols)
 
@@ -85,10 +85,9 @@ class SlidingWindowInOutRelSampler:
 
 
 def most_discriminative_input_size(
-    # FIXME!: use entropy by default?
     shape_params: list[tuple],
     max_input_size=10_000,
-    method="n_unique",
+    method="entropy",
 ) -> tuple[int, np.ndarray]:
     si, so, isbc, osbc = [np.array(param_group)[..., None] for param_group in zip(*shape_params)]
 
