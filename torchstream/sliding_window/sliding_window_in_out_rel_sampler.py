@@ -84,7 +84,7 @@ class SlidingWindowInOutRelSampler:
         return out_sols
 
 
-def most_discriminative_input_size(
+def input_size_by_max_infogain(
     shape_params: list[tuple],
     max_input_size=10_000,
     method="entropy",
@@ -94,7 +94,7 @@ def most_discriminative_input_size(
     out_sizes = np.stack([np.arange(0, max_input_size)] * len(shape_params))
     out_sizes = np.maximum(((out_sizes + isbc) // si) * so + osbc, 0)
 
-    if method == "n_unique":
+    if len(shape_params) <= 2 or method == "n_unique":
         # Vectorized method for counting unique values
         unique_counts = 1 + np.count_nonzero(np.diff(np.sort(out_sizes, axis=0), axis=0), axis=0)
         in_size = int(np.argmax(unique_counts[1:])) + 1

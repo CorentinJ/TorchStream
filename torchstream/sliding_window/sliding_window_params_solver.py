@@ -16,7 +16,7 @@ from torchstream.sliding_window.kernel_sparsity import determine_kernel_sparsity
 from torchstream.sliding_window.nan_trick import get_nan_map, get_seq_nan_idx
 from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
     SlidingWindowInOutRelSampler,
-    most_discriminative_input_size,
+    input_size_by_max_infogain,
 )
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_sampler import SlidingWindowParamsSampler
@@ -28,6 +28,21 @@ from torchstream.sliding_window.sliding_window_stream import (
 from torchstream.stream_equivalence import test_stream_equivalent
 
 logger = logging.getLogger(__name__)
+
+
+def _compare_params_str(params: tuple, real_params: tuple | None) -> str:
+    assert not real_params or len(params) == len(real_params)
+    if real_params is None:
+        return ", ".join(map(str, params))
+    if real_params != params:
+        return ", ".join(
+            f"{p}"
+            + ("" if p == p_ref else (f"{colors.RED}(>{p_ref})" if p > p_ref else f"{colors.GREEN}(<{p_ref})"))
+            + colors.RESET
+            for p, p_ref in zip(params, real_params)
+        )
+    else:
+        return colors.BLUE + ", ".join(map(str, params)) + colors.RESET
 
 
 class SlidingWindowParamsSolver:
@@ -87,6 +102,7 @@ class SlidingWindowParamsSolver:
         self.atol = atol
 
         self.in_out_rel_sampler = SlidingWindowInOutRelSampler()
+        self.in_out_rel_params = None
         self.sli_params_sampler = SlidingWindowParamsSampler()
         self.hypotheses: List[SlidingWindowParamsSolver.Hypothesis] = []
         self.rejected_hypotheses: List[SlidingWindowParamsSolver.Hypothesis] = []
@@ -408,10 +424,11 @@ class SlidingWindowParamsSolver:
 
             self.debug_ref_params = None
 
-    def solve__(self) -> List[SlidingWindowParams]:
+    def run_initial_input(self) -> dict:
+        # TODO! doc
         # In the first part of the process, we'll forward inputs to the transform and stop as soon as we get a
         # output sequence of non-zero size
-        while True:
+        while not self.nan_trick_history:
             # Use sane defaults for the NaN trick
             out_seq, _ = self.run_nan_trick(self.init_seq_size, (self.init_seq_size // 2, self.init_seq_size // 2 + 1))
             if out_seq.size:
@@ -425,8 +442,65 @@ class SlidingWindowParamsSolver:
                 f"Increasing init sequence size to {self.init_seq_size}"
             )
 
-        # In the second part, we sample hypotheses given observed inputs/outputs and continuously refine them
-        sampler_times = []
+        return self.nan_trick_history[0]
+
+    def find_in_out_rel_params(self) -> tuple[int, int, int, int]:
+        # TODO! doc
+        if self.in_out_rel_params:
+            return self.in_out_rel_params
+
+        # Ensure we have at least one example input before starting
+        self.run_initial_input()
+
+        real_sol = get_streaming_params(self.debug_ref_params)[:4] if self.debug_ref_params else None
+
+        step = 0
+        shape_params_hyps = []
+        while not self.in_out_rel_params:
+            # Sample new shape parameters
+            shape_params_hyps = self.in_out_rel_sampler.get_new_solutions(shape_params_hyps)
+            log_str = f"[In/out rel] Step {step} params:\n\t"
+            log_str += "\n\t".join(_compare_params_str(params, real_sol) for params in shape_params_hyps)
+            logger.info(log_str)
+
+            # Our sampler explores the entire space, so if we have no solution, the transform is not a sliding window.
+            # If we have only one solution, it is the correct one and does not require further testing.
+            if not len(shape_params_hyps):
+                raise RuntimeError(
+                    "Could not determine input/output size relationship for your model. This means that your model "
+                    "does not behave like a sliding window. If your model is indeed a succession of sliding window "
+                    "operations, you must have upsampling operations (e.g. conv transposed) followed by a downsampling "
+                    "operation (e.g. conv, pool) with respective strides that cannot be expressed as a 1/x or x/1 "
+                    "ratio of integers.\n"
+                    "Either way, or if you believe this is a bug, opening an issue on the TorchStream repo would be "
+                    "greatly appreciated: https://github.com/CorentinJ/TorchStream/issues"
+                )
+            if len(shape_params_hyps) == 1:
+                self.in_out_rel_params = shape_params_hyps[0]
+                break
+
+            # Discriminate between hypotheses by finding an input size that will allow us to reject at least one of
+            # them based on the observed output size of the relation.
+            in_size, out_sizes = input_size_by_max_infogain(shape_params_hyps)
+            # TODO? should we try different nan idx values here already?
+            nan_idx = (in_size // 2, in_size // 2 + 1)
+            out_seq, _ = self.run_nan_trick(in_size, nan_idx)
+
+            # Exclude solutions that do not match the observed output size
+            prev_n_hyps = len(shape_params_hyps)
+            shape_params_hyps = [
+                params for idx, params in enumerate(shape_params_hyps) if out_sizes[idx] == out_seq.size
+            ]
+            assert prev_n_hyps > len(shape_params_hyps), "Internal error: did not reject any shape hypotheses"
+            logger.info(
+                f"[In/out rel] Step {step}: rejected {prev_n_hyps - len(shape_params_hyps)}/{prev_n_hyps} hypotheses"
+            )
+
+            step += 1
+
+        return self.in_out_rel_params
+
+    def temp(self):
         while True:
             # Sample sliding window parameters
             # FIXME more interesting timing infos
@@ -483,89 +557,13 @@ class SlidingWindowParamsSolver:
                     )
 
                     logger.info(
-                        f"Step {len(sampler_times)}: "
-                        f"rejected {prev_n_hyps - len(self.hypotheses)}/{prev_n_hyps} hypotheses"
+                        f"Step {len(sampler_times)}: rejected {prev_n_hyps - len(self.hypotheses)}/{prev_n_hyps} hypotheses"
                     )
-
-        # logger.info(
-        #     f"Step {self.steps}: "
-        #     # FIXME
-        #     f"sampled {len(sampler_times)} new hypotheses "
-        #     f"in {sum(sampler_times) * 1000:.0f}ms "
-        #     f"(mean={np.mean(sampler_times) * 1000:.0f}ms), "
-        # )
 
         logger.debug(f"Hypotheses at the end of solver execution: {self.hypotheses}")
 
         # TODO: sort by param complexity
-        return [hypothesis.params for hypothesis in self.hypotheses]
-
-    def solve(self) -> List[SlidingWindowParams]:
-        # In the first part of the process, we'll forward inputs to the transform and stop as soon as we get a
-        # output sequence of non-zero size
-        while True:
-            # Use sane defaults for the NaN trick
-            out_seq, _ = self.run_nan_trick(self.init_seq_size, (self.init_seq_size // 2, self.init_seq_size // 2 + 1))
-            if out_seq.size:
-                break
-
-            # As long as we haven't had a valid output, we'll increase the input size. We do this before involving
-            # the sampler, otherwise we may be stuck sampling for a while before getting decent candidates.
-            self.init_seq_size = min(10 * self.init_seq_size, self.max_in_seq_size)
-            logger.info(
-                f"Transform failed with input size {self.nan_trick_history[-1]['in_seq'].size}. "
-                f"Increasing init sequence size to {self.init_seq_size}"
-            )
-
-        real_sol = get_streaming_params(self.debug_ref_params)[:4]
-
-        shape_params_hyps = []
-        for step in range(1, 1000000):
-            shape_params_hyps = self.in_out_rel_sampler.get_new_solutions(shape_params_hyps)
-
-            log_str = f"Step {step} params:"
-            for params in shape_params_hyps:
-                if real_sol != params:
-                    stream_param_comp_str = ", ".join(
-                        f"{p}"
-                        + (
-                            ""
-                            if p == p_ref
-                            else (f"{colors.RED}(>{p_ref})" if p > p_ref else f"{colors.GREEN}(<{p_ref})")
-                        )
-                        + colors.RESET
-                        for p, p_ref in zip(params, real_sol)
-                    )
-                else:
-                    stream_param_comp_str = colors.BLUE + ", ".join(map(str, params)) + colors.RESET
-                log_str += f"\n\t{stream_param_comp_str or '/'}"
-            logger.info(log_str)
-
-            if not len(shape_params_hyps):
-                return []
-            if len(shape_params_hyps) == 1:
-                assert shape_params_hyps[0] == real_sol
-                return [self.debug_ref_params]
-
-            in_size, out_sizes = most_discriminative_input_size(
-                shape_params_hyps,
-                # Heuristic: we don't need the full input size range to discriminate between hypotheses, so we take
-                # a fraction of it to avoid having too many large inputs, with virtually the same infogain at each
-                # step.
-                self.max_in_seq_size // 3,
-            )
-
-            # FIXME! nan idx
-            nan_idx = (in_size // 2, in_size // 2 + 1) if in_size > 10 else None
-            out_seq, _ = self.run_nan_trick(in_size, nan_idx)
-
-            # Exclude known solutions
-            prev_n_hyps = len(shape_params_hyps)
-            shape_params_hyps = [
-                params for idx, params in enumerate(shape_params_hyps) if out_sizes[idx] == out_seq.size
-            ]
-            assert prev_n_hyps > len(shape_params_hyps), "Internal error: did not reject any shape hypotheses"
-            logger.info(f"Step {step}: rejected {prev_n_hyps - len(shape_params_hyps)}/{prev_n_hyps} hypotheses")
+        # return [hypothesis.params for hypothesis in self.hypotheses]
 
 
 # TODO: allow transforms with multiple sequential inputs
@@ -602,7 +600,17 @@ def find_sliding_window_params_for_transform(
     this size.
     FIXME: incorrect doc
     """
-    return SlidingWindowParamsSolver(
+    # return SlidingWindowParamsSolver(
+    #     trsfm=trsfm,
+    #     input_provider=input_provider,
+    #     out_spec=out_spec,
+    #     init_seq_size=init_seq_size,
+    #     max_in_seq_size=max_in_seq_size,
+    #     atol=atol,
+    #     debug_ref_params=debug_ref_params,
+    # ).solve()
+    # FIXME!
+    a = SlidingWindowParamsSolver(
         trsfm=trsfm,
         input_provider=input_provider,
         out_spec=out_spec,
@@ -610,4 +618,10 @@ def find_sliding_window_params_for_transform(
         max_in_seq_size=max_in_seq_size,
         atol=atol,
         debug_ref_params=debug_ref_params,
-    ).solve()
+    ).find_in_out_rel_params()
+
+    real_sol = get_streaming_params(debug_ref_params)[:4]
+    if a == real_sol:
+        return [debug_ref_params]
+    else:
+        return []
