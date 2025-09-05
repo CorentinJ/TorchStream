@@ -2,7 +2,7 @@ import logging
 from typing import List
 
 import numpy as np
-from z3 import And, If, Ints, Not, Or, Solver, sat
+from z3 import And, Int, Ints, Not, Or, Solver, sat
 
 logger = logging.getLogger(__name__)
 
@@ -36,13 +36,14 @@ class SlidingWindowInOutRelSampler:
         if out_len < 0:
             raise ValueError("The output length must be a non-negative integer")
 
-        # FIXME! optim
-        def z3max(a, b):
-            return If(a > b, a, b)
+        # z3 efficient encoding of out_len = max(0, ((in_len + isbc) // s_i) * s_o + osbc)
+        quotient = Int(f"quotient_{in_len}_{out_len}")
+        self.optimizer.add(quotient >= 0, quotient <= in_len + self.isbc)
+        self.optimizer.add(self.s_i * quotient <= in_len + self.isbc)
+        self.optimizer.add(in_len + self.isbc < self.s_i * (quotient + 1))
 
-        out_len_t1 = (in_len + self.isbc) / self.s_i
-        out_len_var = z3max(0, out_len_t1 * self.s_o + self.osbc)
-        self.optimizer.add(out_len == out_len_var)
+        out_len_var = self.s_o * quotient + self.osbc
+        self.optimizer.add((out_len_var <= 0) if out_len == 0 else (out_len_var == out_len))
 
     def get_new_solutions(self, known_sols: List, max_sols=10):
         # TODO: doc
