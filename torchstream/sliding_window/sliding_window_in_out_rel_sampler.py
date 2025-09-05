@@ -83,43 +83,53 @@ class SlidingWindowInOutRelSampler:
         return out_sols
 
 
-def most_discriminative_input_size(shape_params: list[tuple], max_input_size=10_000) -> tuple[int, np.ndarray]:
-    # TODO: use infogain
+def most_discriminative_input_size(
+    # FIXME!: use entropy by default?
+    shape_params: list[tuple],
+    max_input_size=10_000,
+    method="n_unique",
+) -> tuple[int, np.ndarray]:
     si, so, isbc, osbc = [np.array(param_group)[..., None] for param_group in zip(*shape_params)]
 
     out_sizes = np.stack([np.arange(0, max_input_size)] * len(shape_params))
     out_sizes = np.maximum(((out_sizes + isbc) // si) * so + osbc, 0)
-    # Vectorized method for counting unique values
-    unique_counts = 1 + np.count_nonzero(np.diff(np.sort(out_sizes, axis=0), axis=0), axis=0)
 
-    in_size = int(np.argmax(unique_counts[1:])) + 1
-    assert unique_counts[in_size] > 1
+    if method == "n_unique":
+        # Vectorized method for counting unique values
+        unique_counts = 1 + np.count_nonzero(np.diff(np.sort(out_sizes, axis=0), axis=0), axis=0)
+        in_size = int(np.argmax(unique_counts[1:])) + 1
+        assert unique_counts[in_size] > 1
+
+    elif method == "entropy":
+        # Vectorized entropy computation
+        R, C = out_sizes.shape
+        s = np.sort(out_sizes, axis=0)
+        sf = s.ravel(order="F")
+
+        breaks = np.empty(R * C, dtype=bool)
+        breaks[0] = True
+        at_col_start = np.zeros(R * C, dtype=bool)
+        at_col_start[::R] = True
+
+        same = sf[1:] == sf[:-1]
+        breaks[1:] = at_col_start[1:] | (~same)
+
+        start = np.flatnonzero(breaks)
+        end = np.r_[start[1:], R * C]
+        lens = end - start
+        cols = start // R
+
+        H = np.zeros(C, dtype=float)
+        p = lens.astype(float) / float(R)
+        np.add.at(H, cols, -(p * np.log2(p)))
+
+        in_size = int(np.argmax(H[1:])) + 1
+        assert H[in_size] > 0
+
+    else:
+        raise ValueError(f"Unknown method '{method}'")
 
     return in_size, out_sizes[:, in_size]
-
-    R, C = out_sizes.shape  # here R=10, C=10000
-    s = np.sort(out_sizes, axis=0)  # sort each column
-    sf = s.ravel(order="F")  # stack columns (Fortran order)
-
-    # mark run starts in the flattened array (treat NaNs as equal)
-    breaks = np.empty(R * C, dtype=bool)
-    breaks[0] = True
-    at_col_start = np.zeros(R * C, dtype=bool)
-    at_col_start[::R] = True
-
-    same = sf[1:] == sf[:-1]
-    breaks[1:] = at_col_start[1:] | (~same)
-
-    # run-lengths and their column ids
-    start = np.flatnonzero(breaks)  # start index of each run
-    end = np.r_[start[1:], R * C]  # end index (exclusive)
-    lens = end - start  # run lengths = counts per unique value
-    cols = start // R  # which column each run belongs to
-
-    # entropy per column: H = -∑ (len/R) log2(len/R)
-    H = np.zeros(C, dtype=float)
-    p = lens.astype(float) / float(R)
-    np.add.at(H, cols, -(p * np.log2(p)))
 
     # NOTE: I started writing this more efficient version but then I realized the above clocks at 1ms, and we're not
     # going to use input sizes that are magnitudes larger than 10^4 anyway.
