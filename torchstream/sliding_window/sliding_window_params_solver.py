@@ -1,7 +1,6 @@
 import itertools
 import logging
 import math
-import time
 from dataclasses import dataclass
 from functools import partial
 from typing import Callable, Iterable, List, Tuple
@@ -21,7 +20,6 @@ from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_sampler import SlidingWindowParamsSampler
 from torchstream.sliding_window.sliding_window_stream import (
-    IncorrectSlidingWindowParametersError,
     SlidingWindowStream,
     get_streaming_params,
 )
@@ -329,8 +327,6 @@ class SlidingWindowParamsSolver:
 
         # FIXME! not relying on a try/catch mechanism
         try:
-            # TODO: clean up the streaming impl to clearly reflect that it fails if the output size is not as expected
-            # TODO? Cache the transform outputs
             test_stream_equivalent(
                 self._trsfm_with_tracking,
                 SlidingWindowStream(self._trsfm_with_tracking, hypothesis.params, in_seq.spec, self.out_spec),
@@ -344,13 +340,9 @@ class SlidingWindowParamsSolver:
             # FIXME: not elegant given caller
             self.sli_params_sampler.add_streamable_params(hypothesis.params)
             self._debug_check_ref_params("accepting an hypothesis for streaming", hypothesis.params)
-            # FIXME!! RESTORE
-            # for other_hyp in list(self.hypotheses):
-            #     if not self.sampler.is_compatible(other_hyp.params):
-            #         other_hyp.suboptimal_rejected = True
-
-        except IncorrectSlidingWindowParametersError:
-            hypothesis.streaming_rejected = True
+            for other_hyp in list(self.hypotheses):
+                if not self.sli_params_sampler.is_compatible(other_hyp.params):
+                    other_hyp.suboptimal_rejected = True
 
         except ValueError:
             hypothesis.streaming_rejected = True
@@ -454,7 +446,7 @@ class SlidingWindowParamsSolver:
 
         real_sol = get_streaming_params(self.debug_ref_params)[:4] if self.debug_ref_params else None
 
-        step = 0
+        step = 1
         shape_params_hyps = []
         while not self.in_out_rel_params:
             # Sample new shape parameters
@@ -477,6 +469,7 @@ class SlidingWindowParamsSolver:
                 )
             if len(shape_params_hyps) == 1:
                 self.in_out_rel_params = shape_params_hyps[0]
+                self.sli_params_sampler.set_in_out_size_relation(*self.in_out_rel_params)
                 break
 
             # Discriminate between hypotheses by finding an input size that will allow us to reject at least one of
@@ -500,15 +493,19 @@ class SlidingWindowParamsSolver:
 
         return self.in_out_rel_params
 
-    def temp(self):
+    def find_sliding_window_params(self):
+        # Start by determining the input/output size relationship, it will heavily simplify the param search to
+        # know it in advance
+        self.find_in_out_rel_params()
+
+        real_stream_sol = get_streaming_params(self.debug_ref_params) if self.debug_ref_params else None
+
+        step = 1
         while True:
             # Sample sliding window parameters
-            # FIXME more interesting timing infos
-            sampler_start_time = time.perf_counter()
-            params = self.sli_params_sampler.get_new_sli_solution([hyp.params for hyp in self.hypotheses])
+            params = self.sli_params_sampler.get_new_solution([hyp.params for hyp in self.hypotheses])
             if params is None:
                 break
-            sampler_times.append(time.perf_counter() - sampler_start_time)
 
             # Check if the new parameters are compatible with the transform, possibly rejecting older hypotheses
             # in the process
@@ -517,31 +514,13 @@ class SlidingWindowParamsSolver:
             self.update_all_hypotheses()
 
             hyp_stream_params = get_streaming_params(hypothesis.params)
-            if self.debug_ref_params:
-                debug_ref_stream_params = get_streaming_params(self.debug_ref_params)
-                if debug_ref_stream_params != hyp_stream_params:
-                    stream_param_comp_str = ", ".join(
-                        f"{p}"
-                        + (
-                            ""
-                            if p == p_ref
-                            else (f"{colors.RED}(>{p_ref})" if p > p_ref else f"{colors.GREEN}(<{p_ref})")
-                        )
-                        + colors.RESET
-                        for p, p_ref in zip(hyp_stream_params, debug_ref_stream_params)
-                    )
-                else:
-                    stream_param_comp_str = colors.GREEN + ", ".join(map(str, hyp_stream_params)) + colors.RESET
-            else:
-                stream_param_comp_str = ", ".join(map(str, hyp_stream_params))
-
             logger.debug(
-                f"Step {len(sampler_times)}: "
+                f"[Sli params] Step {step}: "
                 f"{'REJECTED' if hypothesis.rejected else 'ACCEPTED'} ("
                 f"kernel={((colors.RED + 'FAIL') if hypothesis.nan_trick_rejected else (colors.GREEN + 'OK')) + colors.RESET}, "
                 f"stream={((colors.RED + 'FAIL') if hypothesis.streaming_rejected else (colors.GREEN + 'OK')) + colors.RESET}) "
                 f"new hypothesis {hypothesis.params} "
-                f"with streaming params ({stream_param_comp_str})"
+                f"with streaming params ({_compare_params_str(hyp_stream_params, real_stream_sol)})"
             )
 
             # In the event we now have multiple compatible hypotheses, we can search for a specific input that will
@@ -556,14 +535,14 @@ class SlidingWindowParamsSolver:
                         "Internal error: NaN trick did not discard any hypotheses"
                     )
 
-                    logger.info(
-                        f"Step {len(sampler_times)}: rejected {prev_n_hyps - len(self.hypotheses)}/{prev_n_hyps} hypotheses"
-                    )
+                    logger.info(f"Step {step}: rejected {prev_n_hyps - len(self.hypotheses)}/{prev_n_hyps} hypotheses")
+
+            step += 1
 
         logger.debug(f"Hypotheses at the end of solver execution: {self.hypotheses}")
 
         # TODO: sort by param complexity
-        # return [hypothesis.params for hypothesis in self.hypotheses]
+        return [hypothesis.params for hypothesis in self.hypotheses]
 
 
 # TODO: allow transforms with multiple sequential inputs
@@ -600,15 +579,15 @@ def find_sliding_window_params_for_transform(
     this size.
     FIXME: incorrect doc
     """
-    # return SlidingWindowParamsSolver(
-    #     trsfm=trsfm,
-    #     input_provider=input_provider,
-    #     out_spec=out_spec,
-    #     init_seq_size=init_seq_size,
-    #     max_in_seq_size=max_in_seq_size,
-    #     atol=atol,
-    #     debug_ref_params=debug_ref_params,
-    # ).solve()
+    return SlidingWindowParamsSolver(
+        trsfm=trsfm,
+        input_provider=input_provider,
+        out_spec=out_spec,
+        init_seq_size=init_seq_size,
+        max_in_seq_size=max_in_seq_size,
+        atol=atol,
+        debug_ref_params=debug_ref_params,
+    ).find_sliding_window_params()
     # FIXME!
     a = SlidingWindowParamsSolver(
         trsfm=trsfm,

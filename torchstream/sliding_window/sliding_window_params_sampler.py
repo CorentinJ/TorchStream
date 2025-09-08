@@ -1,18 +1,21 @@
 import logging
 from typing import List, Tuple
 
-from z3 import And, Bool, If, Implies, Int, Ints, Or, Solver, sat
+from z3 import And, Bool, Implies, Int, Ints, Not, Or, Solver, sat
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+from torchstream.sliding_window.sliding_window_stream_params import get_streaming_params
+from torchstream.sliding_window.threshold_harvester import ThresholdHarvester
 
 logger = logging.getLogger(__name__)
 
 
 class SlidingWindowParamsSampler:
     def __init__(self):
+        # TODO: doc
+
         ## Sliding window parameters
-        # Input and output strides of the sliding window.
-        # NOTE: these are the only two parameters shared as is between the two optimizers
+        # Input and output strides
         self.s_i, self.s_o = Ints("s_i s_o")
         # Input and output kernel sizes
         # NOTE: it's technically the kernel span, i.e. the whole span of the kernel even when dilation > 1
@@ -27,11 +30,20 @@ class SlidingWindowParamsSampler:
         # for transposed convolutions
         self.t_o = Int("t_o")
 
-        # Optimizer dedicated to finding sliding window parameter values
-        self.sli_optimizer = Solver()
-        self.sli_optimizer.add(
-            self.s_i > 0,
-            self.s_o > 0,
+        ## Streaming parameters
+        # Derive from the sliding window parameters:
+        #   - Input and output size biases in computation, canonicalized to ensure uniqueness of the relation
+        #   - Input and output delays in computation, canonicalized to ensure uniqueness of the relation
+        #   - Input context size: number of elements necessary as permanent input context in streaming
+        _, _, self.isbc, self.osbc, self.idc, self.odc, self.ictx = get_streaming_params(
+            self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
+        )
+
+        # TODO! clarify how si/so/isbc/osbc are set
+        self.in_out_size_params = None
+
+        self.optimizer = Solver()
+        self.optimizer.add(
             # It would be highly unusual to have a stride larger than the kernel size, leading to inputs being unused or
             # to gaps in the output.
             # In general, since we allow kernels with gaps, the stride is at most the largest number of consecutive
@@ -48,43 +60,26 @@ class SlidingWindowParamsSampler:
             # inputs
             0 <= self.t_o,
             self.t_o < self.k_o,
+            # Streaming params
+            self.idc >= 0,
+            self.idc < self.s_i,
+            # NOTE: it's 2 - k_i but I set a lower bound 1 - k_i to avoid dealing with the case k_i == 1
+            self.odc >= 1 - self.k_i,
+            self.ictx >= 0,
         )
-
-        ## Sliding window stream parameters
-        # Input and output size biases in computation, canonicalized to ensure uniqueness of the relation
-        self.isbc, self.osbc = Ints("isbc osbc")
-        # Input and output delays in computation, canonicalized to ensure uniqueness of the relation
-        self.idc, self.odc = Ints("idc odc")
-        # Input context size: minimum number of elements necessary as permanent input context in streaming
-        self.ictx = Int("ictx")
-
-        # Optimizer dedicated to finding sliding window stream parameter values
-        self.stream_optimizer = Solver()
-        self.stream_optimizer.add(
-            self.s_i > 0,
-            self.s_o > 0,
-            self.isbc >= 0,
-            self.isbc < self.s_i,
-            # osbc is the only parameter that can be negative -> no constraint here
-            # self.idc >= 0,
-            # self.idc < self.s_i,
-            # self.odc >= 0,
-            # self.ictx >= 0,
-        )
-
         # FIXME!
         # Bounds for the input size bias: -k_i < isb <= 2 * (k_i - 1)
         # With canonicalization we have 0 <= isbc < s_i (remainder of the division of isb by s_i)
         # Bounds for the output size bias: 2 - k_o <= osb <= k_o
         # With canonicalization we have osbc = osb + (isb // s_i) * s_o
-        # Bounds for the input delay: 0 < id <= k_i
+        # Bounds for the input delay: 2 - k_i < id <= k_i
         # With canonicalization we have 0 <= idc < s_i (remainder of the division of id by s_i)
-        # Bounds for the output delay: 0 <= od < k_o
+        # Bounds for the output delay: 2 - k_i <= od < k_o
         # With canonicalization we have odc = od + (isb // s_i) * s_o
 
         # Blocker for guiding the solver towards simpler solutions first.
         self.solution_cost = self.k_i + self.s_i + self.p_l + self.p_r + self.k_o + self.s_o + self.t_o
-        # self.max_cost_sampler = ThresholdHarvester(lower_bound=4)
+        self.max_cost_sampler = ThresholdHarvester(lower_bound=4)
 
         # Constraints added to keep only new solutions
         self.prev_sol_constraints = []
@@ -118,12 +113,12 @@ class SlidingWindowParamsSampler:
                 raise ValueError("Output range must be non-empty and contained within (0, out_len), or be None")
 
         # Model the input to output size relation with the number of windows
-        constraint_idx = len(self.sli_optimizer.assertions())
+        constraint_idx = len(self.optimizer.assertions())
         c = Int(f"c_{constraint_idx}")
         if (in_len, out_len) not in self.seen_in_out_pairs:
             padded_in_len = self.p_l + in_len + self.p_r
             rem = Int(f"rem_{constraint_idx}")
-            self.sli_optimizer.add(
+            self.optimizer.add(
                 # Two cases: either we have enough input to get one window, either we don't
                 Implies(padded_in_len < self.k_i, c == 0),
                 Implies(padded_in_len >= self.k_i, c >= 1),
@@ -147,14 +142,6 @@ class SlidingWindowParamsSampler:
             )
             self.seen_in_out_pairs.add((in_len, out_len))
 
-        # FIXME! optim
-        def z3max(a, b):
-            return If(a > b, a, b)
-
-        out_len_t1 = (in_len + self.isbc) / self.s_i
-        out_len_var = z3max(0, out_len_t1 * self.s_o + self.osbc)
-        self.stream_optimizer.add(out_len == out_len_var)
-
         # Nan trick - it has many edge cases:
         #   - Input kernels may have gaps (e.g. dilation) and thus hop over some inputs - but a proper model should
         #   have every input seen by at least one window)
@@ -175,7 +162,7 @@ class SlidingWindowParamsSampler:
 
         # The window(s) that output nans must necessarily have seen a nan in their input. We'll model this.
         crs, cre = Ints(f"c_{constraint_idx}_rs c_{constraint_idx}_re")
-        self.sli_optimizer.add(
+        self.optimizer.add(
             crs <= cre,
             # crs is the index of the first window that could possibly output the first nan in the output (we have no
             # guarantee that it is indeed that window, this is a lower bound).
@@ -205,45 +192,93 @@ class SlidingWindowParamsSampler:
         #         )
         #     )
 
-    # def add_streamable_params(self, params: SlidingWindowParams):
-    #     """
-    #     If parameters were found to successfully stream the transform, this method will constrain the optimizer to
-    #     yield only better or equally efficient solutions (in at least one aspect) with the same size parameters.
-    #     """
-    #     # FIXME!!
-    #     # Streaming params
-    #     _, _, self.in_size_bias, self.out_size_bias, self.in_delay, self.out_delay, self.in_context_size = (
-    #         get_streaming_params(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
-    #     )
-    #     stride_in, stride_out, in_size_bias, out_size_bias, delay_in, delay_out, in_ctx = get_streaming_params(params)
+    def set_in_out_size_relation(
+        self, stride_in: int, stride_out: int, in_size_bias_canonical: int, out_size_bias_canonical: int
+    ):
+        assert self.in_out_size_params is None
+        self.in_out_size_params = (stride_in, stride_out, in_size_bias_canonical, out_size_bias_canonical)
+        self.optimizer.add(
+            self.s_i == stride_in,
+            self.s_o == stride_out,
+            self.isbc == in_size_bias_canonical,
+            self.osbc == out_size_bias_canonical,
+        )
 
-    def get_new_sli_solution(self, valid_sols: List[SlidingWindowParams] | None = None) -> SlidingWindowParams | None:
+    def add_streamable_params(self, params: SlidingWindowParams):
+        """
+        If parameters were found to successfully stream the transform, this method will constrain the optimizer to
+        yield only better or equally efficient solutions (in at least one aspect) with the same size parameters.
+        """
+        assert self.in_out_size_params, "Set the input/output size relation before adding streamable params"
+        *in_out_size_params, idc, odc, ictx = get_streaming_params(params)
+        assert in_out_size_params == list(self.in_out_size_params), (
+            "The input/output size parameters must match the set relation"
+        )
+
+        # Constraint that ensures better or equivalent context size
+        self.optimizer.add(
+            Or(
+                And(self.idc == idc, self.odc == odc, self.ictx == ictx),
+                self.idc < idc,
+                self.odc < odc,
+                self.ictx < ictx,
+            )
+        )
+
+    def add_non_streamable_params(self, params: SlidingWindowParams):
+        """
+        If parameters were found to not stream the transform, this method will refrain the optimizer from yielding
+        new solutions with the same size parameters and less context.
+        """
+        assert self.in_out_size_params, "Set the input/output size relation before adding streamable params"
+        *in_out_size_params, idc, odc, ictx = get_streaming_params(params)
+        assert in_out_size_params == list(self.in_out_size_params), (
+            "The input/output size parameters must match the set relation"
+        )
+
+        # Ensure we don't try different identical streaming parameters with less context, that would not work
+        self.optimizer.add(
+            Not(
+                And(
+                    self.idc == idc,
+                    self.odc == odc,
+                    self.ictx <= ictx,
+                )
+            )
+        )
+
+    def get_new_solution(self, valid_sols: List[SlidingWindowParams] | None = None) -> SlidingWindowParams | None:
+        assert self.in_out_size_params, "Set the input/output size relation before sampling solutions"
+
         valid_sols = valid_sols or []
 
         # TODO! doc
         # TODO! iter_new_solutions, mark emitted ones, simplify constraints.
 
-        # max_cost_limit = (
-        #     int(_MAX_COST_REL_LIMIT * max(sum(sol.as_tuple()) for sol in valid_sols))
-        #     if valid_sols
-        #     else _MAX_COST_FLAT_LIMIT
-        # )
+        _MAX_COST_REL_LIMIT = 3.0
+        _MAX_COST_FLAT_LIMIT = 10_000
+
+        max_cost_limit = (
+            int(_MAX_COST_REL_LIMIT * max(sum(sol.as_tuple()) for sol in valid_sols))
+            if valid_sols
+            else _MAX_COST_FLAT_LIMIT
+        )
 
         while True:
-            # max_cost_value = self.max_cost_sampler.next_p()
-            # max_cost_reached = max_cost_value >= max_cost_limit
-            # max_cost_value = min(max_cost_value, max_cost_limit)
-            # guide_constraints = [self.solution_cost <= max_cost_value]
+            max_cost_value = self.max_cost_sampler.next_p()
+            max_cost_reached = max_cost_value >= max_cost_limit
+            max_cost_value = min(max_cost_value, max_cost_limit)
+            guide_constraints = [self.solution_cost <= max_cost_value]
 
             import time
 
             start = time.perf_counter()
-            check = self.sli_optimizer.check()  # guide_constraints)
+            check = self.optimizer.check(guide_constraints)
             # print(f"CHECK: {time.perf_counter() - start:.03f}s - {len(self.sli_optimizer.assertions())} assertions")
             # print("\x1b[31m", self.sli_optimizer.statistics(), "\x1b[39m", sep="")
 
             if check == sat:
-                model = self.sli_optimizer.model()
+                model = self.optimizer.model()
                 model_values = (
                     model[self.k_i].as_long(),
                     model[self.s_i].as_long(),
@@ -264,83 +299,30 @@ class SlidingWindowParamsSampler:
                     self.s_o != model[self.s_o],
                     self.t_o != model[self.t_o],
                 )
-                self.sli_optimizer.add(new_sol_constraint)
+                self.optimizer.add(new_sol_constraint)
                 self.prev_sol_constraints.append(new_sol_constraint)
 
                 # Inform our sampler of the result
-                # cost = sum(model_values)
-                # logger.debug(f"Sampled with max cost={max_cost_value}, got solution with cost={cost}")
-                # self.max_cost_sampler.update(cost)
+                cost = sum(model_values)
+                logger.debug(f"Sampled with max cost={max_cost_value}, got solution with cost={cost}")
+                self.max_cost_sampler.update(cost)
 
                 return SlidingWindowParams(*model_values)
 
             else:
-                # logger.debug(f"Sampled with max cost={max_cost_value}, got nothing")
-                # self.max_cost_sampler.update(None)
+                logger.debug(f"Sampled with max cost={max_cost_value}, got nothing")
+                self.max_cost_sampler.update(None)
 
-                # if max_cost_reached:
-                # self.exhausted = True
-                # return None
-                self.exhausted = True
-                return None
-
-    def get_new_stream_solutions(self):
-        # max_cost_limit = (
-        #     int(_MAX_COST_REL_LIMIT * max(sum(sol.as_tuple()) for sol in valid_sols))
-        #     if valid_sols
-        #     else _MAX_COST_FLAT_LIMIT
-        # )
-
-        sols = []
-        with self.stream_optimizer as temp_optimizer:
-            for i in range(10):
-                # max_cost_value = self.max_cost_sampler.next_p()
-                # max_cost_reached = max_cost_value >= max_cost_limit
-                # max_cost_value = min(max_cost_value, max_cost_limit)
-                # guide_constraints = [self.solution_cost <= max_cost_value]
-
-                import time
-
-                start = time.perf_counter()
-                check = temp_optimizer.check()  # guide_constraints)
-                # print(f"CHECK: {time.perf_counter() - start:.03f}s - {len(temp_optimizer.assertions())} assertions")
-                # print("\x1b[31m", temp_optimizer.statistics(), "\x1b[39m", sep="")
-
-                if check == sat:
-                    model = temp_optimizer.model()
-                    model_values = (
-                        model[self.s_i].as_long(),
-                        model[self.s_o].as_long(),
-                        model[self.isbc].as_long(),
-                        model[self.osbc].as_long(),
-                        # model[self.idc].as_long(),
-                        # model[self.odc].as_long(),
-                    )
-
-                    # Enforce new solutions only
-                    new_sol_constraint = Or(
-                        self.s_i != model[self.s_i],
-                        self.s_o != model[self.s_o],
-                        self.isbc != model[self.isbc],
-                        self.osbc != model[self.osbc],
-                        # self.idc != model[self.idc],
-                        # self.odc != model[self.odc],
-                    )
-                    temp_optimizer.add(new_sol_constraint)
-
-                    sols.append(model_values)
-
-                else:
-                    break
-
-        return sols
+                if max_cost_reached:
+                    self.exhausted = True
+                    return None
 
     def get_violations(self, solution: SlidingWindowParams, include_new_sol_assertions: bool = False):
         # TODO: doc
         unsat_solver = Solver()
 
         trackers = []
-        for idx, assertion in enumerate(self.sli_optimizer.assertions()):
+        for idx, assertion in enumerate(self.optimizer.assertions()):
             if not include_new_sol_assertions and assertion in self.prev_sol_constraints:
                 continue
 
