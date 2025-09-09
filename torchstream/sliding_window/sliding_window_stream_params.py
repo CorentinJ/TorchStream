@@ -104,6 +104,15 @@ def get_streaming_params(*args):
     # Number of input elements that are needed as context
     in_context_size = max_(0, windows_context_size * s_i + in_delay + extra_right_context)
 
+    nob = ceil_div(k_o, s_o) - 1
+    nerw = max_(0, ceil_div(t_o - (k_o - s_o), s_o))
+    # FIXME! as a z3 constraint
+    nb = 1 if s_o == k_o and t_o > 0 else 0
+    erc = max_(0, (nerw + nb) * s_i - p_r)
+    ics = max_(0, (n_left_wins_wasted + nob) * s_i + in_delay + erc)
+    assert ics <= in_context_size, (ics, in_context_size)
+    in_context_size = ics
+
     # Final steps: make the biases & delays canonical so size relations are uniquely determined by a set of parameters
     if isinstance(s_i, int) and isinstance(in_size_bias, int) and isinstance(in_delay, int):
         quotient_bias, in_size_bias_canon = divmod(in_size_bias, s_i)
