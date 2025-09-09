@@ -327,10 +327,13 @@ class SlidingWindowParamsSolver:
 
         # FIXME! not relying on a try/catch mechanism
         try:
+            # TODO! more elegant approach to avoiding stride in floor division issue
+            step_sizes = (7, 4, 12) + (1,) * self.in_out_rel_params[0] + (17, 9)
             test_stream_equivalent(
                 self._trsfm_with_tracking,
                 SlidingWindowStream(self._trsfm_with_tracking, hypothesis.params, in_seq.spec, self.out_spec),
                 in_seq,
+                in_step_sizes=step_sizes,
                 atol=self.atol,
             )
             hypothesis.streaming_rejected = False
