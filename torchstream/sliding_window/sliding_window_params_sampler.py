@@ -215,13 +215,21 @@ class SlidingWindowParamsSampler:
             "The input/output size parameters must match the set relation"
         )
 
-        # Constraint that ensures better or equivalent context size
         self.optimizer.add(
             Or(
+                # We'll accept solutions that are equally efficient
                 And(self.idc == idc, self.odc == odc, self.ictx == ictx),
-                self.idc < idc,
-                self.odc < odc,
+                # Or solutions that have a strictly better context (but possibly more delay)
                 self.ictx < ictx,
+                # Or solutions that have a strictly better delay (but possibly more context)
+                # Because of the nonlinearity of the delay relation, the constraint is a bit more complex
+                # Bear in mind that idc and odc are canonicalized.
+                # delay = ((in_size + idc) // s_i) * s_o + odc
+                And(
+                    Implies(idc == self.idc, odc > self.odc),
+                    Implies(idc > self.idc, odc >= self.odc),
+                    Implies(idc < self.idc, odc - self.odc >= self.s_o),
+                ),
             )
         )
 
