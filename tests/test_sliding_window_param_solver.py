@@ -68,7 +68,7 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, padding: int, dilation
         pytest.skip("Stride should be smaller than the kernel span")
     if padding >= kernel_span:
         pytest.skip(
-            "Output trimming (named padding for transposed convs) should be smaller than the output kernel span"
+            'Output trimming (named "padding" for transposed convs) should be smaller than the output kernel span'
         )
 
     set_seed(0x5EED)
@@ -78,6 +78,8 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, padding: int, dilation
         stride_out=stride,
         out_trim=padding,
     )
+    logger.debug(f"Expected solution: {expected_sol}")
+    logger.debug(f"Stream params: {get_streaming_params(expected_sol)}")
 
     # The torch docs poorly explain the mechanism of transposed convolutions. Here's my take:
     # Each individual input element multiplies the kernel (element-wise). That output is offset by the stride on each

@@ -1,3 +1,4 @@
+import logging
 from typing import Tuple
 
 import numpy as np
@@ -10,7 +11,10 @@ from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.dummy_sliding_window_transform import DummySlidingWindowTransform
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
+from torchstream.sliding_window.sliding_window_stream_params import get_streaming_params
 from torchstream.stream_equivalence import test_stream_equivalent
+
+logger = logging.getLogger(__name__)
 
 
 @pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])
@@ -91,11 +95,13 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, dilation: int, out_tri
         # TODO: handle output padding?
     )
 
-    sliding_window_params = SlidingWindowParams(kernel_size_out=kernel_span, stride_out=stride, out_trim=out_trim)
+    sli_params = SlidingWindowParams(kernel_size_out=kernel_span, stride_out=stride, out_trim=out_trim)
+    logger.debug(f"Sli params: {sli_params}")
+    logger.debug(f"Stream params: {get_streaming_params(sli_params)}")
 
     conv_stream = SlidingWindowStream(
         conv,
-        sliding_window_params,
+        sli_params,
         SeqSpec((1, 1, -1)),
     )
 

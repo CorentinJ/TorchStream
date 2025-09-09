@@ -91,12 +91,6 @@ class SlidingWindowStream(Stream):
         in_seq.drop(wins_to_drop * self.stride_in)
         self.tsfm_out_pos += wins_to_drop * self.stride_out
 
-        # if self._prev_trimmed_output is not None:
-        #     min_size = min(self._prev_trimmed_output.shape[-1], tsfm_out[out_trim_start:out_trim_end].shape[-1])
-        #     for i in range(1, min_size + 1):
-        #         diff = self._prev_trimmed_output[..., :i] - tsfm_out[out_trim_start : out_trim_start + i]
-        #         assert abs(diff.sum().item()) > 1e-5
-
         # If we're trimming on the right, save the trim in case the stream closes before we can compute any
         # new sliding window output.
         self._prev_trimmed_output = tsfm_out[out_trim_end:] if out_trim_end < out_size else None

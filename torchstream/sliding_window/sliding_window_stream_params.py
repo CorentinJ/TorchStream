@@ -8,6 +8,7 @@ from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 IntLike = Union[int, ArithRef]
 
 
+# FIXME! more efficient expression of constraints
 def ceil_div(a: IntLike, b: IntLike) -> IntLike:
     """Ceiling division that works for both Python ints and z3 expressions."""
     if isinstance(a, int) and isinstance(b, int):
@@ -86,6 +87,7 @@ def get_streaming_params(*args):
     # Note that we need to buffer enough past context in order to have the overlapping windows necessary in
     # computing a given output. This induces redundant compute that could be avoided if the reduce operation on
     # overlapping windows (e.g. a vector sum) is known.
+    # TODO: test & implement if useful
     n_overlapping_out_wins = ceil_div(k_o, s_o) - 1
 
     # Extra windows necessary to make up for windows lost on the left due to output trimming
@@ -95,7 +97,9 @@ def get_streaming_params(*args):
     windows_context_size = n_left_wins_wasted + max_(n_overlapping_out_wins, n_trimmed_wins)
 
     # Extra input context necessary to make up for windows lost on the right due to output trimming
-    extra_right_context = max_(0, n_trimmed_wins * s_i - p_r)
+    n_overlap_kept_right = max_(0, ceil_div(k_o - t_o, s_o) - 1)
+    n_extra_right_wins = max_(0, n_trimmed_wins - n_overlap_kept_right)
+    extra_right_context = max_(0, n_extra_right_wins * s_i - p_r)
 
     # Number of input elements that are needed as context
     in_context_size = max_(0, windows_context_size * s_i + in_delay + extra_right_context)
