@@ -1,14 +1,14 @@
 import math
 from typing import Tuple, Union, overload
 
-from z3 import ArithRef, If, Ints
+from z3 import And, ArithRef, If, Ints
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 
 IntLike = Union[int, ArithRef]
 
 
-# FIXME! more efficient expression of constraints
+# FIXME! more efficient expression of all constraints in this file
 def ceil_div(a: IntLike, b: IntLike) -> IntLike:
     """Ceiling division that works for both Python ints and z3 expressions."""
     if isinstance(a, int) and isinstance(b, int):
@@ -86,32 +86,25 @@ def get_streaming_params(*args):
     # is smaller than the out kernel size.
     # Note that we need to buffer enough past context in order to have the overlapping windows necessary in
     # computing a given output. This induces redundant compute that could be avoided if the reduce operation on
-    # overlapping windows (e.g. a vector sum) is known.
-    # TODO: test & implement if useful
+    # overlapping windows (e.g. a vector sum) is known. TODO: test & implement if useful
     n_overlapping_out_wins = ceil_div(k_o, s_o) - 1
 
-    # Extra windows necessary to make up for windows lost on the left due to output trimming
-    n_trimmed_wins = ceil_div(t_o, s_o)
+    # Output trimming might trim away the content of output windows on the right. Depending on the output overlap,
+    # we might need to compute additional windows every step to make up for that.
+    n_extra_right_wins = max_(0, ceil_div(t_o - (k_o - s_o), s_o))
 
-    # Number of windows that are needed as context
-    windows_context_size = n_left_wins_wasted + max_(n_overlapping_out_wins, n_trimmed_wins)
+    # With any output trimming, we'll need an extra window if there no output window overlap at all
+    if isinstance(s_o, int) and isinstance(k_o, int) and isinstance(t_o, int):
+        boundary_window_needed = 1 if s_o == k_o and t_o > 0 else 0
+    else:
+        boundary_window_needed = If(And(s_o == k_o, t_o > 0), 1, 0)
 
-    # Extra input context necessary to make up for windows lost on the right due to output trimming
-    n_overlap_kept_right = max_(0, ceil_div(k_o - t_o, s_o) - 1)
-    n_extra_right_wins = max_(0, n_trimmed_wins - n_overlap_kept_right)
-    extra_right_context = max_(0, n_extra_right_wins * s_i - p_r)
+    # Convert the number of extra right windows into a number of input elements, offset by right padding that provides
+    # extra right context for free
+    extra_right_context = max_(0, (n_extra_right_wins + boundary_window_needed) * s_i - p_r)
 
-    # Number of input elements that are needed as context
-    in_context_size = max_(0, windows_context_size * s_i + in_delay + extra_right_context)
-
-    nob = ceil_div(k_o, s_o) - 1
-    nerw = max_(0, ceil_div(t_o - (k_o - s_o), s_o))
-    # FIXME! as a z3 constraint
-    nb = 1 if s_o == k_o and t_o > 0 else 0
-    erc = max_(0, (nerw + nb) * s_i - p_r)
-    ics = max_(0, (n_left_wins_wasted + nob) * s_i + in_delay + erc)
-    assert ics <= in_context_size, (ics, in_context_size)
-    in_context_size = ics
+    # Total number of input elements that are needed as context
+    in_context_size = max_(0, (n_left_wins_wasted + n_overlapping_out_wins) * s_i + in_delay + extra_right_context)
 
     # Final steps: make the biases & delays canonical so size relations are uniquely determined by a set of parameters
     if isinstance(s_i, int) and isinstance(in_size_bias, int) and isinstance(in_delay, int):
