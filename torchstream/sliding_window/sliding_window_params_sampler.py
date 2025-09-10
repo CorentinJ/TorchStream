@@ -133,12 +133,8 @@ class SlidingWindowParamsSampler:
                 ),
                 # Output length relation
                 Implies(c == 0, out_len == 0),
-                Implies(
-                    c >= 1,
-                    # FIXME? This doesn't seem to handle the case where we technically get a negative output size due
-                    # to out trimming (out_len would still be 0 but this equality wouldn't hold?)
-                    out_len == (c - 1) * self.s_o + self.k_o - 2 * self.t_o,
-                ),
+                Implies(And(c > 0, out_len == 0), (c - 1) * self.s_o + self.k_o <= 2 * self.t_o),
+                Implies(And(c > 0, out_len > 0), out_len == (c - 1) * self.s_o + self.k_o - 2 * self.t_o),
             )
             self.seen_in_out_pairs.add((in_len, out_len))
 
@@ -178,19 +174,19 @@ class SlidingWindowParamsSampler:
         )
 
         # TODO!!
-        # if out_nan_range[0] > 0:
-        #     out_trim_end_t1 = (in_nan_range[0] - self.idc) / self.s_i
-        #     out_trim_end = out_trim_end_t1 * self.s_o - self.odc
-        #     self.stream_optimizer.add(
-        #         Or(
-        #             # Either the first nan we see is the very first the model could produce with this input
-        #             out_trim_end == out_nan_range[0],
-        #             # Either the model would be able to output a nan even earlier if the input nan came later in the
-        #             # input
-        #             # FIXME! neq 0?
-        #             # out_trim_end <= 0,
-        #         )
-        #     )
+        if out_nan_range[0] > 0:
+            out_trim_end_t1 = (in_nan_range[0] - self.idc) / self.s_i
+            out_trim_end = out_trim_end_t1 * self.s_o - self.odc
+            self.optimizer.add(
+                Or(
+                    # Either the first nan we see is the very first the model could produce with this input
+                    out_trim_end == out_nan_range[0],
+                    # Either the model would be able to output a nan even earlier if the input nan came later in the
+                    # input
+                    # FIXME! neq 0?
+                    out_trim_end <= 0,
+                )
+            )
 
     def set_in_out_size_relation(
         self, stride_in: int, stride_out: int, in_size_bias_canonical: int, out_size_bias_canonical: int
@@ -204,7 +200,7 @@ class SlidingWindowParamsSampler:
             self.osbc == out_size_bias_canonical,
         )
 
-    def add_streamable_params(self, params: SlidingWindowParams):
+    def add_streamable_params(self, params: SlidingWindowParams, max_context_factor: int = 2):
         """
         If parameters were found to successfully stream the transform, this method will constrain the optimizer to
         yield only better or equally efficient solutions (in at least one aspect) with the same size parameters.
@@ -229,6 +225,8 @@ class SlidingWindowParamsSampler:
                     Implies(idc == self.idc, odc > self.odc),
                     Implies(idc > self.idc, odc >= self.odc),
                     Implies(idc < self.idc, odc - self.odc >= self.s_o),
+                    # FIXME! review
+                    self.ictx <= max_context_factor * ictx,
                 ),
             )
         )
