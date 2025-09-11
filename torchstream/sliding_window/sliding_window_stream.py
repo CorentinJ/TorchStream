@@ -1,11 +1,9 @@
-from typing import Callable, Tuple, Union
+from typing import Callable
 
-import numpy as np
-from torch import Tensor
-
+from torchstream.sequence.dtype import SeqArrayLike
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
-from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+from torchstream.sliding_window.sliding_window_params import SlidingWindowParams, get_streaming_context_size
 from torchstream.stream import NotEnoughInputError, Stream
 
 
@@ -21,8 +19,7 @@ class SlidingWindowStream(Stream):
     def __init__(
         self,
         transform: Callable,
-        # TODO: class for sliding window stream params
-        sliding_window_params: SlidingWindowParams | Tuple,
+        sliding_window_params: SlidingWindowParams,
         input_spec: SeqSpec,
         output_spec: SeqSpec | None = None,
     ):
@@ -30,22 +27,8 @@ class SlidingWindowStream(Stream):
 
         self.transform = transform
 
-        # FIXME!!
-        self.s = sliding_window_params
-
-        (
-            self.stride_in,
-            self.stride_out,
-            self.in_size_bias,
-            self.out_size_bias,
-            self.in_delay,
-            self.out_delay,
-            self.in_context_size,
-        ) = (
-            get_canonicalized_in_out_size_biases(sliding_window_params)
-            if isinstance(sliding_window_params, SlidingWindowParams)
-            else sliding_window_params
-        )
+        self.params = sliding_window_params
+        self.ictx = get_streaming_context_size(sliding_window_params)
 
         self.tsfm_out_pos = 0
         self.stream_out_pos = 0
@@ -55,21 +38,21 @@ class SlidingWindowStream(Stream):
         self._prev_trimmed_output = None
 
     # FIXME: signature
-    def _step(self, in_seq: Sequence) -> Union[Tensor, np.ndarray, Tuple[Tensor, np.ndarray]]:
+    def _step(self, in_seq: Sequence) -> SeqArrayLike:
         # Compute the actual output size we'll get from the transform
-        out_size_t1 = (in_seq.size + self.in_size_bias) // self.stride_in
-        out_size = max(0, out_size_t1 * self.stride_out + self.out_size_bias)
+        (_, right_pad), num_wins, out_size = self.params.get_metrics_for_input(in_seq.size)
         sufficient_input = in_seq.size and out_size
 
         # See where the output should be trimmed
         if in_seq.input_closed:
             out_trim_end = out_size
-        elif in_seq.size + self.s.left_pad >= self.s.kernel_size_in:
+        elif in_seq.size + self.params.left_pad >= self.params.kernel_size_in:
             t2 = (
-                (self.s.left_pad + in_seq.size - self.s.kernel_size_in) % self.s.stride_in + self.s.right_pad
-            ) // self.s.stride_in
-            tel = self.s.kernel_size_out + (t2 - 1) * self.s.stride_out
-            offset2 = max(0, tel - self.s.out_trim)
+                (self.params.left_pad + in_seq.size - self.params.kernel_size_in) % self.params.stride_in
+                + self.params.right_pad
+            ) // self.params.stride_in
+            tel = self.params.kernel_size_out + (t2 - 1) * self.params.stride_out
+            offset2 = max(0, tel - self.params.out_trim)
             out_trim_end = max(out_size - offset2, 0)
         else:
             out_trim_end = 0
@@ -95,9 +78,9 @@ class SlidingWindowStream(Stream):
         self.stream_out_pos = self.tsfm_out_pos + out_trim_end
 
         # Drop input that won't be necessary in the future
-        wins_to_drop = max(0, (in_seq.size - self.in_context_size) // self.stride_in)
-        in_seq.drop(wins_to_drop * self.stride_in)
-        self.tsfm_out_pos += wins_to_drop * self.stride_out
+        wins_to_drop = max(0, (in_seq.size - self.ictx) // self.params.stride_in)
+        in_seq.drop(wins_to_drop * self.params.stride_in)
+        self.tsfm_out_pos += wins_to_drop * self.params.stride_out
 
         # If we're trimming on the right, save the trim in case the stream closes before we can compute any
         # new sliding window output.

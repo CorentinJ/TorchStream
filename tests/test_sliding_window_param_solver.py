@@ -9,9 +9,8 @@ from torch import nn
 
 from tests.rng import set_seed
 from torchstream.sequence.seq_spec import SeqSpec
-from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+from torchstream.sliding_window.sliding_window_params import SlidingWindowParams, _DEBUG_get_delays
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params_for_transform
-from torchstream.sliding_window.sliding_window_stream_params import get_streaming_params
 
 
 @pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])
@@ -36,7 +35,7 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
         right_pad=padding[1],
     )
     logger.debug(f"Expected solution: {expected_sol}")
-    logger.debug(f"Stream params: {get_streaming_params(expected_sol)}")
+    logger.debug(_DEBUG_get_delays(expected_sol))
 
     conv = nn.Conv1d(
         in_channels=1,
@@ -79,7 +78,7 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, padding: int, dilation
         out_trim=padding,
     )
     logger.debug(f"Expected solution: {expected_sol}")
-    logger.debug(f"Stream params: {get_streaming_params(expected_sol)}")
+    logger.debug(_DEBUG_get_delays(expected_sol))
 
     # The torch docs poorly explain the mechanism of transposed convolutions. Here's my take:
     # Each individual input element multiplies the kernel (element-wise). That output is offset by the stride on each

@@ -9,9 +9,8 @@ from torch import nn
 from tests.rng import set_seed
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.dummy_sliding_window_transform import DummySlidingWindowTransform
-from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+from torchstream.sliding_window.sliding_window_params import SlidingWindowParams, _DEBUG_get_delays
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
-from torchstream.sliding_window.sliding_window_stream_params import get_streaming_params
 from torchstream.stream_equivalence import test_stream_equivalent
 
 logger = logging.getLogger(__name__)
@@ -96,9 +95,8 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, dilation: int, out_tri
     )
 
     sli_params = SlidingWindowParams(kernel_size_out=kernel_span, stride_out=stride, out_trim=out_trim)
-    stream_params = get_streaming_params(sli_params)
     logger.debug(f"Sli params: {sli_params}")
-    logger.debug(f"Stream params: {stream_params}")
+    logger.debug(_DEBUG_get_delays(sli_params))
 
     conv_stream = SlidingWindowStream(
         conv,

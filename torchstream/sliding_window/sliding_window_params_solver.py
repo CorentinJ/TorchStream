@@ -18,11 +18,13 @@ from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
     input_size_by_max_infogain,
 )
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
-from torchstream.sliding_window.sliding_window_params_sampler import SlidingWindowParamsSampler
+from torchstream.sliding_window.sliding_window_params_sampler import (
+    SlidingWindowParamsSampler,
+    get_canonicalized_in_out_size_biases,
+)
 from torchstream.sliding_window.sliding_window_stream import (
     IncorrectSlidingWindowParametersError,
     SlidingWindowStream,
-    get_canonicalized_in_out_size_biases,
 )
 from torchstream.stream_equivalence import test_stream_equivalent
 
@@ -343,14 +345,6 @@ class SlidingWindowParamsSolver:
             )
             hypothesis.streaming_rejected = False
             self.validated_streaming_params.add(hyp_stream_params)
-
-            # # FIXME!!
-            # si, so, *_, idc_r, odc_r, _ = get_streaming_params(self.debug_ref_params)
-            # *_, idc_h, odc_h, _ = hyp_stream_params
-            # if idc_h >= idc_r:
-            #     assert odc_h >= odc_r
-            # else:
-            #     assert odc_h >= odc_r + so
 
             # Enforce more efficient solutions with the same size parameters
             # FIXME: not elegant given caller
