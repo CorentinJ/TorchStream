@@ -1,29 +1,54 @@
 import logging
+from random import randint
 
-import numpy as np
 import torch
 from torch.nn import Conv1d
 
 from tests.rng import set_seed
 from torchstream.sequence.seq_spec import SeqSpec
-from torchstream.sliding_window.sliding_window_in_out_rel_sampler import SlidingWindowInOutRelSampler
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
-from torchstream.sliding_window.sliding_window_params_solver import (
-    find_sliding_window_params_for_transform,
-)
+from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
+from torchstream.sliding_window.sliding_window_stream_params import get_streaming_params
+from torchstream.stream_equivalence import test_stream_equivalent
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
 set_seed(10)
 
-trsfm = Conv1d(1, 1, kernel_size=3)
+
+ref = SlidingWindowParams(
+    kernel_size_in=33,
+    stride_in=3,
+    left_pad=1,
+    right_pad=4,
+)
+get_streaming_params(ref)
+ref_str = (3, 1, 2, -9, 2, 9, 32)
+oth_str = (3, 1, 2, -9, 1, 9, 31)
+
+trsfm = Conv1d(1, 1, kernel_size=33, stride=3)
 conv = trsfm
 
 
 def trsfm(x):
-    print("\x1b[31m", x, "\x1b[39m", sep="")
-    return conv(torch.nn.functional.pad(x, (2, 0)))
+    # print("\x1b[31m", x, "\x1b[39m", sep="")
+    return conv(torch.nn.functional.pad(x, (1, 4)))
+
+
+print(
+    test_stream_equivalent(
+        trsfm,
+        SlidingWindowStream(
+            trsfm,
+            ref,
+            SeqSpec((1, 1, -1)),
+        ),
+        in_step_sizes=[randint(1, 200) for _ in range(100)],
+    ),
+)
+
+quit()
 
 
 real_sol = SlidingWindowParams(kernel_size_in=3, left_pad=2)

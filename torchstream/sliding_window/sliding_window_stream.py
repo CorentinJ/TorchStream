@@ -6,7 +6,6 @@ from torch import Tensor
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
-from torchstream.sliding_window.sliding_window_stream_params import get_streaming_params
 from torchstream.stream import NotEnoughInputError, Stream
 
 
@@ -31,6 +30,9 @@ class SlidingWindowStream(Stream):
 
         self.transform = transform
 
+        # FIXME!!
+        self.s = sliding_window_params
+
         (
             self.stride_in,
             self.stride_out,
@@ -40,7 +42,7 @@ class SlidingWindowStream(Stream):
             self.out_delay,
             self.in_context_size,
         ) = (
-            get_streaming_params(sliding_window_params)
+            get_canonicalized_in_out_size_biases(sliding_window_params)
             if isinstance(sliding_window_params, SlidingWindowParams)
             else sliding_window_params
         )
@@ -62,9 +64,15 @@ class SlidingWindowStream(Stream):
         # See where the output should be trimmed
         if in_seq.input_closed:
             out_trim_end = out_size
+        elif in_seq.size + self.s.left_pad >= self.s.kernel_size_in:
+            t2 = (
+                (self.s.left_pad + in_seq.size - self.s.kernel_size_in) % self.s.stride_in + self.s.right_pad
+            ) // self.s.stride_in
+            tel = self.s.kernel_size_out + (t2 - 1) * self.s.stride_out
+            offset2 = max(0, tel - self.s.out_trim)
+            out_trim_end = max(out_size - offset2, 0)
         else:
-            out_trim_end_t1 = (in_seq.size - self.in_delay) // self.stride_in
-            out_trim_end = min(out_trim_end_t1 * self.stride_out - self.out_delay, out_size)
+            out_trim_end = 0
 
         if not sufficient_input or self.tsfm_out_pos + out_trim_end <= self.stream_out_pos:
             if self.input_closed and self._prev_trimmed_output is not None:

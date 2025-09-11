@@ -1,10 +1,10 @@
 import logging
-from typing import List, Tuple
+import math
+from typing import List, Tuple, Union, overload
 
-from z3 import And, Bool, Implies, Int, Ints, Not, Or, Solver, sat
+from z3 import And, ArithRef, Bool, If, Implies, Int, Ints, Not, Or, Solver, sat
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
-from torchstream.sliding_window.sliding_window_stream_params import get_streaming_params
 from torchstream.sliding_window.threshold_harvester import ThresholdHarvester
 
 logger = logging.getLogger(__name__)
@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 class SlidingWindowParamsSampler:
     def __init__(self):
         # TODO: doc
+
+        self.optimizer = Solver()
 
         ## Sliding window parameters
         # Input and output strides
@@ -29,20 +31,6 @@ class SlidingWindowParamsSampler:
         # Output trimming: this many output elements are removed both on the left and right of the output. Often used
         # for transposed convolutions
         self.t_o = Int("t_o")
-
-        ## Streaming parameters
-        # Derive from the sliding window parameters:
-        #   - Input and output size biases in computation, canonicalized to ensure uniqueness of the relation
-        #   - Input and output delays in computation, canonicalized to ensure uniqueness of the relation
-        #   - Input context size: number of elements necessary as permanent input context in streaming
-        _, _, self.isbc, self.osbc, self.idc, self.odc, self.ictx = get_streaming_params(
-            self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
-        )
-
-        # TODO! clarify how si/so/isbc/osbc are set
-        self.in_out_size_params = None
-
-        self.optimizer = Solver()
         self.optimizer.add(
             # It would be highly unusual to have a stride larger than the kernel size, leading to inputs being unused or
             # to gaps in the output.
@@ -60,22 +48,27 @@ class SlidingWindowParamsSampler:
             # inputs
             0 <= self.t_o,
             self.t_o < self.k_o,
-            # Streaming params
-            self.idc >= 0,
-            self.idc < self.s_i,
-            # NOTE: it's 2 - k_i but I set a lower bound 1 - k_i to avoid dealing with the case k_i == 1
-            self.odc >= 1 - self.k_i,
-            self.ictx >= 0,
         )
+
+        ## Streaming parameters
+        # TODO! clarify how si/so/isbc/osbc are set
+        self.in_out_size_params = None
+        self.isbc, self.osbc, self.size_canon_quotient = get_canonicalized_in_out_size_biases(
+            self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
+        )
+        self.ictx = get_streaming_context_size(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
+
         # FIXME!
         # Bounds for the input size bias: -k_i < isb <= 2 * (k_i - 1)
         # With canonicalization we have 0 <= isbc < s_i (remainder of the division of isb by s_i)
         # Bounds for the output size bias: 2 - k_o <= osb <= k_o
         # With canonicalization we have osbc = osb + (isb // s_i) * s_o
-        # Bounds for the input delay: 2 - k_i < id <= k_i
-        # With canonicalization we have 0 <= idc < s_i (remainder of the division of id by s_i)
-        # Bounds for the output delay: 2 - k_i <= od < k_o
-        # With canonicalization we have odc = od + (isb // s_i) * s_o
+        self.optimizer.add(
+            self.isbc >= 0,
+            self.isbc < self.s_i,
+            self.size_canon_quotient >= 0,
+            self.ictx >= 0,
+        )
 
         # Blocker for guiding the solver towards simpler solutions first.
         self.solution_cost = self.k_i + self.s_i + self.p_l + self.p_r + self.k_o + self.s_o + self.t_o
@@ -173,21 +166,6 @@ class SlidingWindowParamsSampler:
             self.p_l + in_nan_range[1] >= crs * self.s_i,
         )
 
-        # TODO!!
-        if out_nan_range[0] > 0:
-            out_trim_end_t1 = (in_nan_range[0] - self.idc) / self.s_i
-            out_trim_end = out_trim_end_t1 * self.s_o - self.odc
-            self.optimizer.add(
-                Or(
-                    # Either the first nan we see is the very first the model could produce with this input
-                    out_trim_end == out_nan_range[0],
-                    # Either the model would be able to output a nan even earlier if the input nan came later in the
-                    # input
-                    # FIXME! neq 0?
-                    out_trim_end <= 0,
-                )
-            )
-
     def set_in_out_size_relation(
         self, stride_in: int, stride_out: int, in_size_bias_canonical: int, out_size_bias_canonical: int
     ):
@@ -206,29 +184,16 @@ class SlidingWindowParamsSampler:
         yield only better or equally efficient solutions (in at least one aspect) with the same size parameters.
         """
         assert self.in_out_size_params, "Set the input/output size relation before adding streamable params"
-        *in_out_size_params, idc, odc, ictx = get_streaming_params(params)
-        assert in_out_size_params == list(self.in_out_size_params), (
+        in_out_size_params = (params.stride_in, params.stride_out) + get_canonicalized_in_out_size_biases(params)[:2]
+        assert in_out_size_params == self.in_out_size_params, (
             "The input/output size parameters must match the set relation"
         )
 
+        ictx = get_streaming_context_size(params)
+
+        # TODO! review
         self.optimizer.add(
-            Or(
-                # We'll accept solutions that are equally efficient
-                And(self.idc == idc, self.odc == odc, self.ictx == ictx),
-                # Or solutions that have a strictly better context (but possibly more delay)
-                self.ictx < ictx,
-                # Or solutions that have a strictly better delay (but possibly more context)
-                # Because of the nonlinearity of the delay relation, the constraint is a bit more complex
-                # Bear in mind that idc and odc are canonicalized.
-                # delay = ((in_size + idc) // s_i) * s_o + odc
-                And(
-                    Implies(idc == self.idc, odc > self.odc),
-                    Implies(idc > self.idc, odc >= self.odc),
-                    Implies(idc < self.idc, odc - self.odc >= self.s_o),
-                    # FIXME! review
-                    self.ictx <= max_context_factor * ictx,
-                ),
-            )
+            self.ictx <= max_context_factor * ictx,
         )
 
     def add_non_streamable_params(self, params: SlidingWindowParams):
@@ -237,17 +202,21 @@ class SlidingWindowParamsSampler:
         new solutions with the same size parameters and less context.
         """
         assert self.in_out_size_params, "Set the input/output size relation before adding streamable params"
-        *in_out_size_params, idc, odc, ictx = get_streaming_params(params)
-        assert in_out_size_params == list(self.in_out_size_params), (
+        in_out_size_params = (params.stride_in, params.stride_out) + get_canonicalized_in_out_size_biases(params)[:2]
+        assert in_out_size_params == self.in_out_size_params, (
             "The input/output size parameters must match the set relation"
         )
 
+        ictx = get_streaming_context_size(params)
+
+        # TODO! review
         # Ensure we don't try different identical streaming parameters with less context, that would not work
         self.optimizer.add(
             Not(
                 And(
-                    self.idc == idc,
-                    self.odc == odc,
+                    self.p_l - self.k_i == params.left_pad - params.kernel_size_in,
+                    self.p_r == params.right_pad,
+                    self.t_o == params.out_trim,
                     self.ictx <= ictx,
                 )
             )
@@ -261,7 +230,7 @@ class SlidingWindowParamsSampler:
         # TODO! doc
         # TODO! iter_new_solutions, mark emitted ones, simplify constraints.
 
-        _MAX_COST_REL_LIMIT = 3.0
+        _MAX_COST_REL_LIMIT = 2.0
         _MAX_COST_FLAT_LIMIT = 10_000
 
         max_cost_limit = (
@@ -356,3 +325,121 @@ class SlidingWindowParamsSampler:
 
     def is_compatible(self, solution: SlidingWindowParams) -> bool:
         return not self.get_violations(solution)
+
+
+IntLike = Union[int, ArithRef]
+
+
+# FIXME! more efficient expression of all constraints below
+def _ceil_div(a, b):
+    """Ceiling division that works for both Python ints and z3 expressions."""
+    if isinstance(a, int) and isinstance(b, int):
+        return int(math.ceil(a / b))
+    return If(a >= 0, (a + b - 1) / b, -((-a) / b))
+
+
+def _max(a: IntLike, b: IntLike) -> IntLike:
+    """max() for both Python ints and z3 expressions."""
+    if isinstance(a, int) and isinstance(b, int):
+        return max(a, b)
+    return If(a > b, a, b)
+
+
+@overload
+def get_canonicalized_in_out_size_biases(
+    sli_params: SlidingWindowParams,
+) -> Tuple[int, int, int]: ...
+@overload
+def get_canonicalized_in_out_size_biases(
+    k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_o: IntLike
+) -> Tuple[IntLike, IntLike, IntLike]: ...
+def get_canonicalized_in_out_size_biases(*args) -> Tuple[IntLike, IntLike, IntLike]:
+    if len(args) == 1 and isinstance(args[0], SlidingWindowParams):
+        p = args[0]
+        k_i, s_i, p_l, p_r, k_o, s_o, t_o = (
+            p.kernel_size_in,
+            p.stride_in,
+            p.left_pad,
+            p.right_pad,
+            p.kernel_size_out,
+            p.stride_out,
+            p.out_trim,
+        )
+    elif len(args) == 7:
+        k_i, s_i, p_l, p_r, k_o, s_o, t_o = args
+    else:
+        raise TypeError("Invalid arguments for get_canonicalized_in_out_size_biases")
+
+    in_size_bias = p_l + p_r - k_i
+    out_size_bias = k_o - 2 * t_o
+
+    # Make the biases & delays canonical so size relations are uniquely determined by a set of parameters
+    if isinstance(s_i, int) and isinstance(in_size_bias, int):
+        quotient_bias, in_size_bias_canon = divmod(in_size_bias, s_i)
+    else:
+        quotient_bias = Int("quotient_bias")
+        in_size_bias_canon = in_size_bias - quotient_bias * s_i
+
+    out_size_bias_canon = out_size_bias + quotient_bias * s_o
+
+    return in_size_bias_canon, out_size_bias_canon, quotient_bias
+
+
+@overload
+def get_streaming_context_size(
+    sli_params: SlidingWindowParams,
+) -> int: ...
+@overload
+def get_streaming_context_size(
+    k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_o: IntLike
+) -> IntLike: ...
+def get_streaming_context_size(*args) -> IntLike:
+    if len(args) == 1 and isinstance(args[0], SlidingWindowParams):
+        p = args[0]
+        k_i, s_i, p_l, p_r, k_o, s_o, t_o = (
+            p.kernel_size_in,
+            p.stride_in,
+            p.left_pad,
+            p.right_pad,
+            p.kernel_size_out,
+            p.stride_out,
+            p.out_trim,
+        )
+    elif len(args) == 7:
+        k_i, s_i, p_l, p_r, k_o, s_o, t_o = args
+    else:
+        raise TypeError("Invalid arguments for get_streaming_params")
+
+    # Number of windows that are wasted on the left solely due to padding. "Wasted" here means that we recompute
+    # these windows on each step despite them being unnecessary, simply because the transform re-pads the input
+    # every time. If it is possible to remove padding from the transform and manually pad the streamed input,
+    # this waste of compute can be avoided.
+    # Note that right padding wastes compute just as much, however it does not require any context to be stored.
+    n_left_wins_wasted = _ceil_div(p_l, s_i)
+
+    # For a given output window, the number of other output windows that overlap it. Only >0 when the out stride
+    # is smaller than the out kernel size.
+    # Note that we need to buffer enough past context in order to have the overlapping windows necessary in
+    # computing a given output. This induces redundant compute that could be avoided if the reduce operation on
+    # overlapping windows (e.g. a vector sum) is known. TODO: test & implement if useful
+    n_overlapping_out_wins = _ceil_div(k_o, s_o) - 1
+
+    # Output trimming might trim away the content of output windows on the right. Depending on the output overlap,
+    # we might need to compute additional windows every step to make up for that.
+    n_extra_right_wins = _max(0, _ceil_div(t_o - (k_o - s_o), s_o))
+
+    # With any output trimming, we'll need an extra window if there no output window overlap at all
+    if isinstance(s_o, int) and isinstance(k_o, int) and isinstance(t_o, int):
+        boundary_window_needed = 1 if s_o == k_o and t_o > 0 else 0
+    else:
+        boundary_window_needed = If(And(s_o == k_o, t_o > 0), 1, 0)
+
+    # Convert the number of extra right windows into a number of input elements, offset by right padding that provides
+    # extra right context for free
+    extra_right_context = _max(0, (n_extra_right_wins + boundary_window_needed) * s_i - p_r)
+
+    # Total number of input elements that are needed as context
+    in_delay = k_i - s_i - p_l
+    in_context_size = _max(0, (n_left_wins_wasted + n_overlapping_out_wins) * s_i + in_delay + extra_right_context)
+
+    return in_context_size

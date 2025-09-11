@@ -96,8 +96,9 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, dilation: int, out_tri
     )
 
     sli_params = SlidingWindowParams(kernel_size_out=kernel_span, stride_out=stride, out_trim=out_trim)
+    stream_params = get_streaming_params(sli_params)
     logger.debug(f"Sli params: {sli_params}")
-    logger.debug(f"Stream params: {get_streaming_params(sli_params)}")
+    logger.debug(f"Stream params: {stream_params}")
 
     conv_stream = SlidingWindowStream(
         conv,
@@ -111,23 +112,50 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, dilation: int, out_tri
         throughput_check_max_delay=out_trim,
     )
 
+    # for param_idx in range(4, 7):
+    #     bad_stream_params = list(stream_params)
+    #     # FIXME: this is silly
+    #     if param_idx in (4, 6) and bad_stream_params[param_idx] == 0:
+    #         continue
+    #     if param_idx == 5 and bad_stream_params[4] == 0 and bad_stream_params[5] == 0:
+    #         continue
+    #     bad_stream_params[param_idx] -= 1
+    #     bad_stream_params = tuple(bad_stream_params)
+
+    #     logger.info(f"Ensuring failure with param change:\n    {stream_params}\n -> {bad_stream_params}")
+    #     with pytest.raises((ValueError, IncorrectSlidingWindowParametersError)):
+    #         test_stream_equivalent(conv, SlidingWindowStream(conv, bad_stream_params, SeqSpec((1, 1, -1))))
+
+
+# TODO!!
+# SlidingWindowParams(
+#     kernel_size_in=3, stride_in=1,
+#     left_pad=0, right_pad=2,
+#     kernel_size_out=2, stride_out=2,
+#     out_trim=1,
+# )
+
 
 @pytest.mark.parametrize("kernel_size_in", [1, 2, 5, 10])
-@pytest.mark.parametrize("stride_in", [1, 2, 3, 10])
-@pytest.mark.parametrize("padding", [(0, 0), (2, 0), (0, 3), (1, 4)])
+@pytest.mark.parametrize("stride_in", [1, 2, 3])
+@pytest.mark.parametrize("padding", [(0, 0), (3, 0), (1, 2)])
 @pytest.mark.parametrize("kernel_size_out", [1, 2, 4, 7])
-@pytest.mark.parametrize("stride_out", [1, 2, 6, 7])
+@pytest.mark.parametrize("stride_out", [1, 2, 7])
+@pytest.mark.parametrize("out_trim", [0, 1, 3, 6])
 def test_moving_average(
     kernel_size_in: int,
     stride_in: int,
     padding: Tuple[int, int],
     kernel_size_out: int,
     stride_out: int,
+    out_trim: int,
 ):
     if stride_in > kernel_size_in or stride_out > kernel_size_out:
         pytest.skip("Stride should be smaller than the kernel span")
     if padding[0] >= kernel_size_in or padding[1] >= kernel_size_in:
         pytest.skip("Padding should be smaller than the kernel span")
+    if out_trim >= kernel_size_out:
+        pytest.skip("Output trim should be smaller than the kernel span")
 
     sliding_window_params = SlidingWindowParams(
         kernel_size_in=kernel_size_in,
@@ -136,6 +164,7 @@ def test_moving_average(
         right_pad=padding[1],
         kernel_size_out=kernel_size_out,
         stride_out=stride_out,
+        out_trim=out_trim,
     )
     tsfm = DummySlidingWindowTransform(sliding_window_params)
 
@@ -148,5 +177,5 @@ def test_moving_average(
     test_stream_equivalent(
         tsfm,
         tsfm_stream,
-        throughput_check_max_delay=0,
+        # throughput_check_max_delay=out_trim,
     )

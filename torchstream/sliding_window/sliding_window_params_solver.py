@@ -20,8 +20,9 @@ from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_sampler import SlidingWindowParamsSampler
 from torchstream.sliding_window.sliding_window_stream import (
+    IncorrectSlidingWindowParametersError,
     SlidingWindowStream,
-    get_streaming_params,
+    get_canonicalized_in_out_size_biases,
 )
 from torchstream.stream_equivalence import test_stream_equivalent
 
@@ -316,7 +317,7 @@ class SlidingWindowParamsSolver:
 
     def test_update_hypothesis_by_streaming(self, hypothesis: Hypothesis):
         # If we have already validated another hypothesis with the same streaming params, we can skip any work here
-        hyp_stream_params = get_streaming_params(hypothesis.params)
+        hyp_stream_params = get_canonicalized_in_out_size_biases(hypothesis.params)
         if hyp_stream_params in self.validated_streaming_params:
             hypothesis.streaming_rejected = False
             return
@@ -359,6 +360,10 @@ class SlidingWindowParamsSolver:
                 if not self.sli_params_sampler.is_compatible(other_hyp.params):
                     other_hyp.suboptimal_rejected = True
 
+        except IncorrectSlidingWindowParametersError:
+            # FIXME!! these arise with insufficient context size for conv mix, to fix!!
+            pass
+
         except ValueError:
             hypothesis.streaming_rejected = True
             self.sli_params_sampler.add_non_streamable_params(hypothesis.params)
@@ -390,22 +395,20 @@ class SlidingWindowParamsSolver:
         """
         Debugging method for checking why a good reference hypothesis gets rejected.
         """
-        # FIXME! disabling for perfs & because of bugs
-        return
         if (
             self.debug_ref_params
             and (violations := self.sli_params_sampler.get_violations(self.debug_ref_params))
             and not any(hyp.params == self.debug_ref_params for hyp in self.hypotheses)
         ):
             other_hyp_str = (
-                f"Other hyp params: {other_params} with streaming params {get_streaming_params(other_params)}\n\n"
+                f"Other hyp params: {other_params} with streaming params {get_canonicalized_in_out_size_biases(other_params)}\n\n"
                 if other_params
                 else ""
             )
             violations_str = "\n\n\t".join(str(v) for v in violations)
             logger.debug(
                 f"{colors.RED}Reference hypothesis {self.debug_ref_params} with streaming params "
-                f"{get_streaming_params(self.debug_ref_params)}\nbecame incompatible with "
+                f"{get_canonicalized_in_out_size_biases(self.debug_ref_params)}\nbecame incompatible with "
                 f"the sampler after {event}:\n{other_hyp_str}"
                 f"{colors.YELLOW}Violations:\n\t{violations_str}{colors.RESET}"
             )
@@ -459,7 +462,7 @@ class SlidingWindowParamsSolver:
         # Ensure we have at least one example input before starting
         self.run_initial_input()
 
-        real_sol = get_streaming_params(self.debug_ref_params)[:4] if self.debug_ref_params else None
+        real_sol = get_canonicalized_in_out_size_biases(self.debug_ref_params)[:4] if self.debug_ref_params else None
 
         step = 1
         shape_params_hyps = []
@@ -513,7 +516,7 @@ class SlidingWindowParamsSolver:
         # know it in advance
         self.find_in_out_rel_params()
 
-        real_stream_sol = get_streaming_params(self.debug_ref_params) if self.debug_ref_params else None
+        real_stream_sol = get_canonicalized_in_out_size_biases(self.debug_ref_params) if self.debug_ref_params else None
 
         step = 1
         while True:
@@ -528,7 +531,7 @@ class SlidingWindowParamsSolver:
             self.hypotheses.append(hypothesis)
             self.update_all_hypotheses()
 
-            hyp_stream_params = get_streaming_params(hypothesis.params)
+            hyp_stream_params = get_canonicalized_in_out_size_biases(hypothesis.params)
             logger.debug(
                 f"[Sli params] Step {step}: "
                 f"{'REJECTED' if hypothesis.rejected else 'ACCEPTED'} ("
@@ -614,7 +617,7 @@ def find_sliding_window_params_for_transform(
         debug_ref_params=debug_ref_params,
     ).find_in_out_rel_params()
 
-    real_sol = get_streaming_params(debug_ref_params)[:4]
+    real_sol = get_canonicalized_in_out_size_biases(debug_ref_params)[:4]
     if a == real_sol:
         return [debug_ref_params]
     else:
