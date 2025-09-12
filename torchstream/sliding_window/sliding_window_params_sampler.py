@@ -5,7 +5,7 @@ from z3 import And, Bool, Implies, Int, Ints, Not, Or, Solver, sat
 
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
-    get_canonicalized_in_out_size_biases,
+    get_canonicalized_in_out_size_params,
     get_streaming_context_size,
 )
 from torchstream.sliding_window.threshold_harvester import ThresholdHarvester
@@ -56,7 +56,7 @@ class SlidingWindowParamsSampler:
         ## Streaming parameters
         # TODO! clarify how si/so/isbc/osbc are set
         self.in_out_size_params = None
-        self.isbc, self.osbc, self.size_canon_quotient = get_canonicalized_in_out_size_biases(
+        *_, self.isbc, self.osbc = get_canonicalized_in_out_size_params(
             self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
         )
         self.ictx = get_streaming_context_size(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
@@ -69,7 +69,6 @@ class SlidingWindowParamsSampler:
         self.optimizer.add(
             self.isbc >= 0,
             self.isbc < self.s_i,
-            self.size_canon_quotient >= 0,
             self.ictx >= 0,
         )
 
@@ -187,8 +186,7 @@ class SlidingWindowParamsSampler:
         yield only better or equally efficient solutions (in at least one aspect) with the same size parameters.
         """
         assert self.in_out_size_params, "Set the input/output size relation before adding streamable params"
-        in_out_size_params = (params.stride_in, params.stride_out) + get_canonicalized_in_out_size_biases(params)[:2]
-        assert in_out_size_params == self.in_out_size_params, (
+        assert get_canonicalized_in_out_size_params(params) == self.in_out_size_params, (
             "The input/output size parameters must match the set relation"
         )
 
@@ -205,8 +203,7 @@ class SlidingWindowParamsSampler:
         new solutions with the same size parameters and less context.
         """
         assert self.in_out_size_params, "Set the input/output size relation before adding streamable params"
-        in_out_size_params = (params.stride_in, params.stride_out) + get_canonicalized_in_out_size_biases(params)[:2]
-        assert in_out_size_params == self.in_out_size_params, (
+        assert get_canonicalized_in_out_size_params(params) == self.in_out_size_params, (
             "The input/output size parameters must match the set relation"
         )
 

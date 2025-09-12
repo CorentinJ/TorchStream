@@ -243,14 +243,14 @@ def _max(a: IntLike, b: IntLike) -> IntLike:
 
 
 @overload
-def get_canonicalized_in_out_size_biases(
+def get_canonicalized_in_out_size_params(
     sli_params: SlidingWindowParams,
-) -> Tuple[int, int, int]: ...
+) -> Tuple[int, int, int, int]: ...
 @overload
-def get_canonicalized_in_out_size_biases(
+def get_canonicalized_in_out_size_params(
     k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_o: IntLike
-) -> Tuple[IntLike, IntLike, IntLike]: ...
-def get_canonicalized_in_out_size_biases(*args) -> Tuple[IntLike, IntLike, IntLike]:
+) -> Tuple[IntLike, IntLike, IntLike, IntLike]: ...
+def get_canonicalized_in_out_size_params(*args) -> Tuple[IntLike, IntLike, IntLike, IntLike]:
     if len(args) == 1 and isinstance(args[0], SlidingWindowParams):
         p = args[0]
         k_i, s_i, p_l, p_r, k_o, s_o, t_o = (
@@ -279,7 +279,7 @@ def get_canonicalized_in_out_size_biases(*args) -> Tuple[IntLike, IntLike, IntLi
 
     out_size_bias_canon = out_size_bias + quotient_bias * s_o
 
-    return in_size_bias_canon, out_size_bias_canon, quotient_bias
+    return s_i, s_o, in_size_bias_canon, out_size_bias_canon
 
 
 @overload
