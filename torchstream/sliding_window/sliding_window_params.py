@@ -228,11 +228,18 @@ IntLike = Union[int, ArithRef]
 
 
 # FIXME! more efficient expression of all constraints below
-def _ceil_div(a, b):
+def _ceil_div(a, b) -> IntLike:
     """Ceiling division that works for both Python ints and z3 expressions."""
     if isinstance(a, int) and isinstance(b, int):
         return int(math.ceil(a / b))
     return If(a >= 0, (a + b - 1) / b, -((-a) / b))
+
+
+def _floor_div(a, b) -> IntLike:
+    """Floor division that works for both Python ints and z3 expressions."""
+    if isinstance(a, int) and isinstance(b, int):
+        return a // b
+    return If(a >= 0, a / b, -((-a + b - 1) / b))
 
 
 def _max(a: IntLike, b: IntLike) -> IntLike:
@@ -240,6 +247,25 @@ def _max(a: IntLike, b: IntLike) -> IntLike:
     if isinstance(a, int) and isinstance(b, int):
         return max(a, b)
     return If(a > b, a, b)
+
+
+def _get_sli_args(args):
+    if len(args) == 1 and isinstance(args[0], SlidingWindowParams):
+        p = args[0]
+        # TODO: order consistency with constructor & as_tuple()
+        return (
+            p.kernel_size_in,
+            p.stride_in,
+            p.left_pad,
+            p.right_pad,
+            p.kernel_size_out,
+            p.stride_out,
+            p.out_trim,
+        )
+    elif len(args) == 7:
+        return args
+    else:
+        raise TypeError()
 
 
 @overload
@@ -251,21 +277,7 @@ def get_canonicalized_in_out_size_params(
     k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_o: IntLike
 ) -> Tuple[IntLike, IntLike, IntLike, IntLike]: ...
 def get_canonicalized_in_out_size_params(*args) -> Tuple[IntLike, IntLike, IntLike, IntLike]:
-    if len(args) == 1 and isinstance(args[0], SlidingWindowParams):
-        p = args[0]
-        k_i, s_i, p_l, p_r, k_o, s_o, t_o = (
-            p.kernel_size_in,
-            p.stride_in,
-            p.left_pad,
-            p.right_pad,
-            p.kernel_size_out,
-            p.stride_out,
-            p.out_trim,
-        )
-    elif len(args) == 7:
-        k_i, s_i, p_l, p_r, k_o, s_o, t_o = args
-    else:
-        raise TypeError("Invalid arguments for get_canonicalized_in_out_size_biases")
+    k_i, s_i, p_l, p_r, k_o, s_o, t_o = _get_sli_args(args)
 
     in_size_bias = p_l + p_r - k_i
     out_size_bias = k_o - 2 * t_o
@@ -283,6 +295,54 @@ def get_canonicalized_in_out_size_params(*args) -> Tuple[IntLike, IntLike, IntLi
 
 
 @overload
+def get_output_delay(sli_params: SlidingWindowParams, input_size: int, as_phase=False) -> int: ...
+@overload
+def get_output_delay(
+    k_i: IntLike,
+    s_i: IntLike,
+    p_l: IntLike,
+    p_r: IntLike,
+    k_o: IntLike,
+    s_o: IntLike,
+    t_o: IntLike,
+    input_size: int,
+    as_phase=False,
+) -> IntLike: ...
+def get_output_delay(*args, as_phase=False) -> IntLike:
+    # TODO doc
+    (k_i, s_i, p_l, p_r, k_o, s_o, t_o), input_size = _get_sli_args(args[:-1]), args[-1]
+
+    if as_phase:
+        if isinstance(input_size, int) and isinstance(s_i, int):
+            assert 0 <= input_size < s_i, "When using phase, input_size must be in [0, stride_in["
+        phase = input_size
+    else:
+        phase = (p_l + input_size - k_i) % s_i
+
+    # FIXME!!: as z3
+    n_right_pad_corrupted_wins = _floor_div(phase + p_r, s_i)
+    output_delay_pre_trim = k_o + (n_right_pad_corrupted_wins - 1) * s_o
+    output_delay = _max(0, output_delay_pre_trim - t_o)
+
+    return output_delay
+
+
+@overload
+def get_output_delay_bounds(sli_params: SlidingWindowParams) -> Tuple[int, int]: ...
+@overload
+def get_output_delay_bounds(
+    k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_o: IntLike
+) -> Tuple[IntLike, IntLike]: ...
+def get_output_delay_bounds(*args) -> Tuple[IntLike, IntLike]:
+    # TODO: doc
+    k_i, s_i, p_l, p_r, k_o, s_o, t_o = _get_sli_args(args)
+    return (
+        get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_o, 0, as_phase=True),
+        get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_o, s_i - 1, as_phase=True),
+    )
+
+
+@overload
 def get_streaming_context_size(
     sli_params: SlidingWindowParams,
 ) -> int: ...
@@ -291,21 +351,7 @@ def get_streaming_context_size(
     k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_o: IntLike
 ) -> IntLike: ...
 def get_streaming_context_size(*args) -> IntLike:
-    if len(args) == 1 and isinstance(args[0], SlidingWindowParams):
-        p = args[0]
-        k_i, s_i, p_l, p_r, k_o, s_o, t_o = (
-            p.kernel_size_in,
-            p.stride_in,
-            p.left_pad,
-            p.right_pad,
-            p.kernel_size_out,
-            p.stride_out,
-            p.out_trim,
-        )
-    elif len(args) == 7:
-        k_i, s_i, p_l, p_r, k_o, s_o, t_o = args
-    else:
-        raise TypeError("Invalid arguments for get_streaming_context_size")
+    k_i, s_i, p_l, p_r, k_o, s_o, t_o = _get_sli_args(args)
 
     # Number of windows that are wasted on the left solely due to padding. "Wasted" here means that we recompute
     # these windows on each step despite them being unnecessary, simply because the transform re-pads the input
@@ -340,14 +386,3 @@ def get_streaming_context_size(*args) -> IntLike:
     in_context_size = _max(0, (n_left_wins_wasted + n_overlapping_out_wins) * s_i + in_delay + extra_right_context)
 
     return in_context_size
-
-
-def _DEBUG_get_delays(sli: SlidingWindowParams):
-    min_size = sli.kernel_size_in - sli.left_pad
-    delays = []
-    for i in range(sli.stride_in):
-        t2 = (i + sli.right_pad) // sli.stride_in
-        tel = sli.kernel_size_out + (t2 - 1) * sli.stride_out
-        offset2 = max(0, tel - sli.out_trim)
-        delays.append(offset2)
-    return f"min={min_size}, delays={delays}"

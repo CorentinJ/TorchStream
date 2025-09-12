@@ -3,7 +3,11 @@ from typing import Callable
 from torchstream.sequence.dtype import SeqArrayLike
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
-from torchstream.sliding_window.sliding_window_params import SlidingWindowParams, get_streaming_context_size
+from torchstream.sliding_window.sliding_window_params import (
+    SlidingWindowParams,
+    get_output_delay,
+    get_streaming_context_size,
+)
 from torchstream.stream import NotEnoughInputError, Stream
 
 
@@ -46,16 +50,9 @@ class SlidingWindowStream(Stream):
         # See where the output should be trimmed
         if in_seq.input_closed:
             out_trim_end = out_size
-        elif in_seq.size + self.params.left_pad >= self.params.kernel_size_in:
-            t2 = (
-                (self.params.left_pad + in_seq.size - self.params.kernel_size_in) % self.params.stride_in
-                + self.params.right_pad
-            ) // self.params.stride_in
-            tel = self.params.kernel_size_out + (t2 - 1) * self.params.stride_out
-            offset2 = max(0, tel - self.params.out_trim)
-            out_trim_end = max(out_size - offset2, 0)
         else:
-            out_trim_end = 0
+            out_delay = get_output_delay(self.params, in_seq.size)
+            out_trim_end = max(out_size - out_delay, 0)
 
         if not sufficient_input or self.tsfm_out_pos + out_trim_end <= self.stream_out_pos:
             if self.input_closed and self._prev_trimmed_output is not None:
