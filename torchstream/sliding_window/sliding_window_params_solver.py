@@ -17,7 +17,11 @@ from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
     SlidingWindowInOutRelSampler,
     input_size_by_max_infogain,
 )
-from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+from torchstream.sliding_window.sliding_window_params import (
+    SlidingWindowParams,
+    get_output_delay_bounds,
+    get_streaming_context_size,
+)
 from torchstream.sliding_window.sliding_window_params_sampler import (
     SlidingWindowParamsSampler,
     get_canonicalized_in_out_size_params,
@@ -525,13 +529,19 @@ class SlidingWindowParamsSolver:
             self.update_all_hypotheses()
 
             ref_params = self.debug_ref_params.as_tuple() if self.debug_ref_params else None
+            ref_shape = get_canonicalized_in_out_size_params(self.debug_ref_params) if self.debug_ref_params else None
+            ref_delays = get_output_delay_bounds(self.debug_ref_params) if self.debug_ref_params else None
+            ref_ctx = get_streaming_context_size(self.debug_ref_params) if self.debug_ref_params else None
+
             logger.debug(
                 f"[Sli params] Step {step}: "
                 f"{'REJECTED' if hypothesis.rejected else 'ACCEPTED'} ("
                 f"kernel={((colors.RED + 'FAIL') if hypothesis.nan_trick_rejected else (colors.GREEN + 'OK')) + colors.RESET}, "
                 f"stream={((colors.RED + 'FAIL') if hypothesis.streaming_rejected else (colors.GREEN + 'OK')) + colors.RESET}) "
-                f"new hypothesis {hypothesis.params} "
-                f"with streaming params ({_compare_params_str(hypothesis.params.as_tuple(), ref_params)}) "
+                f"\n\tnew hypothesis ({_compare_params_str(hypothesis.params.as_tuple(), ref_params)})"
+                f"\n\twith shape {_compare_params_str(get_canonicalized_in_out_size_params(hypothesis.params), ref_shape)}"
+                f"\n\twith delays {_compare_params_str(get_output_delay_bounds(hypothesis.params), ref_delays)}"
+                f"\n\twith context size {_compare_params_str((get_streaming_context_size(hypothesis.params),), (ref_ctx,) if ref_ctx else None)}"
             )
 
             # In the event we now have multiple compatible hypotheses, we can search for a specific input that will

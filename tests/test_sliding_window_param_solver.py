@@ -9,7 +9,11 @@ from torch import nn
 
 from tests.rng import set_seed
 from torchstream.sequence.seq_spec import SeqSpec
-from torchstream.sliding_window.sliding_window_params import SlidingWindowParams, get_output_delay_bounds
+from torchstream.sliding_window.sliding_window_params import (
+    SlidingWindowParams,
+    get_canonicalized_in_out_size_params,
+    get_output_delay_bounds,
+)
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params_for_transform
 
 
@@ -34,9 +38,11 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
         left_pad=padding[0],
         right_pad=padding[1],
     )
-    logger.debug(f"Expected solution: {expected_sol}")
-    logger.debug(get_output_delay_bounds(expected_sol))
-    return
+    logger.debug(
+        f"Expected solution: {expected_sol}"
+        f"\nwith shape {get_canonicalized_in_out_size_params(expected_sol)}"
+        f"\nwith out delays {get_output_delay_bounds(expected_sol)}"
+    )
 
     conv = nn.Conv1d(
         in_channels=1,

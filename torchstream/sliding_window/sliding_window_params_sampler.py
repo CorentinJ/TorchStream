@@ -1,11 +1,12 @@
 import logging
 from typing import List, Tuple
 
-from z3 import And, Bool, Implies, Int, Ints, Not, Or, Solver, sat
+from z3 import And, Bool, Implies, Int, Ints, Or, Solver, sat
 
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
     get_canonicalized_in_out_size_params,
+    get_output_delay_bounds,
     get_streaming_context_size,
 )
 from torchstream.sliding_window.threshold_harvester import ThresholdHarvester
@@ -57,6 +58,9 @@ class SlidingWindowParamsSampler:
         # TODO! clarify how si/so/isbc/osbc are set
         self.in_out_size_params = None
         *_, self.isbc, self.osbc = get_canonicalized_in_out_size_params(
+            self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
+        )
+        self.min_od, self.max_od = get_output_delay_bounds(
             self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
         )
         self.ictx = get_streaming_context_size(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
@@ -207,18 +211,14 @@ class SlidingWindowParamsSampler:
             "The input/output size parameters must match the set relation"
         )
 
-        ictx = get_streaming_context_size(params)
+        ref_ictx = get_streaming_context_size(params)
+        ref_min_od, ref_max_od = get_output_delay_bounds(params)
 
-        # TODO! review
-        # Ensure we don't try different identical streaming parameters with less context, that would not work
         self.optimizer.add(
-            Not(
-                And(
-                    self.p_l - self.k_i == params.left_pad - params.kernel_size_in,
-                    self.p_r == params.right_pad,
-                    self.t_o == params.out_trim,
-                    self.ictx <= ictx,
-                )
+            Or(
+                # Ensure we don't try different parameters with less context or less delay, that would not work
+                self.ictx > ref_ictx,
+                And(self.min_od >= ref_min_od, self.max_od >= ref_max_od),
             )
         )
 

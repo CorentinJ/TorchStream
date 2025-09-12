@@ -319,7 +319,6 @@ def get_output_delay(*args, as_phase=False) -> IntLike:
     else:
         phase = (p_l + input_size - k_i) % s_i
 
-    # FIXME!!: as z3
     n_right_pad_corrupted_wins = _floor_div(phase + p_r, s_i)
     output_delay_pre_trim = k_o + (n_right_pad_corrupted_wins - 1) * s_o
     output_delay = _max(0, output_delay_pre_trim - t_o)
