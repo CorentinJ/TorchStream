@@ -15,14 +15,14 @@ logger = logging.getLogger(__name__)
 
 
 class SlidingWindowParamsSampler:
-    def __init__(self):
+    def __init__(self, stride_in: int, stride_out: int, in_size_bias_canonical: int, out_size_bias_canonical: int):
         # TODO: doc
 
         self.optimizer = Solver()
 
         ## Sliding window parameters
         # Input and output strides
-        self.s_i, self.s_o = Ints("s_i s_o")
+        self.s_i, self.s_o = stride_in, stride_out
         # Input and output kernel sizes
         # NOTE: it's technically the kernel span, i.e. the whole span of the kernel even when dilation > 1
         self.k_i, self.k_o = Ints("k_i k_o")
@@ -55,9 +55,8 @@ class SlidingWindowParamsSampler:
         )
 
         ## Streaming parameters
-        # TODO! clarify how si/so/isbc/osbc are set
-        self.in_out_size_params = None
-        *_, self.isbc, self.osbc = get_canonicalized_in_out_size_params(
+        self.isbc, self.osbc = in_size_bias_canonical, out_size_bias_canonical
+        *_, isbc, osbc = get_canonicalized_in_out_size_params(
             self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
         )
         self.min_od, self.max_od = get_output_delay_bounds(
@@ -71,8 +70,10 @@ class SlidingWindowParamsSampler:
         # Bounds for the output size bias: 2 - k_o <= osb <= k_o
         # With canonicalization we have osbc = osb + (isb // s_i) * s_o
         self.optimizer.add(
-            self.isbc >= 0,
-            self.isbc < self.s_i,
+            isbc == self.isbc,
+            osbc == self.osbc,
+            self.min_od >= 0,
+            self.min_od <= self.max_od,
             self.ictx >= 0,
         )
 
@@ -172,33 +173,52 @@ class SlidingWindowParamsSampler:
             self.p_l + in_nan_range[1] >= crs * self.s_i,
         )
 
-    def set_in_out_size_relation(
-        self, stride_in: int, stride_out: int, in_size_bias_canonical: int, out_size_bias_canonical: int
-    ):
-        assert self.in_out_size_params is None
-        self.in_out_size_params = (stride_in, stride_out, in_size_bias_canonical, out_size_bias_canonical)
-        self.optimizer.add(
-            self.s_i == stride_in,
-            self.s_o == stride_out,
-            self.isbc == in_size_bias_canonical,
-            self.osbc == out_size_bias_canonical,
-        )
+        if in_nan_range[0] == 0:
+            return
+        # Count how many elements lie between the first output NaNs and the expected output size of the pre-nan input
+        pre_nan_out_size = max(0, ((in_nan_range[0] + self.isbc) // self.s_i) * self.s_o + self.osbc)
+        n_trailing_nans = pre_nan_out_size - out_nan_range[0]
+
+        # TODO: doc
+        input_gap_constraint = self.k_i >= (in_nan_range[1] - in_nan_range[0]) + 2
+        if n_trailing_nans < 0:
+            self.optimizer.add(input_gap_constraint)
+        else:
+            self.optimizer.add(
+                Or(
+                    # Usual case: the first nan we see in the output is the first that could be produced and is the
+                    # result of the first nan
+                    And(self.min_od <= n_trailing_nans, self.max_od >= n_trailing_nans),
+                    # Edge case 1: the first nan we see in the output is not the first nan that was produced. This can
+                    # happen with a sparse output kernel in conjunction with output trimming. In that case the delay is
+                    # greater than the output size before the nans.
+                    # TODO?: we could add an assertion here that the receptive field is larger than pre_nan_out_size
+                    # too, but we don't have a model of the receptive field yet.
+                    And(self.min_od > pre_nan_out_size),
+                    # Edge case 2: the input kernel has gaps and skips over the input nans. In that case the delay
+                    # would be underestimated using the usual case formula.
+                    input_gap_constraint,
+                )
+            )
 
     def add_streamable_params(self, params: SlidingWindowParams, max_context_factor: int = 2):
         """
         If parameters were found to successfully stream the transform, this method will constrain the optimizer to
         yield only better or equally efficient solutions (in at least one aspect) with the same size parameters.
         """
-        assert self.in_out_size_params, "Set the input/output size relation before adding streamable params"
-        assert get_canonicalized_in_out_size_params(params) == self.in_out_size_params, (
+        assert get_canonicalized_in_out_size_params(params) == (self.s_i, self.s_o, self.isbc, self.osbc), (
             "The input/output size parameters must match the set relation"
         )
 
         ictx = get_streaming_context_size(params)
+        ref_min_od, ref_max_od = get_output_delay_bounds(params)
 
-        # TODO! review
         self.optimizer.add(
-            self.ictx <= max_context_factor * ictx,
+            # self.ictx <= max_context_factor * ictx,
+            # FIXME!: Very aggressive first bounds as test
+            self.ictx <= ictx,
+            self.min_od <= ref_min_od,
+            self.max_od <= ref_max_od,
         )
 
     def add_non_streamable_params(self, params: SlidingWindowParams):
@@ -206,25 +226,37 @@ class SlidingWindowParamsSampler:
         If parameters were found to not stream the transform, this method will refrain the optimizer from yielding
         new solutions with the same size parameters and less context.
         """
-        assert self.in_out_size_params, "Set the input/output size relation before adding streamable params"
-        assert get_canonicalized_in_out_size_params(params) == self.in_out_size_params, (
+        assert get_canonicalized_in_out_size_params(params) == (self.s_i, self.s_o, self.isbc, self.osbc), (
             "The input/output size parameters must match the set relation"
         )
 
         ref_ictx = get_streaming_context_size(params)
         ref_min_od, ref_max_od = get_output_delay_bounds(params)
 
-        self.optimizer.add(
-            Or(
-                # Ensure we don't try different parameters with less context or less delay, that would not work
-                self.ictx > ref_ictx,
-                And(self.min_od >= ref_min_od, self.max_od >= ref_max_od),
+        # FIXME! review
+        if ref_min_od == ref_max_od:
+            self.optimizer.add(
+                Or(
+                    self.min_od != ref_min_od,
+                    self.max_od != ref_max_od,
+                    self.ictx > ref_ictx,
+                )
             )
-        )
+
+        # delay_constraint = (
+        #     (self.max_od > ref_max_od)
+        #     if ref_min_od == ref_max_od
+        #     else And(self.min_od >= ref_min_od, self.max_od >= ref_max_od)
+        # )
+        # self.optimizer.add(
+        #     Or(
+        #         # Ensure we don't try different parameters with less context or less delay, that would not work
+        #         self.ictx > ref_ictx,
+        #         delay_constraint,
+        #     )
+        # )
 
     def get_new_solution(self, valid_sols: List[SlidingWindowParams] | None = None) -> SlidingWindowParams | None:
-        assert self.in_out_size_params, "Set the input/output size relation before sampling solutions"
-
         valid_sols = valid_sols or []
 
         # TODO! doc
@@ -256,22 +288,20 @@ class SlidingWindowParamsSampler:
                 model = self.optimizer.model()
                 model_values = (
                     model[self.k_i].as_long(),
-                    model[self.s_i].as_long(),
+                    self.s_i,
                     model[self.p_l].as_long(),
                     model[self.p_r].as_long(),
                     model[self.k_o].as_long(),
-                    model[self.s_o].as_long(),
+                    self.s_o,
                     model[self.t_o].as_long(),
                 )
 
                 # Enforce new solutions only
                 new_sol_constraint = Or(
                     self.k_i != model[self.k_i],
-                    self.s_i != model[self.s_i],
                     self.p_l != model[self.p_l],
                     self.p_r != model[self.p_r],
                     self.k_o != model[self.k_o],
-                    self.s_o != model[self.s_o],
                     self.t_o != model[self.t_o],
                 )
                 self.optimizer.add(new_sol_constraint)
