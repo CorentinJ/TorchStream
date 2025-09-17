@@ -113,6 +113,7 @@ class SlidingWindowParams:
         num_wins_needed = int(math.ceil(max(0, out_needed - self.kernel_size_out) / self.stride_out)) + 1
         return self.get_min_input_size_for_num_wins(num_wins_needed)
 
+    # TODO: get_min_input_size_for_out_size
     def get_min_input_size_for_num_wins(self, num_wins: int) -> int:
         """
         Returns the minimum input size necessary to have a given number of output windows.
@@ -327,18 +328,15 @@ def get_output_delay(*args, as_phase=False) -> IntLike:
 
 
 @overload
-def get_output_delay_bounds(sli_params: SlidingWindowParams) -> Tuple[int, int]: ...
+def get_params_output_delays(sli_params: SlidingWindowParams) -> Tuple[int, ...]: ...
 @overload
-def get_output_delay_bounds(
+def get_params_output_delays(
     k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_o: IntLike
-) -> Tuple[IntLike, IntLike]: ...
-def get_output_delay_bounds(*args) -> Tuple[IntLike, IntLike]:
+) -> Tuple[IntLike, ...]: ...
+def get_params_output_delays(*args) -> Tuple[IntLike, ...]:
     # TODO: doc
     k_i, s_i, p_l, p_r, k_o, s_o, t_o = _get_sli_args(args)
-    return (
-        get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_o, 0, as_phase=True),
-        get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_o, s_i - 1, as_phase=True),
-    )
+    return tuple(get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_o, phase, as_phase=True) for phase in range(s_i))
 
 
 @overload

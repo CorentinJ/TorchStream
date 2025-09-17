@@ -6,7 +6,7 @@ from z3 import And, Bool, Implies, Int, Ints, Or, Solver, sat
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
     get_canonicalized_in_out_size_params,
-    get_output_delay_bounds,
+    get_params_output_delays,
     get_streaming_context_size,
 )
 from torchstream.sliding_window.threshold_harvester import ThresholdHarvester
@@ -59,7 +59,7 @@ class SlidingWindowParamsSampler:
         *_, isbc, osbc = get_canonicalized_in_out_size_params(
             self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
         )
-        self.min_od, self.max_od = get_output_delay_bounds(
+        self.min_od, self.max_od = get_params_output_delays(
             self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
         )
         self.ictx = get_streaming_context_size(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
@@ -201,7 +201,7 @@ class SlidingWindowParamsSampler:
                 )
             )
 
-    def add_streamable_params(self, params: SlidingWindowParams, max_context_factor: int = 2):
+    def add_streamable_params(self, params: SlidingWindowParams, strict=False):
         """
         If parameters were found to successfully stream the transform, this method will constrain the optimizer to
         yield only better or equally efficient solutions (in at least one aspect) with the same size parameters.
@@ -211,12 +211,10 @@ class SlidingWindowParamsSampler:
         )
 
         ictx = get_streaming_context_size(params)
-        ref_min_od, ref_max_od = get_output_delay_bounds(params)
+        ref_min_od, ref_max_od = get_params_output_delays(params)
 
         self.optimizer.add(
-            # self.ictx <= max_context_factor * ictx,
-            # FIXME!: Very aggressive first bounds as test
-            self.ictx <= ictx,
+            (self.ictx < ictx) if strict else (self.ictx <= ictx),
             self.min_od <= ref_min_od,
             self.max_od <= ref_max_od,
         )
@@ -231,7 +229,7 @@ class SlidingWindowParamsSampler:
         )
 
         ref_ictx = get_streaming_context_size(params)
-        ref_min_od, ref_max_od = get_output_delay_bounds(params)
+        ref_min_od, ref_max_od = get_params_output_delays(params)
 
         # FIXME! review
         if ref_min_od == ref_max_od:
