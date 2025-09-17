@@ -328,14 +328,30 @@ def get_output_delay(*args, as_phase=False) -> IntLike:
 
 
 @overload
-def get_params_output_delays(sli_params: SlidingWindowParams) -> Tuple[int, ...]: ...
+def get_output_delay_bounds(sli_params: SlidingWindowParams) -> Tuple[int, int]: ...
 @overload
-def get_params_output_delays(
+def get_output_delay_bounds(
     k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_o: IntLike
-) -> Tuple[IntLike, ...]: ...
-def get_params_output_delays(*args) -> Tuple[IntLike, ...]:
+) -> Tuple[IntLike, IntLike]: ...
+def get_output_delay_bounds(*args) -> Tuple[IntLike, IntLike]:
     # TODO: doc
     k_i, s_i, p_l, p_r, k_o, s_o, t_o = _get_sli_args(args)
+    return (
+        get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_o, 0, as_phase=True),
+        get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_o, s_i - 1, as_phase=True),
+    )
+
+
+@overload
+def get_all_output_delays(sli_params: SlidingWindowParams) -> Tuple[int, ...]: ...
+@overload
+def get_all_output_delays(
+    k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_o: IntLike
+) -> Tuple[IntLike, ...]: ...
+def get_all_output_delays(*args) -> Tuple[IntLike, ...]:
+    # TODO: doc
+    k_i, s_i, p_l, p_r, k_o, s_o, t_o = _get_sli_args(args)
+    # NOTE: can be compute more efficiently for very large strides if necessary
     return tuple(get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_o, phase, as_phase=True) for phase in range(s_i))
 
 

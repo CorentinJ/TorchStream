@@ -19,7 +19,7 @@ from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
 )
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
-    get_params_output_delays,
+    get_all_output_delays,
     get_streaming_context_size,
 )
 from torchstream.sliding_window.sliding_window_params_sampler import (
@@ -54,7 +54,7 @@ def _compare_sli_params_str(params: SlidingWindowParams, real_params: SlidingWin
     if real_params:
         ref_params = real_params.as_tuple()
         ref_shape = get_canonicalized_in_out_size_params(real_params)
-        ref_delays = get_params_output_delays(real_params)
+        ref_delays = get_all_output_delays(real_params)
         ref_ctx = (get_streaming_context_size(real_params),)
     else:
         ref_params, ref_shape, ref_delays, ref_ctx = None, None, None, None
@@ -62,7 +62,7 @@ def _compare_sli_params_str(params: SlidingWindowParams, real_params: SlidingWin
     return (
         f"\n\tparameters ({_compare_params_str(params.as_tuple(), ref_params)})"
         f"\n\twith shape ({_compare_params_str(get_canonicalized_in_out_size_params(params), ref_shape)})"
-        f"\n\twith delays ({_compare_params_str(get_params_output_delays(params), ref_delays)})"
+        f"\n\twith delays ({_compare_params_str(get_all_output_delays(params), ref_delays)})"
         f"\n\twith context size {_compare_params_str((get_streaming_context_size(params),), ref_ctx)}"
     )
 
@@ -100,7 +100,7 @@ class SlidingWindowParamsSolver:
 
             assert self.in_out_size_params is None and self.out_delays is None and self.context_size is None
             self.in_out_size_params = get_canonicalized_in_out_size_params(self.params)
-            self.out_delays = get_params_output_delays(self.params)
+            self.out_delays = get_all_output_delays(self.params)
             self.context_size = get_streaming_context_size(self.params)
 
         def __eq__(self, other):
@@ -448,8 +448,8 @@ class SlidingWindowParamsSolver:
             if not hypothesis.rejected and hypothesis.delay_rejected is None:
                 self.test_hypothesis_delays(sampler, hypothesis)
 
-            if not hypothesis.rejected and hypothesis.streaming_rejected is None:
-                self.test_update_hypothesis_by_streaming(sampler, hypothesis)
+            # if not hypothesis.rejected and hypothesis.streaming_rejected is None:
+            #     self.test_update_hypothesis_by_streaming(sampler, hypothesis)
 
         for hypothesis in list(self.hypotheses):
             if hypothesis.rejected:

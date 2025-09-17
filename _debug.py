@@ -8,7 +8,6 @@ from tests.rng import set_seed
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
-from torchstream.sliding_window.sliding_window_stream_params import get_streaming_params
 from torchstream.stream_equivalence import test_stream_equivalent
 
 logger = logging.getLogger(__name__)
@@ -19,15 +18,14 @@ set_seed(10)
 
 ref = SlidingWindowParams(
     kernel_size_in=33,
-    stride_in=3,
+    stride_in=2,
     left_pad=1,
     right_pad=4,
 )
-get_streaming_params(ref)
-ref_str = (3, 1, 2, -9, 2, 9, 32)
-oth_str = (3, 1, 2, -9, 1, 9, 31)
+other = SlidingWindowParams(5, 2, 0, 1, 15, 1, 13)
 
-trsfm = Conv1d(1, 1, kernel_size=33, stride=3)
+
+trsfm = Conv1d(1, 1, kernel_size=33, stride=2)
 conv = trsfm
 
 

@@ -1,12 +1,12 @@
 import logging
-from typing import List, Tuple
+from typing import Tuple
 
-from z3 import And, Bool, Implies, Int, Ints, Or, Solver, sat
+from z3 import And, Implies, Int, Ints, Or, Solver
 
 from torchstream.sliding_window.sliding_window_params import (
-    SlidingWindowParams,
     get_canonicalized_in_out_size_params,
-    get_params_output_delays,
+    get_output_delay,
+    get_output_delay_bounds,
     get_streaming_context_size,
 )
 from torchstream.sliding_window.threshold_harvester import ThresholdHarvester
@@ -59,7 +59,7 @@ class SlidingWindowParamsSampler:
         *_, isbc, osbc = get_canonicalized_in_out_size_params(
             self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
         )
-        self.min_od, self.max_od = get_params_output_delays(
+        self.min_od, self.max_od = get_output_delay_bounds(
             self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
         )
         self.ictx = get_streaming_context_size(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
@@ -113,6 +113,7 @@ class SlidingWindowParamsSampler:
                 raise ValueError("Output range must be non-empty and contained within (0, out_len), or be None")
 
         # Model the input to output size relation with the number of windows
+        # TODO: remove? The input size relation is known beforehand
         constraint_idx = len(self.optimizer.assertions())
         c = Int(f"c_{constraint_idx}")
         if (in_len, out_len) not in self.seen_in_out_pairs:
@@ -177,28 +178,50 @@ class SlidingWindowParamsSampler:
             return
         # Count how many elements lie between the first output NaNs and the expected output size of the pre-nan input
         pre_nan_out_size = max(0, ((in_nan_range[0] + self.isbc) // self.s_i) * self.s_o + self.osbc)
-        n_trailing_nans = pre_nan_out_size - out_nan_range[0]
-
+        n_right_elems_overwritten = pre_nan_out_size - out_nan_range[0]
         # TODO: doc
+        out_delay = get_output_delay(
+            self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o, in_nan_range[0]
+        )
         input_gap_constraint = self.k_i >= (in_nan_range[1] - in_nan_range[0]) + 2
-        if n_trailing_nans < 0:
+        if n_right_elems_overwritten < 0:
             self.optimizer.add(input_gap_constraint)
         else:
             self.optimizer.add(
+                # FIXME? is this at all helpful or is it redundant?
+                self.min_od <= out_delay,
+                out_delay <= self.max_od,
                 Or(
-                    # Usual case: the first nan we see in the output is the first that could be produced and is the
-                    # result of the first nan
-                    And(self.min_od <= n_trailing_nans, self.max_od >= n_trailing_nans),
-                    # Edge case 1: the first nan we see in the output is not the first nan that was produced. This can
-                    # happen with a sparse output kernel in conjunction with output trimming. In that case the delay is
-                    # greater than the output size before the nans.
-                    # TODO?: we could add an assertion here that the receptive field is larger than pre_nan_out_size
-                    # too, but we don't have a model of the receptive field yet.
-                    And(self.min_od > pre_nan_out_size),
-                    # Edge case 2: the input kernel has gaps and skips over the input nans. In that case the delay
-                    # would be underestimated using the usual case formula.
+                    # Usual case: the first nan we see in the output is the first that could be produced.
+                    out_delay == n_right_elems_overwritten,
+                    # Edge case 1: the first output is a nan. Either we're in the usual case handled above, either
+                    # the delay is actually larger than measured here because output nans were trimmed on the left.
+                    Implies(
+                        out_nan_range[0] == 0,
+                        And(
+                            out_delay > pre_nan_out_size,
+                            out_delay <= pre_nan_out_size + self.t_o,
+                            self.t_o > 0,
+                        ),
+                    ),
+                    # Edge case 2: even if the first output is not a nan, we could be missing the first nan because
+                    # the output kernel could be sparse with some output trimming. It's hard to formulate strong
+                    # constraints for this case, but we at least know that the gap in the output kernel needs to be
+                    # larger than the first non-nan portion of the output.
+                    And(
+                        self.k_o >= out_nan_range[0] + 2,
+                        out_delay > pre_nan_out_size,
+                        out_delay <= pre_nan_out_size + self.t_o,
+                        self.t_o > 0,
+                    ),
+                    And(out_delay > pre_nan_out_size),
+                    # Edge case 3: the input kernel has gaps and skips over the input nans. In that case the delay
+                    # would be underestimated using the usual case formula, so we can't say much.
                     input_gap_constraint,
-                )
+                    # NOTE: if the solution is known, picking a nan range larger than the input kernel size and
+                    # ensuring that the pre-nan out size is larger than the output kernel size ensures that we stay
+                    # in the usual case.
+                ),
             )
 
     def add_streamable_params(self, params: SlidingWindowParams, strict=False):
@@ -211,7 +234,7 @@ class SlidingWindowParamsSampler:
         )
 
         ictx = get_streaming_context_size(params)
-        ref_min_od, ref_max_od = get_params_output_delays(params)
+        ref_min_od, ref_max_od = get_output_delay_bounds(params)
 
         self.optimizer.add(
             (self.ictx < ictx) if strict else (self.ictx <= ictx),
@@ -229,7 +252,7 @@ class SlidingWindowParamsSampler:
         )
 
         ref_ictx = get_streaming_context_size(params)
-        ref_min_od, ref_max_od = get_params_output_delays(params)
+        ref_min_od, ref_max_od = get_output_delay_bounds(params)
 
         # FIXME! review
         if ref_min_od == ref_max_od:
