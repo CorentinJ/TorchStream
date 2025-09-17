@@ -20,6 +20,7 @@ from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
     get_all_output_delays,
+    get_output_delay,
     get_streaming_context_size,
 )
 from torchstream.sliding_window.sliding_window_params_sampler import (
@@ -362,24 +363,32 @@ class SlidingWindowParamsSolver:
         # in_size = hypothesis.params.get_min_input_size_for_num_wins(10)
         # in_seq = self.input_provider(in_size).copy()  # FIXME!
 
-        for phase, out_delay in enumerate(hypothesis.out_delays):
+        params = hypothesis.params
+        min_in_size = next(i for i in range(1, int(1e9)) if params.get_metrics_for_input(i)[2] > params.kernel_size_out)
+        # FIXME!
+        min_in_size *= 10
+        for phase, hyp_out_delay in enumerate(hypothesis.out_delays):
             # TODO: get_min_input_size_for_out_size
-            min_in_size = next(
-                i for i in range(1, int(1e9)) if hypothesis.params.get_metrics_for_input(i)[2] > out_delay
-            )
             # Align on the phase
             pre_nan_in_size = min_in_size + (
-                (hypothesis.params.stride_in - min_in_size + phase) % hypothesis.params.stride_in
+                (-min_in_size + phase - params.left_pad + params.kernel_size_in) % params.stride_in
             )
+            # TODO: remove
+            assert get_output_delay(params, pre_nan_in_size) == hyp_out_delay, "Internal error"
 
-            _, pre_nan_n_wins, pre_nan_out_size = hypothesis.params.get_metrics_for_input(pre_nan_in_size)
-            full_in_size = hypothesis.params.get_min_input_size_for_num_wins(pre_nan_n_wins + 1)
+            _, pre_nan_n_wins, pre_nan_out_size = params.get_metrics_for_input(pre_nan_in_size)
+            full_in_size = params.get_min_input_size_for_num_wins(pre_nan_n_wins + 1)
+            full_in_size = max(full_in_size, pre_nan_in_size + params.kernel_size_in)
+            # FIXME!
+            full_in_size = (full_in_size - pre_nan_in_size) * 10 + pre_nan_in_size
 
             out_seq, out_nan_idx = self.run_nan_trick(full_in_size, (pre_nan_in_size, full_in_size))
+            out_nan_range = (out_nan_idx[0], out_nan_idx[-1] + 1) if len(out_nan_idx) else None
+            sampler.add_in_out_range_map(full_in_size, out_seq.size, (pre_nan_in_size, full_in_size), out_nan_range)
             first_nan_idx = out_nan_idx[0] if len(out_nan_idx) else None
             measured_delay = pre_nan_out_size - first_nan_idx if first_nan_idx is not None else None
 
-            if measured_delay is None or measured_delay != out_delay:
+            if measured_delay is None or measured_delay != hyp_out_delay:
                 hypothesis.delay_rejected = True
                 return
 
@@ -608,12 +617,19 @@ class SlidingWindowParamsSolver:
             self.hypotheses.append(hypothesis)
             self.update_all_hypotheses(sampler)
 
+            def get_status_str(rejected_check):
+                if rejected_check is None:
+                    return "?"
+                if rejected_check:
+                    return colors.RED + "FAIL" + colors.RESET
+                return colors.GREEN + "OK" + colors.RESET
+
             logger.debug(
                 f"[Sli params] Step {step}: "
                 f"{'REJECTED' if hypothesis.rejected else 'ACCEPTED'} ("
-                f"kernel={((colors.RED + 'FAIL') if hypothesis.nan_trick_rejected else (colors.GREEN + 'OK')) + colors.RESET}, "
-                f"delay={((colors.RED + 'FAIL') if hypothesis.delay_rejected else (colors.GREEN + 'OK')) + colors.RESET}, "
-                f"stream={((colors.RED + 'FAIL') if hypothesis.streaming_rejected else (colors.GREEN + 'OK')) + colors.RESET}) "
+                f"kernel={get_status_str(hypothesis.nan_trick_rejected)}, "
+                f"delay={get_status_str(hypothesis.delay_rejected)}, "
+                f"stream={get_status_str(hypothesis.streaming_rejected)}) "
                 f"{_compare_sli_params_str(hypothesis.params, self.debug_ref_params)}"
             )
 
