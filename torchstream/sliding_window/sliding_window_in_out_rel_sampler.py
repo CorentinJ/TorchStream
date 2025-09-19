@@ -23,9 +23,6 @@ class SlidingWindowInOutRelSampler:
             # osbc is the only parameter that can be negative -> no constraint here
         )
 
-        # Indicates if more solutions are available
-        self.exhausted = False
-
     # FIXME: name
     def add_in_out_size(self, in_len: int, out_len: int):
         """
@@ -77,7 +74,6 @@ class SlidingWindowInOutRelSampler:
                 )
                 self.optimizer.add(new_sol_constraint)
             else:
-                self.exhausted = True
                 break
         self.optimizer.pop()
 
@@ -85,10 +81,11 @@ class SlidingWindowInOutRelSampler:
 
 
 def input_size_by_max_infogain(
-    shape_params: list[tuple],
+    shape_params: List[tuple],
     max_input_size=10_000,
     method="entropy",
 ) -> tuple[int, np.ndarray]:
+    # TODO: doc
     si, so, isbc, osbc = [np.array(param_group)[..., None] for param_group in zip(*shape_params)]
 
     out_sizes = np.stack([np.arange(0, max_input_size)] * len(shape_params))

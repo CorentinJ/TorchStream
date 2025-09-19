@@ -1,9 +1,6 @@
-import itertools
 import logging
-import math
-from dataclasses import dataclass
 from functools import partial
-from typing import Callable, Iterable, List, Tuple
+from typing import Callable, List, Tuple
 
 import numpy as np
 import torch
@@ -12,7 +9,7 @@ from colorama import Fore as colors
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.kernel_sparsity import determine_kernel_sparsity, get_init_kernel_array
-from torchstream.sliding_window.nan_trick import get_nan_map, get_seq_nan_idx
+from torchstream.sliding_window.nan_trick import get_seq_nan_idx
 from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
     SlidingWindowInOutRelSampler,
     input_size_by_max_infogain,
@@ -26,6 +23,7 @@ from torchstream.sliding_window.sliding_window_params import (
 from torchstream.sliding_window.sliding_window_params_sampler import (
     SlidingWindowParamsSampler,
     get_canonicalized_in_out_size_params,
+    nan_trick_params_by_max_infogain,
 )
 from torchstream.sliding_window.sliding_window_stream import (
     IncorrectSlidingWindowParametersError,
@@ -68,54 +66,19 @@ def _compare_sli_params_str(params: SlidingWindowParams, real_params: SlidingWin
     )
 
 
+class _SliHypothesis:
+    def __init__(self, params: SlidingWindowParams):
+        self.params = params
+        self.kernels = (
+            get_init_kernel_array(self.params.kernel_size_in),
+            get_init_kernel_array(self.params.kernel_size_out),
+        )
+        self.in_out_size_params = get_canonicalized_in_out_size_params(self.params)
+        self.out_delays = get_all_output_delays(self.params)
+        self.context_size = get_streaming_context_size(self.params)
+
+
 class SlidingWindowParamsSolver:
-    @dataclass
-    class Hypothesis:
-        params: SlidingWindowParams
-        in_out_size_params: Tuple[int, int, int, int] | None = None
-        out_delays: Tuple[int, ...] | None = None
-        context_size: int | None = None
-        kernels: Tuple[np.ndarray, np.ndarray] | None = None
-        n_records_validated: int = 0
-        # FIXME!
-        nan_trick_rejected: bool = False
-        delay_rejected: bool | None = None
-        streaming_rejected: bool | None = None
-        suboptimal_rejected: bool = False
-
-        @property
-        def rejected(self) -> bool:
-            return (
-                self.nan_trick_rejected
-                or (self.delay_rejected is True)
-                or (self.streaming_rejected is True)
-                or self.suboptimal_rejected
-            )
-
-        def __post_init__(self):
-            if self.kernels is None:
-                self.kernels = (
-                    get_init_kernel_array(self.params.kernel_size_in),
-                    get_init_kernel_array(self.params.kernel_size_out),
-                )
-
-            assert self.in_out_size_params is None and self.out_delays is None and self.context_size is None
-            self.in_out_size_params = get_canonicalized_in_out_size_params(self.params)
-            self.out_delays = get_all_output_delays(self.params)
-            self.context_size = get_streaming_context_size(self.params)
-
-        def __eq__(self, other):
-            if not isinstance(other, SlidingWindowParamsSolver.Hypothesis):
-                return False
-            return (
-                self.params == other.params
-                and np.array_equal(self.kernels[0], other.kernels[0])
-                and np.array_equal(self.kernels[1], other.kernels[1])
-            )
-
-        def __hash__(self):
-            return hash((self.params, tuple(self.kernels[0].flatten()), tuple(self.kernels[1].flatten())))
-
     def __init__(
         self,
         trsfm: Callable,
@@ -124,8 +87,8 @@ class SlidingWindowParamsSolver:
         init_seq_size: int = 30,
         max_in_seq_size: int = 10_000,
         atol: float = 1e-5,
-        debug_ref_params: SlidingWindowParams | None = None,
         max_equivalent_sols: int | None = 5,
+        debug_ref_params: SlidingWindowParams | None = None,
     ):
         if isinstance(input_provider, SeqSpec):
             in_spec = input_provider
@@ -140,8 +103,6 @@ class SlidingWindowParamsSolver:
         self.max_equivalent_sols = max_equivalent_sols
 
         self.in_out_rel_params = None
-        self.hypotheses: List[SlidingWindowParamsSolver.Hypothesis] = []
-        self.rejected_hypotheses: List[SlidingWindowParamsSolver.Hypothesis] = []
         self.validated_streaming_params = set()
         self.nan_trick_history = []
 
@@ -150,50 +111,7 @@ class SlidingWindowParamsSolver:
 
         self.debug_ref_params = debug_ref_params
 
-    def _get_infogain(category_counts: Iterable[int]) -> float:
-        category_counts = list(category_counts)
-        infogain = math.log(sum(category_counts))
-        for category_count in category_counts:
-            infogain -= (category_count * math.log(category_count)) / sum(category_counts)
-        return infogain
-
-    @staticmethod
-    def _get_infogain_for_hypotheses(hypotheses: List[Hypothesis], input_size: int, in_nan_idx: Iterable[int]):
-        # FIXME!!
-        if in_nan_idx:
-            in_nan_idx = next(iter(in_nan_idx))
-            nan_range = (in_nan_idx, in_nan_idx + 1)
-        else:
-            nan_range = None
-        nan_maps = [get_nan_map(hyp.params, input_size, nan_range) for hyp in hypotheses]
-
-        groups = [
-            tuple(map_idx) for _, map_idx in itertools.groupby(range(len(nan_maps)), key=lambda i: len(nan_maps[i]))
-        ]
-        max_out_len = max(len(nan_map) for nan_map in nan_maps)
-
-        # FIXME!!
-        if len(groups) > 1:
-            return 1.0
-
-        for out_idx in range(max_out_len):
-            # new_groups = []
-            # for group in groups:
-            #     if len(group) == 1:
-            #         new_groups.append(group)
-            #         continue
-
-            nan_values = [(nan_map[out_idx] if len(nan_map) > out_idx else None) for nan_map in nan_maps]
-
-            unique_values = set(nan_values)
-            if 1 in unique_values:
-                unique_values.remove(1)
-            if len(unique_values) > 1:
-                return 1.0
-
-        return 0.0
-
-    def _get_equivalent_solutions_count(self, hypothesis: Hypothesis) -> int:
+    def _get_equivalent_solutions_count(self, hypothesis: _SliHypothesis) -> int:
         assert hypothesis in self.hypotheses
         return sum(
             (
@@ -204,54 +122,18 @@ class SlidingWindowParamsSolver:
             for other_hyp in self.hypotheses
         )
 
-    def get_next_nan_trick_params(self) -> Tuple[int, Tuple[int, int] | None] | None:
-        """
-        FIXME: docstring
-        Determines an input size and an input nan range for the next nan trick step.
-        When hypotheses are available, this function will return parameters not used before that allows discrimating
-        between at least two hypotheses. If that cannot be guaranteed, it will return None instead.
-        """
-        assert len(self.hypotheses) > 1
-
-        # First, reject previously seen params, reusing them would be a waste of compute
-        # FIXME: range vs idx discrepancy
-        prev_seen_results = set((record["in_seq_size"], record["in_nan_range"]) for record in self.nan_trick_history)
-
-        # If we have hypotheses, we'll determine our nan trick parameters based on them
-        min_in_size = min(hyp.params.get_min_input_size() for hyp in self.hypotheses)
-        # FIXME!!
-        max_in_size = min_in_size + len(self.hypotheses) + 100
-
-        best_infogain = 0.0
-        # FIXME!!
-        best_in_size = 100
-        for in_size in range(min_in_size, max_in_size + 1):
-            infogain = self._get_infogain_for_hypotheses(self.hypotheses, in_size, set())
-            if infogain > best_infogain:
-                best_infogain = infogain
-                best_in_size = in_size
-
-        best_nan_range = None
-        for nan_idx in range(0, best_in_size):
-            infogain = self._get_infogain_for_hypotheses(self.hypotheses, best_in_size, {nan_idx})
-            if infogain > best_infogain:
-                in_nan_range = (nan_idx, nan_idx + 1)
-                if (best_in_size, in_nan_range) not in prev_seen_results:
-                    best_infogain = infogain
-                    best_nan_range = in_nan_range
-
-        # FIXME!!
-        if best_infogain == 0.0:
-            return None
-
-        return best_in_size, best_nan_range
-
-    def run_nan_trick(self, in_seq_size: int, in_nan_range: Tuple[int, int] | None):
+    def run_nan_trick(self, in_seq_size: int, in_nan_range: Tuple[int, int] | None) -> dict:
         """
         Runs the nan trick once on the transform, updating the sampler and history in the process.
         """
         if in_nan_range and not (0 <= in_nan_range[0] < in_nan_range[1] <= in_seq_size):
             raise ValueError(f"Nan range must be positive and within the input sequence size, got {in_nan_range}")
+
+        # Running the same nan trick twice is a waste of compute. Callers are expected not to do this.
+        assert not any(
+            (in_seq_size, in_nan_range) == (record["in_seq_size"], record["in_nan_range"])
+            for record in self.nan_trick_history
+        ), "Internal error: reusing previously seen NaN trick parameters"
 
         # Get an input of said size and perform the nan trick on the actual transform
         in_seq = self.input_provider(in_seq_size)
@@ -265,22 +147,12 @@ class SlidingWindowParamsSolver:
         if in_nan_range:
             in_seq[slice(*in_nan_range)] = float("nan")
 
-        out_seq = self._trsfm_with_tracking(in_seq)
-        #####
-
-        in_nan_idx = get_seq_nan_idx(in_seq)
-        # FIXME: discrepancy
-        in_nan_range = (in_nan_idx[0], in_nan_idx[-1] + 1) if len(in_nan_idx) else None
-
         out_seq = Sequence.apply(self._trsfm, in_seq, self.out_spec, catch_zero_size_errors=True)
 
+        # Keep track of the outcome in the history
         out_nan_idx = get_seq_nan_idx(out_seq)
         out_nan_range = (out_nan_idx[0], out_nan_idx[-1] + 1) if len(out_nan_idx) else None
-
-        # TODO! In/out details
-        logger.debug(f"Forward {in_seq.size}->{out_seq.size} with nans {in_nan_range}->{out_nan_range}")
-
-        # Keep track of the outcome in the history
+        logger.debug(f"Forwarded {in_seq.size}->{out_seq.size} with nans {in_nan_range}->{out_nan_range}")
         record = {
             "in_seq_size": in_seq.size,
             "in_nan_range": in_nan_range,
@@ -289,11 +161,6 @@ class SlidingWindowParamsSolver:
             "out_nan_range": out_nan_range,
         }
         self.nan_trick_history.append(record)
-
-        #####
-
-        # FIXME: duplication
-        out_nan_idx = get_seq_nan_idx(out_seq)
 
         # Raise if we get no output with the maximum input size
         if in_seq_size == self.max_in_seq_size and out_seq.size == 0:
@@ -312,181 +179,7 @@ class SlidingWindowParamsSolver:
                 f"of transforms as their output kernel size is technically infinite."
             )
 
-        return out_seq, out_nan_idx
-
-    def test_update_hypothesis_against_nan_trick_history(self, hypothesis: Hypothesis):
-        for record in self.nan_trick_history[hypothesis.n_records_validated :]:
-            # Reject the hypothesis if we get a different output length
-            _, _, expected_out_len = hypothesis.params.get_metrics_for_input(record["in_seq_size"])
-            if record["out_seq_size"] != expected_out_len:
-                hypothesis.nan_trick_rejected = True
-                return
-
-            # Reject if the nan trick's output is not compatible with the hypothesis
-            if record["in_nan_range"] is not None:
-                new_kernels = determine_kernel_sparsity(
-                    hypothesis.params,
-                    *hypothesis.kernels,
-                    record["in_seq_size"],
-                    record["in_nan_range"],
-                    record["out_nan_idx"],
-                )
-                if new_kernels[0] is None:
-                    hypothesis.nan_trick_rejected = True
-                    return
-
-                # Update the hypothesis in place
-                hypothesis.kernels = new_kernels
-
-            hypothesis.n_records_validated += 1
-
-    def test_hypothesis_delays(self, sampler: SlidingWindowParamsSampler, hypothesis: Hypothesis):
-        params = hypothesis.params
-        min_in_size = next(i for i in range(1, int(1e9)) if params.get_metrics_for_input(i)[2] > params.kernel_size_out)
-        # FIXME!
-        min_in_size *= 10
-        for phase, hyp_out_delay in enumerate(hypothesis.out_delays):
-            # TODO: get_min_input_size_for_out_size
-            # Align on the phase
-            pre_nan_in_size = min_in_size + (
-                (-min_in_size + phase - params.left_pad + params.kernel_size_in) % params.stride_in
-            )
-            # TODO: remove
-            assert get_output_delay(params, pre_nan_in_size) == hyp_out_delay, "Internal error"
-
-            _, pre_nan_n_wins, pre_nan_out_size = params.get_metrics_for_input(pre_nan_in_size)
-            full_in_size = params.get_min_input_size_for_num_wins(pre_nan_n_wins + 1)
-            full_in_size = max(full_in_size, pre_nan_in_size + params.kernel_size_in)
-            # FIXME!
-            full_in_size = (full_in_size - pre_nan_in_size) * 10 + pre_nan_in_size
-
-            out_seq, out_nan_idx = self.run_nan_trick(full_in_size, (pre_nan_in_size, full_in_size))
-            out_nan_range = (out_nan_idx[0], out_nan_idx[-1] + 1) if len(out_nan_idx) else None
-            sampler.add_in_out_range_map(full_in_size, out_seq.size, (pre_nan_in_size, full_in_size), out_nan_range)
-            first_nan_idx = out_nan_idx[0] if len(out_nan_idx) else None
-            measured_delay = pre_nan_out_size - first_nan_idx if first_nan_idx is not None else None
-
-            if measured_delay is None or measured_delay != hyp_out_delay:
-                hypothesis.delay_rejected = True
-                return
-
-        hypothesis.delay_rejected = False
-
-    def test_update_hypothesis_by_streaming(self, sampler: SlidingWindowParamsSampler, hypothesis: Hypothesis):
-        # TODO!!
-        # # If we have already validated another hypothesis with the same streaming params, we can skip any work here
-        # hyp_stream_params = get_canonicalized_in_out_size_params(hypothesis.params)
-        # if hyp_stream_params in self.validated_streaming_params:
-        #     hypothesis.streaming_rejected = False
-        #     return
-
-        # FIXME?: A justification for the number 10
-        in_size = hypothesis.params.get_min_input_size_for_num_wins(10)
-        in_seq = self.input_provider(in_size)
-
-        # FIXME! not relying on a try/catch mechanism
-        try:
-            # TODO! more elegant approach to avoiding stride in floor division issue
-            step_sizes = (
-                (7, 4, 12)
-                + (1,) * (self.in_out_rel_params[0] + hypothesis.params.get_min_input_size_for_num_wins(1))
-                + (17, 9)
-            )
-            test_stream_equivalent(
-                # FIXME!! tracking
-                self._trsfm,
-                SlidingWindowStream(self._trsfm, hypothesis.params, in_seq.spec, self.out_spec),
-                in_seq,
-                in_step_sizes=step_sizes,
-                atol=self.atol,
-            )
-            self.validated_streaming_params.add(hypothesis.params)
-            hypothesis.streaming_rejected = False
-
-            # Enforce more efficient solutions with the same size parameters
-            sampler.add_streamable_params(hypothesis.params)
-            self._debug_check_ref_params(sampler, "accepting an hypothesis for streaming", hypothesis.params)
-            for other_hyp in list(self.hypotheses):
-                if not sampler.is_compatible(other_hyp.params):
-                    other_hyp.suboptimal_rejected = True
-
-        except IncorrectSlidingWindowParametersError:
-            # FIXME!! these arise with insufficient context size for conv mix, to fix!!
-            pass
-
-        except ValueError:
-            hypothesis.streaming_rejected = True
-            sampler.add_non_streamable_params(hypothesis.params)
-            self._debug_check_ref_params(sampler, "rejecting an hypothesis for streaming", hypothesis.params)
-
-    # FIXME: "update" does not convey much sense
-    def update_all_hypotheses(self, sampler: SlidingWindowParamsSampler):
-        """
-        FIXME: doc
-        Test a hypothesis for compatibility with the transform. Updates the sampler with new constraints based on the
-        outcome. If the hypothesis is accepted, it is added to the list of hypotheses. Accepting the hypothesis might
-        cause other suboptimal hypotheses to be rejected in the process.
-        """
-        for hypothesis in self.hypotheses:
-            # TODO: rename
-            # FIXME! poor mechanism given the tests below add to the history, leading to state issues
-            self.test_update_hypothesis_against_nan_trick_history(hypothesis)
-
-            if not hypothesis.rejected and hypothesis.delay_rejected is None:
-                self.test_hypothesis_delays(sampler, hypothesis)
-
-            # if not hypothesis.rejected and hypothesis.streaming_rejected is None:
-            #     self.test_update_hypothesis_by_streaming(sampler, hypothesis)
-
-        for hypothesis in list(self.hypotheses):
-            if hypothesis.rejected:
-                self.hypotheses.remove(hypothesis)
-                self.rejected_hypotheses.append(hypothesis)
-
-    def _debug_check_ref_params(
-        self, sampler, event: str, other_params: SlidingWindowParams | None = None, allow_rejection: bool = False
-    ):
-        """
-        Debugging method for checking why a good reference hypothesis gets rejected.
-        """
-        if (
-            self.debug_ref_params
-            and (violations := sampler.get_violations(self.debug_ref_params))
-            and not any(hyp.params == self.debug_ref_params for hyp in self.hypotheses)
-        ):
-            violations_str = "\n\n\t".join(str(v) for v in violations)
-            logger.debug(
-                f"{colors.RED}Reference hypothesis {_compare_sli_params_str(self.debug_ref_params)} "
-                f"\nbecame incompatible with "
-                f"the sampler after {event}"
-                f"{_compare_sli_params_str(other_params, self.debug_ref_params) if other_params else ''}\n"
-                f"{colors.YELLOW}Violations:\n\t{violations_str}{colors.RESET}"
-            )
-
-            if other_params:
-                in_size = max(50, other_params.get_min_input_size_for_num_wins(10))
-                in_seq = self.input_provider(in_size)
-                try:
-                    test_stream_equivalent(
-                        self._trsfm,
-                        SlidingWindowStream(self._trsfm, other_params, in_seq.spec, self.out_spec),
-                        in_seq,
-                        atol=self.atol,
-                    )
-                except:
-                    pass
-                test_stream_equivalent(
-                    self._trsfm,
-                    SlidingWindowStream(self._trsfm, self.debug_ref_params, in_seq.spec, self.out_spec),
-                    in_seq,
-                    atol=self.atol,
-                )
-
-            if allow_rejection:
-                logger.debug(f"--> {colors.BLUE}Rejection is allowed{colors.RESET}")
-                self.debug_ref_params = None
-            else:
-                raise RuntimeError()
+        return record
 
     def run_initial_input(self) -> dict:
         # TODO! doc
@@ -551,6 +244,8 @@ class SlidingWindowParamsSolver:
             # them based on the observed output size of the relation.
             in_size, out_sizes = input_size_by_max_infogain(shape_params_hyps)
             # TODO? should we try different nan idx values here already?
+            #   -> Yes! That would help with converging towards solutions faster. Determine a heuristic size based
+            #      on the input size relations
             nan_idx = (in_size // 2, in_size // 2 + 1)
             out_seq, _ = self.run_nan_trick(in_size, nan_idx)
             sampler.add_in_out_size(in_size, out_seq.size)
@@ -569,29 +264,208 @@ class SlidingWindowParamsSolver:
 
         return self.in_out_rel_params
 
+    def verify_hypothesis_against_record(
+        self,
+        hypothesis: _SliHypothesis,
+        in_seq_size: int,
+        in_nan_range: Tuple[int, int] | None,
+        out_seq_size: int,
+        out_nan_idx: np.ndarray,
+        out_nan_range: Tuple[int, int] | None,
+    ):
+        # Reject if the nan trick's output is not compatible with the hypothesis
+        if record["in_nan_range"] is not None:
+            new_kernels = determine_kernel_sparsity(
+                hypothesis.params,
+                *hypothesis.kernels,
+                record["in_seq_size"],
+                record["in_nan_range"],
+                record["out_nan_idx"],
+            )
+            if new_kernels[0] is None:
+                hypothesis.nan_trick_rejected = True
+                return
+
+            # Update the hypothesis in place
+            hypothesis.kernels = new_kernels
+
+        hypothesis.n_records_validated += 1
+
+    def test_hypothesis_delays(self, sampler: SlidingWindowParamsSampler, hypothesis: _SliHypothesis):
+        params = hypothesis.params
+        min_in_size = next(i for i in range(1, int(1e9)) if params.get_metrics_for_input(i)[2] > params.kernel_size_out)
+        # FIXME!
+        min_in_size *= 10
+        for phase, hyp_out_delay in enumerate(hypothesis.out_delays):
+            # TODO: get_min_input_size_for_out_size
+            # Align on the phase
+            pre_nan_in_size = min_in_size + (
+                (-min_in_size + phase - params.left_pad + params.kernel_size_in) % params.stride_in
+            )
+            # TODO: remove
+            assert get_output_delay(params, pre_nan_in_size) == hyp_out_delay, "Internal error"
+
+            _, pre_nan_n_wins, pre_nan_out_size = params.get_metrics_for_input(pre_nan_in_size)
+            full_in_size = params.get_min_input_size_for_num_wins(pre_nan_n_wins + 1)
+            full_in_size = max(full_in_size, pre_nan_in_size + params.kernel_size_in)
+            # FIXME!
+            full_in_size = (full_in_size - pre_nan_in_size) * 10 + pre_nan_in_size
+
+            out_seq, out_nan_idx = self.run_nan_trick(full_in_size, (pre_nan_in_size, full_in_size))
+            out_nan_range = (out_nan_idx[0], out_nan_idx[-1] + 1) if len(out_nan_idx) else None
+            sampler.add_in_out_range_map(full_in_size, out_seq.size, (pre_nan_in_size, full_in_size), out_nan_range)
+            first_nan_idx = out_nan_idx[0] if len(out_nan_idx) else None
+            measured_delay = pre_nan_out_size - first_nan_idx if first_nan_idx is not None else None
+
+            if measured_delay is None or measured_delay != hyp_out_delay:
+                hypothesis.delay_rejected = True
+                return
+
+        hypothesis.delay_rejected = False
+
+    def test_update_hypothesis_by_streaming(self, sampler: SlidingWindowParamsSampler, hypothesis: _SliHypothesis):
+        # TODO!!
+        # # If we have already validated another hypothesis with the same streaming params, we can skip any work here
+        # hyp_stream_params = get_canonicalized_in_out_size_params(hypothesis.params)
+        # if hyp_stream_params in self.validated_streaming_params:
+        #     hypothesis.streaming_rejected = False
+        #     return
+
+        # FIXME?: A justification for the number 10
+        in_size = hypothesis.params.get_min_input_size_for_num_wins(10)
+        in_seq = self.input_provider(in_size)
+
+        # FIXME! not relying on a try/catch mechanism
+        try:
+            # TODO! more elegant approach to avoiding stride in floor division issue
+            step_sizes = (
+                (7, 4, 12)
+                + (1,) * (self.in_out_rel_params[0] + hypothesis.params.get_min_input_size_for_num_wins(1))
+                + (17, 9)
+            )
+            test_stream_equivalent(
+                # FIXME!! tracking
+                self._trsfm,
+                SlidingWindowStream(self._trsfm, hypothesis.params, in_seq.spec, self.out_spec),
+                in_seq,
+                in_step_sizes=step_sizes,
+                atol=self.atol,
+            )
+            self.validated_streaming_params.add(hypothesis.params)
+            hypothesis.streaming_rejected = False
+
+            # Enforce more efficient solutions with the same size parameters
+            sampler.add_streamable_params(hypothesis.params)
+            self._debug_check_ref_params(sampler, "accepting an hypothesis for streaming", hypothesis.params)
+            for other_hyp in list(self.hypotheses):
+                if not sampler.is_compatible(other_hyp.params):
+                    other_hyp.suboptimal_rejected = True
+
+        except IncorrectSlidingWindowParametersError:
+            # FIXME!! these arise with insufficient context size for conv mix, to fix!!
+            pass
+
+        except ValueError:
+            hypothesis.streaming_rejected = True
+            sampler.add_non_streamable_params(hypothesis.params)
+            self._debug_check_ref_params(sampler, "rejecting an hypothesis for streaming", hypothesis.params)
+
+    # FIXME: "update" does not convey much sense
+    def update_all_hypotheses(self, sampler: SlidingWindowParamsSampler):
+        """
+        FIXME: doc
+        Test a hypothesis for compatibility with the transform. Updates the sampler with new constraints based on the
+        outcome. If the hypothesis is accepted, it is added to the list of hypotheses. Accepting the hypothesis might
+        cause other suboptimal hypotheses to be rejected in the process.
+        """
+        for hypothesis in self.hypotheses:
+            # TODO: rename
+            # FIXME! poor mechanism given the tests below add to the history, leading to state issues
+            self.verify_hypothesis_against_record(hypothesis)
+
+            if not hypothesis.rejected and hypothesis.delay_rejected is None:
+                self.test_hypothesis_delays(sampler, hypothesis)
+
+            # if not hypothesis.rejected and hypothesis.streaming_rejected is None:
+            #     self.test_update_hypothesis_by_streaming(sampler, hypothesis)
+
+        for hypothesis in list(self.hypotheses):
+            if hypothesis.rejected:
+                self.hypotheses.remove(hypothesis)
+
+    def _debug_check_ref_params(
+        self, sampler, event: str, other_params: SlidingWindowParams | None = None, allow_rejection: bool = False
+    ):
+        """
+        Debugging method for checking why a good reference hypothesis gets rejected.
+        """
+        if (
+            self.debug_ref_params
+            and (violations := sampler.get_violations(self.debug_ref_params))
+            and not any(hyp.params == self.debug_ref_params for hyp in self.hypotheses)
+        ):
+            violations_str = "\n\n\t".join(str(v) for v in violations)
+            logger.debug(
+                f"{colors.RED}Reference hypothesis {_compare_sli_params_str(self.debug_ref_params)} "
+                f"\nbecame incompatible with "
+                f"the sampler after {event}"
+                f"{_compare_sli_params_str(other_params, self.debug_ref_params) if other_params else ''}\n"
+                f"{colors.YELLOW}Violations:\n\t{violations_str}{colors.RESET}"
+            )
+
+            if other_params:
+                in_size = max(50, other_params.get_min_input_size_for_num_wins(10))
+                in_seq = self.input_provider(in_size)
+                try:
+                    test_stream_equivalent(
+                        self._trsfm,
+                        SlidingWindowStream(self._trsfm, other_params, in_seq.spec, self.out_spec),
+                        in_seq,
+                        atol=self.atol,
+                    )
+                except:
+                    pass
+                test_stream_equivalent(
+                    self._trsfm,
+                    SlidingWindowStream(self._trsfm, self.debug_ref_params, in_seq.spec, self.out_spec),
+                    in_seq,
+                    atol=self.atol,
+                )
+
+            if allow_rejection:
+                logger.debug(f"--> {colors.BLUE}Rejection is allowed{colors.RESET}")
+                self.debug_ref_params = None
+            else:
+                raise RuntimeError()
+
+    def _sli_search_integrate_nan_trick_record(
+        self, sampler: SlidingWindowParamsSampler, hypotheses: List[_SliHypothesis], record: dict
+    ):
+        sampler.add_in_out_range_map(
+            record["in_seq_size"], record["out_seq_size"], record["in_nan_range"], record["out_nan_range"]
+        )
+        self._debug_check_ref_params(sampler, "adding previous runs")
+
     def find_sliding_window_params(self):
         # Start by determining the input/output size relationship, it will heavily simplify the param search to
         # know it in advance
         sampler = SlidingWindowParamsSampler(*self.find_in_out_rel_params())
+
+        # The NaN tricks we ran for the in/out size relation are relevant, we'll integrate them into the sampler
+        hypotheses = []
         for record in self.nan_trick_history:
-            out_nan_range = (
-                (record["out_nan_idx"][0], record["out_nan_idx"][-1] + 1) if len(record["out_nan_idx"]) else None
-            )
-            sampler.add_in_out_range_map(
-                record["in_seq_size"], record["out_seq_size"], record["in_nan_range"], out_nan_range
-            )
-            self._debug_check_ref_params(sampler, "adding previous runs")
+            self._sli_search_integrate_nan_trick_record(sampler, hypotheses, record)
 
         step = 1
         while True:
-            # Sample sliding window parameters
+            # Sample new sliding window parameters
             params = sampler.get_new_solution([hyp.params for hyp in self.hypotheses])
             if params is None:
                 break
 
             # Check if the new parameters are compatible with the transform, possibly rejecting older hypotheses
             # in the process
-            hypothesis = SlidingWindowParamsSolver.Hypothesis(params)
+            hypothesis = _SliHypothesis(params)
             self.hypotheses.append(hypothesis)
             self.update_all_hypotheses(sampler)
 
@@ -614,22 +488,11 @@ class SlidingWindowParamsSolver:
             # In the event we now have multiple compatible hypotheses, we can search for a specific input that will
             # let us distinguish between them.
             if not hypothesis.rejected and len(self.hypotheses) > 1:
-                nan_trick_params = self.get_next_nan_trick_params()
+                nan_trick_params = nan_trick_params_by_max_infogain([hyp.params for hyp in self.hypotheses])
                 if nan_trick_params is not None:
-                    in_size, in_nan_range = nan_trick_params
                     prev_n_hyps = len(self.hypotheses)
-                    out_seq, out_nan_idx = self.run_nan_trick(in_size, in_nan_range)
-
-                    out_nan_range = (out_nan_idx[0], out_nan_idx[-1] + 1) if len(out_nan_idx) else None
-                    sampler.add_in_out_range_map(
-                        in_len=in_size,
-                        out_len=out_seq.size,
-                        in_nan_range=in_nan_range,
-                        out_nan_range=out_nan_range,
-                    )
-                    self._debug_check_ref_params(sampler, "running the transform")
-
-                    self.update_all_hypotheses(sampler)
+                    self.run_nan_trick(*nan_trick_params)
+                    self._sli_search_integrate_nan_trick_record(sampler, self.hypotheses, self.nan_trick_history[-1])
                     assert prev_n_hyps > len(self.hypotheses), (
                         "Internal error: NaN trick did not discard any hypotheses"
                     )
@@ -653,6 +516,7 @@ def find_sliding_window_params_for_transform(
     init_seq_size: int = 30,
     max_in_seq_size: int = 10_000,
     atol: float = 1e-5,
+    max_equivalent_sols: int | None = 5,
     debug_ref_params: SlidingWindowParams | None = None,
 ) -> List[SlidingWindowParams]:
     """
@@ -684,5 +548,6 @@ def find_sliding_window_params_for_transform(
         init_seq_size=init_seq_size,
         max_in_seq_size=max_in_seq_size,
         atol=atol,
+        max_equivalent_sols=max_equivalent_sols,
         debug_ref_params=debug_ref_params,
     ).find_sliding_window_params()
