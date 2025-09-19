@@ -75,7 +75,7 @@ class SlidingWindowParamsSampler:
             osbc == self.osbc,
             self.min_od >= 0,
             self.min_od <= self.max_od,
-            self.min_od >= self.max_od + self.s_o,
+            self.min_od + self.s_o >= self.max_od,
             self.ictx >= 0,
         )
 
