@@ -132,8 +132,6 @@ class SlidingWindowParamsSolver:
             input_provider = partial(Sequence.randn, in_spec)
 
         self._trsfm = trsfm
-        # FIXME!
-        # self.input_provider = lru_cache()(input_provider)
         self.input_provider = input_provider
         self.out_spec = out_spec
         self.init_seq_size = init_seq_size
@@ -151,48 +149,6 @@ class SlidingWindowParamsSolver:
         self.in_spec = self.input_provider(0).spec
 
         self.debug_ref_params = debug_ref_params
-
-    def _trsfm_with_tracking(self, in_seq: Sequence):
-        """
-        Wrap the transform so that we can record in/out sizes
-        """
-        if not isinstance(in_seq, Sequence):
-            in_seq = Sequence(self.in_spec, in_seq)
-
-        if not in_seq.size:
-            raise ValueError(f"Input sequence size must be greater than 0, got {in_seq.size}")
-
-        # TODO!!: cleaner cache impl
-        # cached_record = next(
-        #     (rec for rec in self.nan_trick_history if torch.equal(rec["in_seq"].data, in_seq.data)), None
-        # )
-        # if cached_record:
-        #     logger.debug(f"Cache hit for {in_seq.shape}, constraints={len(self.sampler.optimizer.assertions())}")
-        #     v2 = cached_record["out_seq"].copy()
-        #     v2.close_input()
-        #     return v2
-
-        in_nan_idx = get_seq_nan_idx(in_seq)
-        # FIXME: discrepancy
-        in_nan_range = (in_nan_idx[0], in_nan_idx[-1] + 1) if len(in_nan_idx) else None
-
-        out_seq = Sequence.apply(self._trsfm, in_seq, self.out_spec, catch_zero_size_errors=True)
-
-        out_nan_idx = get_seq_nan_idx(out_seq)
-
-        # TODO! In/out details
-        logger.debug(f"Forward {in_seq.size}->{out_seq.size} with nans {in_nan_idx}->{out_nan_idx}")
-
-        # Keep track of the outcome in the history
-        record = {
-            "in_seq": in_seq.copy(),
-            "in_nan_range": in_nan_range,
-            "out_seq": out_seq.copy(),
-            "out_nan_idx": out_nan_idx,
-        }
-        self.nan_trick_history.append(record)
-
-        return out_seq
 
     def _get_infogain(category_counts: Iterable[int]) -> float:
         category_counts = list(category_counts)
@@ -259,7 +215,7 @@ class SlidingWindowParamsSolver:
 
         # First, reject previously seen params, reusing them would be a waste of compute
         # FIXME: range vs idx discrepancy
-        prev_seen_results = set((record["in_seq"].size, record["in_nan_range"]) for record in self.nan_trick_history)
+        prev_seen_results = set((record["in_seq_size"], record["in_nan_range"]) for record in self.nan_trick_history)
 
         # If we have hypotheses, we'll determine our nan trick parameters based on them
         min_in_size = min(hyp.params.get_min_input_size() for hyp in self.hypotheses)
@@ -298,7 +254,7 @@ class SlidingWindowParamsSolver:
             raise ValueError(f"Nan range must be positive and within the input sequence size, got {in_nan_range}")
 
         # Get an input of said size and perform the nan trick on the actual transform
-        in_seq = self.input_provider(in_seq_size).copy()  # FIXME!
+        in_seq = self.input_provider(in_seq_size)
         if not isinstance(in_seq, Sequence):
             raise TypeError(
                 f"The input_provider function {self.input_provider} returned a {type(in_seq)} "
@@ -310,6 +266,31 @@ class SlidingWindowParamsSolver:
             in_seq[slice(*in_nan_range)] = float("nan")
 
         out_seq = self._trsfm_with_tracking(in_seq)
+        #####
+
+        in_nan_idx = get_seq_nan_idx(in_seq)
+        # FIXME: discrepancy
+        in_nan_range = (in_nan_idx[0], in_nan_idx[-1] + 1) if len(in_nan_idx) else None
+
+        out_seq = Sequence.apply(self._trsfm, in_seq, self.out_spec, catch_zero_size_errors=True)
+
+        out_nan_idx = get_seq_nan_idx(out_seq)
+        out_nan_range = (out_nan_idx[0], out_nan_idx[-1] + 1) if len(out_nan_idx) else None
+
+        # TODO! In/out details
+        logger.debug(f"Forward {in_seq.size}->{out_seq.size} with nans {in_nan_range}->{out_nan_range}")
+
+        # Keep track of the outcome in the history
+        record = {
+            "in_seq_size": in_seq.size,
+            "in_nan_range": in_nan_range,
+            "out_seq_size": out_seq.size,
+            "out_nan_idx": out_nan_idx,
+            "out_nan_range": out_nan_range,
+        }
+        self.nan_trick_history.append(record)
+
+        #####
 
         # FIXME: duplication
         out_nan_idx = get_seq_nan_idx(out_seq)
@@ -336,8 +317,8 @@ class SlidingWindowParamsSolver:
     def test_update_hypothesis_against_nan_trick_history(self, hypothesis: Hypothesis):
         for record in self.nan_trick_history[hypothesis.n_records_validated :]:
             # Reject the hypothesis if we get a different output length
-            _, _, expected_out_len = hypothesis.params.get_metrics_for_input(record["in_seq"].size)
-            if record["out_seq"].size != expected_out_len:
+            _, _, expected_out_len = hypothesis.params.get_metrics_for_input(record["in_seq_size"])
+            if record["out_seq_size"] != expected_out_len:
                 hypothesis.nan_trick_rejected = True
                 return
 
@@ -346,7 +327,7 @@ class SlidingWindowParamsSolver:
                 new_kernels = determine_kernel_sparsity(
                     hypothesis.params,
                     *hypothesis.kernels,
-                    record["in_seq"].size,
+                    record["in_seq_size"],
                     record["in_nan_range"],
                     record["out_nan_idx"],
                 )
@@ -360,9 +341,6 @@ class SlidingWindowParamsSolver:
             hypothesis.n_records_validated += 1
 
     def test_hypothesis_delays(self, sampler: SlidingWindowParamsSampler, hypothesis: Hypothesis):
-        # in_size = hypothesis.params.get_min_input_size_for_num_wins(10)
-        # in_seq = self.input_provider(in_size).copy()  # FIXME!
-
         params = hypothesis.params
         min_in_size = next(i for i in range(1, int(1e9)) if params.get_metrics_for_input(i)[2] > params.kernel_size_out)
         # FIXME!
@@ -404,7 +382,7 @@ class SlidingWindowParamsSolver:
 
         # FIXME?: A justification for the number 10
         in_size = hypothesis.params.get_min_input_size_for_num_wins(10)
-        in_seq = self.input_provider(in_size).copy()  # FIXME!
+        in_seq = self.input_provider(in_size)
 
         # FIXME! not relying on a try/catch mechanism
         try:
@@ -487,7 +465,7 @@ class SlidingWindowParamsSolver:
 
             if other_params:
                 in_size = max(50, other_params.get_min_input_size_for_num_wins(10))
-                in_seq = self.input_provider(in_size).copy()  # FIXME!
+                in_seq = self.input_provider(in_size)
                 try:
                     test_stream_equivalent(
                         self._trsfm,
@@ -540,7 +518,7 @@ class SlidingWindowParamsSolver:
 
         sampler = SlidingWindowInOutRelSampler()
         for record in self.nan_trick_history:
-            sampler.add_in_out_size(record["in_seq"].size, record["out_seq"].size)
+            sampler.add_in_out_size(record["in_seq_size"], record["out_seq_size"])
 
         real_sol = get_canonicalized_in_out_size_params(self.debug_ref_params) if self.debug_ref_params else None
 
@@ -600,7 +578,7 @@ class SlidingWindowParamsSolver:
                 (record["out_nan_idx"][0], record["out_nan_idx"][-1] + 1) if len(record["out_nan_idx"]) else None
             )
             sampler.add_in_out_range_map(
-                record["in_seq"].size, record["out_seq"].size, record["in_nan_range"], out_nan_range
+                record["in_seq_size"], record["out_seq_size"], record["in_nan_range"], out_nan_range
             )
             self._debug_check_ref_params(sampler, "adding previous runs")
 
