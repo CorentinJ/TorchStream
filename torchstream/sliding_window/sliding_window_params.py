@@ -191,28 +191,10 @@ class SlidingWindowParams:
     def __eq__(self, other):
         if not isinstance(other, SlidingWindowParams):
             return False
-        return (
-            self.kernel_size_in == other.kernel_size_in
-            and self.kernel_size_out == other.kernel_size_out
-            and self.stride_in == other.stride_in
-            and self.left_pad == other.left_pad
-            and self.right_pad == other.right_pad
-            and self.stride_out == other.stride_out
-            and self.out_trim == other.out_trim
-        )
+        return self.as_tuple() == other.as_tuple()
 
     def __hash__(self):
-        return hash(
-            (
-                self.kernel_size_in,
-                self.kernel_size_out,
-                self.stride_in,
-                self.left_pad,
-                self.right_pad,
-                self.stride_out,
-                self.out_trim,
-            )
-        )
+        return hash(self.as_tuple())
 
     def __repr__(self):
         return (

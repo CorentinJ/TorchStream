@@ -128,15 +128,17 @@ class SlidingWindowParamsSampler:
                 # Two cases: either we have enough input to get one window, either we don't
                 Implies(padded_in_len < self.k_i, c == 0),
                 Implies(padded_in_len >= self.k_i, c >= 1),
-                # c == If(padded_in_len >= self.k_i, (padded_in_len - self.k_i) / self.s_i + 1, 0),
+
                 Implies(
                     c >= 1,
                     And(
+                        # Division-free expression of: c = (padded_in_len - k_i) // s_i + 1,
                         padded_in_len - self.k_i == (c - 1) * self.s_i + rem,
                         0 <= rem,
                         rem < self.s_i,
                     ),
                 ),
+
                 # Output length relation
                 Implies(c == 0, out_len == 0),
                 Implies(And(c > 0, out_len == 0), (c - 1) * self.s_o + self.k_o <= 2 * self.t_o),
@@ -221,7 +223,7 @@ class SlidingWindowParamsSampler:
                     out_delay > n_right_elems_overwritten,
                     self.k_i >= (in_nan_range[1] - in_nan_range[0]) + 2,
                 ),
-                # NOTE: if the solution is known, picking a nan range larger than the input kernel size and
+                # NOTE: for any given set of parameters, picking a nan range larger than the input kernel size and
                 # ensuring that the pre-nan out size is larger than the output kernel size ensures that we stay
                 # in the usual case.
             ),
