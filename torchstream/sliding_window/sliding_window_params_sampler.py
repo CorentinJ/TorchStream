@@ -128,7 +128,6 @@ class SlidingWindowParamsSampler:
                 # Two cases: either we have enough input to get one window, either we don't
                 Implies(padded_in_len < self.k_i, c == 0),
                 Implies(padded_in_len >= self.k_i, c >= 1),
-
                 Implies(
                     c >= 1,
                     And(
@@ -138,7 +137,6 @@ class SlidingWindowParamsSampler:
                         rem < self.s_i,
                     ),
                 ),
-
                 # Output length relation
                 Implies(c == 0, out_len == 0),
                 Implies(And(c > 0, out_len == 0), (c - 1) * self.s_o + self.k_o <= 2 * self.t_o),
@@ -181,106 +179,97 @@ class SlidingWindowParamsSampler:
             self.p_l + in_nan_range[1] >= crs * self.s_i,
         )
 
-        if in_nan_range[0] == 0:
-            return
-        # Count how many elements lie between the first output NaNs and the expected output size of the pre-nan input
-        pre_nan_out_size = max(0, ((in_nan_range[0] + self.isbc) // self.s_i) * self.s_o + self.osbc)
-        n_right_elems_overwritten = pre_nan_out_size - out_nan_range[0]
-        # TODO: doc
-        out_delay = get_output_delay(
-            self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o, in_nan_range[0]
-        )
-        self.optimizer.add(
-            # FIXME? is this at all helpful or is it redundant?
-            self.min_od <= out_delay,
-            out_delay <= self.max_od,
-            Or(
-                # Usual case: the first nan we see in the output is the first that could be produced.
-                And(n_right_elems_overwritten >= 0, out_delay == n_right_elems_overwritten),
-                # Edge case 1: the first output is a nan. Either we're in the usual case handled above, either
-                # the delay is actually larger than measured here because output nans were trimmed on the left.
-                And(
-                    n_right_elems_overwritten >= 0,
-                    out_nan_range[0] == 0,
-                    out_delay > pre_nan_out_size,
-                    out_delay <= pre_nan_out_size + self.t_o,
-                    self.t_o > 0,
-                ),
-                # Edge case 2: even if the first output is not a nan, we could be missing the first nan because
-                # the output kernel could be sparse with some output trimming. It's hard to formulate strong
-                # constraints for this case, but we at least know that the gap in the output kernel needs to be
-                # larger than the first non-nan portion of the output.
-                And(
-                    n_right_elems_overwritten >= 0,
-                    self.k_o >= out_nan_range[0] + 2,
-                    out_delay > pre_nan_out_size,
-                    out_delay <= pre_nan_out_size + self.t_o,
-                    self.t_o > 0,
-                ),
-                # Edge case 3: the input kernel has gaps and skips over the input nans. In that case the delay
-                # would be underestimated using the usual case formula, so we can't say much.
-                And(
-                    out_delay > n_right_elems_overwritten,
-                    self.k_i >= (in_nan_range[1] - in_nan_range[0]) + 2,
-                ),
-                # NOTE: for any given set of parameters, picking a nan range larger than the input kernel size and
-                # ensuring that the pre-nan out size is larger than the output kernel size ensures that we stay
-                # in the usual case.
-            ),
-        )
-
-    def add_streamable_params(self, params: SlidingWindowParams, strict=False):
-        """
-        If parameters were found to successfully stream the transform, this method will constrain the optimizer to
-        yield only better or equally efficient solutions (in at least one aspect) with the same size parameters.
-        """
-        assert get_canonicalized_in_out_size_params(params) == (self.s_i, self.s_o, self.isbc, self.osbc), (
-            "The input/output size parameters must match the set relation"
-        )
-
-        ictx = get_streaming_context_size(params)
-        ref_min_od, ref_max_od = get_output_delay_bounds(params)
-
-        self.optimizer.add(
-            (self.ictx < ictx) if strict else (self.ictx <= ictx),
-            self.min_od <= ref_min_od,
-            self.max_od <= ref_max_od,
-        )
-
-    def add_non_streamable_params(self, params: SlidingWindowParams):
-        """
-        If parameters were found to not stream the transform, this method will refrain the optimizer from yielding
-        new solutions with the same size parameters and less context.
-        """
-        assert get_canonicalized_in_out_size_params(params) == (self.s_i, self.s_o, self.isbc, self.osbc), (
-            "The input/output size parameters must match the set relation"
-        )
-
-        ref_ictx = get_streaming_context_size(params)
-        ref_min_od, ref_max_od = get_output_delay_bounds(params)
-
-        # FIXME! review
-        if ref_min_od == ref_max_od:
+        if in_nan_range[0] > 0:
+            # Count how many elements lie between the first output NaNs and the expected output size of the pre-nan
+            # input
+            pre_nan_out_size = max(0, ((in_nan_range[0] + self.isbc) // self.s_i) * self.s_o + self.osbc)
+            n_right_elems_overwritten = pre_nan_out_size - out_nan_range[0]
+            # TODO: doc
+            out_delay = get_output_delay(
+                self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o, in_nan_range[0]
+            )
             self.optimizer.add(
+                # FIXME? is this at all helpful or is it redundant?
+                self.min_od <= out_delay,
+                out_delay <= self.max_od,
                 Or(
-                    self.min_od != ref_min_od,
-                    self.max_od != ref_max_od,
-                    self.ictx > ref_ictx,
-                )
+                    # Usual case: the first nan we see in the output is the first that could be produced.
+                    And(n_right_elems_overwritten >= 0, out_delay == n_right_elems_overwritten),
+                    # Edge case 1: the first output is a nan. Either we're in the usual case handled above, either
+                    # the delay is actually larger than measured here because output nans were trimmed on the left.
+                    And(
+                        n_right_elems_overwritten >= 0,
+                        out_nan_range[0] == 0,
+                        out_delay > pre_nan_out_size,
+                        out_delay <= pre_nan_out_size + self.t_o,
+                        self.t_o > 0,
+                    ),
+                    # Edge case 2: even if the first output is not a nan, we could be missing the first nan because
+                    # the output kernel could be sparse with some output trimming. It's hard to formulate strong
+                    # constraints for this case, but we at least know that the gap in the output kernel needs to be
+                    # larger than the first non-nan portion of the output.
+                    And(
+                        n_right_elems_overwritten >= 0,
+                        self.k_o >= out_nan_range[0] + 2,
+                        out_delay > pre_nan_out_size,
+                        out_delay <= pre_nan_out_size + self.t_o,
+                        self.t_o > 0,
+                    ),
+                    # Edge case 3: the input kernel has gaps and skips over the input nans. In that case the delay
+                    # would be underestimated using the usual case formula, so we can't say much.
+                    And(
+                        out_delay > n_right_elems_overwritten,
+                        self.k_i >= (in_nan_range[1] - in_nan_range[0]) + 2,
+                    ),
+                    # NOTE: for any given set of parameters, picking a nan range larger than the input kernel size and
+                    # ensuring that the pre-nan out size is larger than the output kernel size ensures that we stay
+                    # in the usual case.
+                ),
             )
 
-        # delay_constraint = (
-        #     (self.max_od > ref_max_od)
-        #     if ref_min_od == ref_max_od
-        #     else And(self.min_od >= ref_min_od, self.max_od >= ref_max_od)
-        # )
-        # self.optimizer.add(
-        #     Or(
-        #         # Ensure we don't try different parameters with less context or less delay, that would not work
-        #         self.ictx > ref_ictx,
-        #         delay_constraint,
-        #     )
-        # )
+        # FIXME!! doc
+        # Count how many elements lie between the first output NaNs and the expected output size of the pre-nan
+        # input
+        in_nan_size = in_nan_range[1] - in_nan_range[0]
+        out_nan_size = out_nan_range[1] - out_nan_range[0]
+        post_nan_in_size = in_len - in_nan_range[1]
+        post_nan_out_size = out_len - out_nan_range[1]
+
+        # Starting from the first corrupted output element, how many windows have been produced before getting
+        # an output window that is entirely not corrupted
+        n_out_corr_wins = (out_nan_size + self.s_o - 1) // self.s_o
+
+        # This lets us know where the first window without nans in its output range ends in the input, because
+        # we know that the first corrupted input window ended just past where the input nans started
+        # (minding the phase)
+        # NOTE: knowing the phase would let us tighten these bounds, however as more inputs with different phase
+        # come in, we converge towards the same tight bounds anyway.
+        ctx_upper_bound = (n_out_corr_wins + 1) * self.s_i - in_nan_size
+        ctx_lower_bound = (n_out_corr_wins - 1) * self.s_i - in_nan_size + 2
+
+        self.optimizer.add(
+            Or(
+                # Usual case: the bounds are correct
+                And(
+                    self.ictx >= ctx_lower_bound,
+                    self.ictx <= ctx_upper_bound,
+                ),
+                # Edge cases: we are necessarily underestimating the context
+                Implies(
+                    self.ictx > ctx_upper_bound,
+                    Or(
+                        And(out_nan_range[0] == 0, self.t_o > 0),
+                        And(out_nan_range[1] == out_len),
+                        self.k_i >= in_nan_range[0] + 2,
+                        self.k_i >= in_nan_size + 2,
+                        self.k_i >= post_nan_in_size + 2,
+                        self.k_o >= out_nan_range[0] + 2,
+                        self.k_o >= out_nan_size + 2,
+                        self.k_o >= post_nan_out_size + 2,
+                    ),
+                ),
+            )
+        )
 
     def get_new_solution(self, valid_sols: List[SlidingWindowParams] | None = None) -> SlidingWindowParams | None:
         valid_sols = valid_sols or []

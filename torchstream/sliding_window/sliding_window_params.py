@@ -333,7 +333,7 @@ def get_all_output_delays(
 def get_all_output_delays(*args) -> Tuple[IntLike, ...]:
     # TODO: doc
     k_i, s_i, p_l, p_r, k_o, s_o, t_o = _get_sli_args(args)
-    # NOTE: can be compute more efficiently for very large strides if necessary
+    # NOTE: can be computed more efficiently for very large strides if necessary
     return tuple(get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_o, phase, as_phase=True) for phase in range(s_i))
 
 
@@ -346,6 +346,18 @@ def get_streaming_context_size(
     k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_o: IntLike
 ) -> IntLike: ...
 def get_streaming_context_size(*args) -> IntLike:
+    """
+    Get the input context size necessary for streaming a transform with the given parameters.
+
+    When streaming a transform, we discard n * s_i input elements on the left of the input after each step, where n is
+    the number of windows effectively computed by the transform. For the streamed transform to remain equivalent to
+    its non streamed version, we'll need to accumulate more input elements as context before starting to discard. This
+    function computes that amount.
+
+    Say a transform has a context of size 12. If 7 new elements are fed to the stream, then at least the last 5
+    elements of the previous input need to be concatenated to the left of the new input. Otherwise, the output will
+    not match that of the non-streamed transform.
+    """
     k_i, s_i, p_l, p_r, k_o, s_o, t_o = _get_sli_args(args)
 
     # Number of windows that are wasted on the left solely due to padding. "Wasted" here means that we recompute

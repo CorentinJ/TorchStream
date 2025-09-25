@@ -49,7 +49,7 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
         x = conv(x)
         return x
 
-    sliding_window_params = SlidingWindowParams(
+    sli_params = SlidingWindowParams(
         kernel_size_in=kernel_span,
         stride_in=stride,
         left_pad=padding[0],
@@ -58,7 +58,7 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
 
     conv_stream = SlidingWindowStream(
         transform,
-        sliding_window_params,
+        sli_params,
         SeqSpec((1, 1, -1)),
     )
 

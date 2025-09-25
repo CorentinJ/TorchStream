@@ -200,6 +200,9 @@ class SlidingWindowParamsSolver:
         return self.nan_trick_history[0]
 
     def find_in_out_rel_params(self) -> tuple[int, int, int, int]:
+        # TODO? Model/constraint minimum input size too? 
+        #   Valuable relation: ictx + s_i >= min_input_size
+
         # TODO! doc
         if self.in_out_rel_params:
             return self.in_out_rel_params
@@ -284,7 +287,9 @@ class SlidingWindowParamsSolver:
         # Update the hypothesis in place
         hypothesis.kernels = new_kernels
 
-    def _iter_nan_trick_params_for_delays(self, params: SlidingWindowParams):
+        return True
+
+    def _iter_nan_trick_params_for_delays_and_context(self, params: SlidingWindowParams):
         # As specified in the sampler, for any given set of parameters, picking a nan range larger than the input
         # kernel size and ensuring that the pre-nan out size is larger than the output kernel size will let us
         # know with certainty whether the parameters' delays are matching the transform.
@@ -310,7 +315,7 @@ class SlidingWindowParamsSolver:
                     break
 
         # TODO
-        size_factor = 10
+        size_factor = 3
         # TODO: get_min_input_size_for_out_size
         min_pre_nan_in_size = next(
             i for i in range(1, int(1e9)) if params.get_metrics_for_input(i)[2] >= min_pre_nan_out_size
@@ -321,9 +326,12 @@ class SlidingWindowParamsSolver:
             pre_nan_in_size = pre_nan_in_size + (
                 (-pre_nan_in_size + phase - params.left_pad + params.kernel_size_in) % params.stride_in
             )
-            full_in_size = pre_nan_in_size + size_factor * min_nan_in_size
+            post_nan_in_size = pre_nan_in_size + size_factor * min_nan_in_size
 
-            yield (full_in_size, (pre_nan_in_size, full_in_size))
+            # FIXME!!
+            full_in_size = post_nan_in_size + pre_nan_in_size
+
+            yield (full_in_size, (pre_nan_in_size, post_nan_in_size))
 
     # def test_update_hypothesis_by_streaming(self, sampler: SlidingWindowParamsSampler, hypothesis: _SliHypothesis):
     #     # TODO!!
@@ -470,7 +478,7 @@ class SlidingWindowParamsSolver:
                     pass_kernel_checks = False
                     break
 
-            for nan_trick_params in self._iter_nan_trick_params_for_delays(hypothesis.params):
+            for nan_trick_params in self._iter_nan_trick_params_for_delays_and_context(hypothesis.params):
                 record = self.run_nan_trick(*nan_trick_params)
                 hypotheses = self._sli_search_integrate_nan_trick_record(sampler, hypotheses, record)
                 # TODO? break if removed from hyps

@@ -6,7 +6,7 @@ from torch.nn import Conv1d
 
 from tests.rng import set_seed
 from torchstream.sequence.seq_spec import SeqSpec
-from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+from torchstream.sliding_window.sliding_window_params import SlidingWindowParams, get_streaming_context_size
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 from torchstream.stream_equivalence import test_stream_equivalent
 
@@ -17,11 +17,13 @@ set_seed(10)
 
 
 ref = SlidingWindowParams(
-    kernel_size_in=33,
+    kernel_size_in=5,
     stride_in=2,
-    left_pad=1,
-    right_pad=4,
 )
+print(ref)
+print(get_streaming_context_size(ref))
+quit()
+
 other = SlidingWindowParams(5, 2, 0, 1, 15, 1, 13)
 
 

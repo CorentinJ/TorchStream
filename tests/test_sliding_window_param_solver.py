@@ -1,5 +1,5 @@
 import logging
-from typing import List, Tuple
+from typing import Tuple
 from venv import logger
 
 import numpy as np
@@ -13,14 +13,15 @@ from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
     get_all_output_delays,
     get_canonicalized_in_out_size_params,
+    get_streaming_context_size,
 )
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params_for_transform
 
 
-@pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])
-@pytest.mark.parametrize("stride", [1, 2, 3, 10, 17])
 @pytest.mark.parametrize("padding", [(0, 0), (2, 0), (0, 3), (1, 4)])
 @pytest.mark.parametrize("dilation", [1, 2, 3])
+@pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])
+@pytest.mark.parametrize("stride", [1, 2, 3, 10, 17])
 def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilation: int):
     kernel_span = (kernel_size - 1) * dilation + 1
     if stride > kernel_span:
@@ -30,10 +31,6 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
     if kernel_size == 1 and dilation > 1:
         pytest.skip("Redundant")
 
-    # FIXME!
-    if stride == 1:
-        pytest.skip("TEMP")
-
     set_seed(0x5EED)
 
     expected_sol = SlidingWindowParams(
@@ -42,10 +39,12 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
         left_pad=padding[0],
         right_pad=padding[1],
     )
+    # FIXME! convenience function for this, or let the solver print this?
     logger.debug(
         f"Expected solution: {expected_sol}"
         f"\nwith shape {get_canonicalized_in_out_size_params(expected_sol)}"
         f"\nwith out delays {get_all_output_delays(expected_sol)}"
+        f"\nwith context size {get_streaming_context_size(expected_sol)}"
     )
 
     conv = nn.Conv1d(
@@ -133,20 +132,36 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, padding: int, dilation
 @pytest.mark.parametrize(
     "conv_params",
     [
-        # (
-        #     {"transposed": False, "kernel_size": 7, "stride": 1, "padding": 3, "dilation": 1},
-        #     {"transposed": False, "kernel_size": 3, "stride": 1, "padding": 2, "dilation": 2},
-        #     {"transposed": True, "kernel_size": 2, "stride": 2},
-        #     {"transposed": True, "kernel_size": 3, "stride": 3},
-        # ),
         (
-            {"transposed": False, "kernel_size": 7, "stride": 1, "padding": 3},
-            {"transposed": True, "kernel_size": 16, "stride": 8, "padding": 4},
+            [
+                {"transposed": False, "kernel_size": 5, "stride": 2, "padding": 1},
+                {"transposed": True, "kernel_size": 4, "stride": 3, "padding": 2},
+            ],
+            SlidingWindowParams(
+                kernel_size_in=5, stride_in=2, left_pad=1, right_pad=1, kernel_size_out=4, stride_out=3, out_trim=2
+            ),
+        ),
+        (
+            [
+                {"transposed": False, "kernel_size": 7, "stride": 1, "padding": 3},
+                {"transposed": True, "kernel_size": 16, "stride": 8, "padding": 4},
+            ],
+            None,
         ),
     ],
 )
-def test_conv_mix(conv_params: List[Tuple[dict]]):
+def test_conv_mix(conv_params):
     set_seed(0x5EED)
+
+    conv_params, expected_sol = conv_params
+
+    if expected_sol:
+        logger.debug(
+            f"Expected solution: {expected_sol}"
+            f"\nwith shape {get_canonicalized_in_out_size_params(expected_sol)}"
+            f"\nwith out delays {get_all_output_delays(expected_sol)}"
+            f"\nwith context size {get_streaming_context_size(expected_sol)}"
+        )
 
     network = nn.Sequential(
         *[
@@ -161,7 +176,7 @@ def test_conv_mix(conv_params: List[Tuple[dict]]):
             for params in conv_params
         ]
     )
-    sols = find_sliding_window_params_for_transform(network, SeqSpec((1, 1, -1)))
+    sols = find_sliding_window_params_for_transform(network, SeqSpec((1, 1, -1)), debug_ref_params=expected_sol)
     logging.info(sols)
 
     # TODO: include expected parameters
