@@ -239,14 +239,6 @@ class SlidingWindowParamsSampler:
         # an output window that is entirely not corrupted
         n_out_corr_wins = (out_nan_size + self.s_o - 1) // self.s_o
 
-        # This lets us know where the first window without nans in its output range ends in the input, because
-        # we know that the first corrupted input window ended just past where the input nans started
-        # (minding the phase)
-        # NOTE: knowing the phase would let us tighten these bounds, however as more inputs with different phase
-        # come in, we converge towards the same tight bounds anyway.
-        ctx_upper_bound = (n_out_corr_wins + 1) * self.s_i - in_nan_size
-        ctx_lower_bound = (n_out_corr_wins - 1) * self.s_i - in_nan_size + 1
-
         bounds = []
         for phase in range(1, self.s_i + 1):
             # This lets us know where the first window without nans in its output range ends in the input, because
@@ -254,11 +246,19 @@ class SlidingWindowParamsSampler:
             # (minding the phase)
             first_post_nan_in_win_end = in_nan_range[0] + phase + n_out_corr_wins * self.s_i
 
-            ctx_upper_bound = first_post_nan_in_win_end - in_nan_range[1]
-            ctx_lower_bound = first_post_nan_in_win_end - self.s_i - in_nan_range[1]
+            ctx_upper_bound = first_post_nan_in_win_end - in_nan_range[1] - 1
+            ctx_lower_bound = first_post_nan_in_win_end - in_nan_range[1] - self.s_i
             bounds.append((ctx_lower_bound, ctx_upper_bound))
 
-        logger.debug(f"CTX BOUNDS: {ctx_lower_bound} <= {ctx_upper_bound}")
+        # This lets us know where the first window without nans in its output range ends in the input, because
+        # we know that the first corrupted input window ended just past where the input nans started
+        # (minding the phase)
+        # NOTE: knowing the phase would let us tighten these bounds, however as more inputs with different phase
+        # come in, we converge towards the same tight bounds anyway.
+        ctx_upper_bound = (n_out_corr_wins + 1) * self.s_i - in_nan_size - 1
+        ctx_lower_bound = (n_out_corr_wins - 1) * self.s_i - in_nan_size + 1
+
+        logger.debug(f"CTX BOUNDS: ({ctx_lower_bound}, {ctx_upper_bound}) -> {bounds}")
 
         self.optimizer.add(
             Or(
