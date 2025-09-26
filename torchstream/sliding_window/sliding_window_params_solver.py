@@ -65,8 +65,9 @@ def _compare_sli_params_str(params: SlidingWindowParams, real_params: SlidingWin
 
 
 class _SliHypothesis:
-    def __init__(self, params: SlidingWindowParams):
+    def __init__(self, params: SlidingWindowParams, id: int):
         self.params = params
+        self.id = id
         self.kernels = (
             get_init_kernel_array(self.params.kernel_size_in),
             get_init_kernel_array(self.params.kernel_size_out),
@@ -200,7 +201,7 @@ class SlidingWindowParamsSolver:
         return self.nan_trick_history[0]
 
     def find_in_out_rel_params(self) -> tuple[int, int, int, int]:
-        # TODO? Model/constraint minimum input size too? 
+        # TODO? Model/constraint minimum input size too?
         #   Valuable relation: ictx + s_i >= min_input_size
 
         # TODO! doc
@@ -442,9 +443,11 @@ class SlidingWindowParamsSolver:
         validated_hypotheses = []
         for hypothesis in hypotheses:
             if not self._verify_hypothesis_kernels_against_record(hypothesis, **record):
+                logger.debug(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED after kernel check{colors.RESET}")
                 continue
             # TODO!! time this
             if not sampler.is_compatible(hypothesis.params):
+                logger.debug(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED by constraints{colors.RESET}")
                 continue
             validated_hypotheses.append(hypothesis)
 
@@ -467,7 +470,7 @@ class SlidingWindowParamsSolver:
             if params is None:
                 break
 
-            hypothesis = _SliHypothesis(params)
+            hypothesis = _SliHypothesis(params, id=step)
             logger.debug(
                 f"[Sli params] Step {step}: {_compare_sli_params_str(hypothesis.params, self.debug_ref_params)}"
             )
@@ -476,6 +479,7 @@ class SlidingWindowParamsSolver:
             for record in self.nan_trick_history:
                 if not self._verify_hypothesis_kernels_against_record(hypothesis, **record):
                     pass_kernel_checks = False
+                    logger.debug(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED after kernel check{colors.RESET}")
                     break
 
             for nan_trick_params in self._iter_nan_trick_params_for_delays_and_context(hypothesis.params):
@@ -499,7 +503,7 @@ class SlidingWindowParamsSolver:
 
             step += 1
 
-        logger.debug(f"Hypotheses at the end of solver execution: {hypotheses}")
+        logger.debug(f"Hypotheses at the end of solver execution: #{', #'.join(str(hyp.id) for hyp in hypotheses)}")
 
         # TODO: sort by param complexity
         return [hypothesis.params for hypothesis in hypotheses]
