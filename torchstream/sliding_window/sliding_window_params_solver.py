@@ -76,6 +76,7 @@ class _SliHypothesis:
         self.in_out_size_params = get_canonicalized_in_out_size_params(self.params)
         self.out_delays = get_all_output_delays(self.params)
         self.context_size = get_streaming_context_size(self.params)
+        self.min_input_size = self.params.get_min_input_size()
 
 
 class SlidingWindowParamsSolver:
@@ -195,7 +196,7 @@ class SlidingWindowParamsSolver:
             # the sampler, otherwise we may be stuck sampling for a while before getting decent candidates.
             self.init_seq_size = min(10 * self.init_seq_size, self.max_in_seq_size)
             logger.info(
-                f"Transform failed with input size {self.nan_trick_history[-1]['in_seq'].size}. "
+                f"Transform failed with input size {record['in_seq_size']}. "
                 f"Increasing init sequence size to {self.init_seq_size}"
             )
 
@@ -296,6 +297,7 @@ class SlidingWindowParamsSolver:
         # kernel size and ensuring that the pre-nan out size is larger than the output kernel size will let us
         # know with certainty whether the parameters' delays are matching the transform.
         min_nan_in_size = params.kernel_size_in
+        # TODO! more constraints, based on the sampler's edge cases
         target_pre_nan_out_size = params.kernel_size_out
         # TODO: get_min_input_size_for_out_size
         min_pre_nan_in_size = next(
@@ -468,7 +470,7 @@ class SlidingWindowParamsSolver:
         step = 1
         while True:
             # Sample new sliding window parameters
-            params = sampler.get_new_solution([hyp.params for hyp in hypotheses])
+            params = sampler.get_new_solution([hyp.params for hyp in hypotheses], max_equivalent_sols=self.max_equivalent_sols)
             if params is None:
                 break
 

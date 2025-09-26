@@ -1,6 +1,7 @@
 import itertools
 import logging
 import math
+from collections import Counter
 from typing import Iterable, List, Tuple
 
 from z3 import And, Bool, Implies, Int, Ints, Or, Solver, sat
@@ -8,6 +9,7 @@ from z3 import And, Bool, Implies, Int, Ints, Or, Solver, sat
 from torchstream.sliding_window.nan_trick import get_nan_map
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
+    get_all_output_delays,
     get_canonicalized_in_out_size_params,
     get_output_delay,
     get_output_delay_bounds,
@@ -63,9 +65,11 @@ class SlidingWindowParamsSampler:
         *_, isbc, osbc = get_canonicalized_in_out_size_params(
             self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
         )
+        # FIXME: keep either?
         self.min_od, self.max_od = get_output_delay_bounds(
             self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
         )
+        self.ods = get_all_output_delays(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
         self.ictx = get_streaming_context_size(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
 
         # FIXME!
@@ -284,11 +288,13 @@ class SlidingWindowParamsSampler:
             )
         )
 
-    def get_new_solution(self, valid_sols: List[SlidingWindowParams] | None = None) -> SlidingWindowParams | None:
+    def get_new_solution(
+        self, valid_sols: List[SlidingWindowParams] | None = None, max_equivalent_sols: int | None = None
+    ) -> SlidingWindowParams | None:
         valid_sols = valid_sols or []
 
         # TODO! doc
-        # TODO! iter_new_solutions, mark emitted ones, simplify constraints.
+        # TODO! simplify constraints.
 
         _MAX_COST_REL_LIMIT = 2.0
         _MAX_COST_FLAT_LIMIT = 10_000
@@ -299,11 +305,28 @@ class SlidingWindowParamsSampler:
             else _MAX_COST_FLAT_LIMIT
         )
 
+        def _get_family_params(params: SlidingWindowParams):
+            # NOTE: can't constraint on min input size because not modeled here, but shouldn't be a problem in practice
+            return (get_all_output_delays(params), get_streaming_context_size(params))
+
+        family_count = Counter(_get_family_params(sol) for sol in valid_sols)
+        families_to_reject = [
+            fam for fam, count in family_count.items() if max_equivalent_sols and count >= max_equivalent_sols
+        ]
+
         while True:
             max_cost_value = self.max_cost_sampler.next_p()
             max_cost_reached = max_cost_value >= max_cost_limit
             max_cost_value = min(max_cost_value, max_cost_limit)
             guide_constraints = [self.solution_cost <= max_cost_value]
+
+            for delays, ctx in families_to_reject:
+                guide_constraints.append(
+                    Or(
+                        self.ictx != ctx,
+                        Or(*(od != delay for od, delay in zip(self.ods, delays))),
+                    )
+                )
 
             import time
 
