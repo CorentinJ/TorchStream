@@ -88,7 +88,7 @@ class SlidingWindowParamsSolver:
         init_seq_size: int = 30,
         max_in_seq_size: int = 10_000,
         atol: float = 1e-5,
-        max_equivalent_sols: int | None = 5,
+        max_equivalent_sols: int | None = 1,
         debug_ref_params: SlidingWindowParams | None = None,
     ):
         if isinstance(input_provider, SeqSpec):
@@ -470,7 +470,9 @@ class SlidingWindowParamsSolver:
         step = 1
         while True:
             # Sample new sliding window parameters
-            params = sampler.get_new_solution([hyp.params for hyp in hypotheses], max_equivalent_sols=self.max_equivalent_sols)
+            params = sampler.get_new_solution(
+                [hyp.params for hyp in hypotheses], max_equivalent_sols=self.max_equivalent_sols
+            )
             if params is None:
                 break
 
@@ -523,7 +525,7 @@ def find_sliding_window_params_for_transform(
     init_seq_size: int = 30,
     max_in_seq_size: int = 10_000,
     atol: float = 1e-5,
-    max_equivalent_sols: int | None = 5,
+    max_equivalent_sols: int | None = 1,
     debug_ref_params: SlidingWindowParams | None = None,
 ) -> List[SlidingWindowParams]:
     """

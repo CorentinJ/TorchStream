@@ -1,4 +1,3 @@
-import logging
 from typing import Tuple
 from venv import logger
 
@@ -16,6 +15,35 @@ from torchstream.sliding_window.sliding_window_params import (
     get_streaming_context_size,
 )
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params_for_transform
+from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
+from torchstream.stream_equivalence import test_stream_equivalent
+
+
+def _get_sol_params(sol: SlidingWindowParams):
+    return {
+        "shape": get_canonicalized_in_out_size_params(sol),
+        "min_in_size": sol.get_min_input_size(),
+        "out_delays": get_all_output_delays(sol),
+        "context_size": get_streaming_context_size(sol),
+    }
+
+
+def _find_solution_or_equivalent(transform, seq_spec, expected_sol):
+    # TODO: let the solver print this
+    logger.debug(
+        f"Expected solution: {expected_sol}"
+        f"\nwith shape {get_canonicalized_in_out_size_params(expected_sol)}"
+        f"\nwith out delays {get_all_output_delays(expected_sol)}"
+        f"\nwith context size {get_streaming_context_size(expected_sol)}"
+    )
+
+    sols = find_sliding_window_params_for_transform(transform, seq_spec, debug_ref_params=expected_sol)
+
+    if expected_sol not in sols:
+        assert any(_get_sol_params(sol) == _get_sol_params(expected_sol) for sol in sols)
+        logger.warning("Could not find the expected solution, but found an equivalent one")
+
+    test_stream_equivalent(transform, SlidingWindowStream(transform, sols[0], seq_spec))
 
 
 @pytest.mark.parametrize("padding", [(0, 0), (2, 0), (0, 3), (1, 4)])
@@ -39,13 +67,6 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
         left_pad=padding[0],
         right_pad=padding[1],
     )
-    # FIXME! convenience function for this, or let the solver print this?
-    logger.debug(
-        f"Expected solution: {expected_sol}"
-        f"\nwith shape {get_canonicalized_in_out_size_params(expected_sol)}"
-        f"\nwith out delays {get_all_output_delays(expected_sol)}"
-        f"\nwith context size {get_streaming_context_size(expected_sol)}"
-    )
 
     conv = nn.Conv1d(
         in_channels=1,
@@ -62,9 +83,7 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
         x = conv(x)
         return x
 
-    # TODO: we could verify the kernel values too
-    sols = find_sliding_window_params_for_transform(transform, SeqSpec((1, 1, -1)), debug_ref_params=expected_sol)
-    assert any(sol == expected_sol for sol in sols)
+    _find_solution_or_equivalent(transform, SeqSpec((1, 1, -1)), expected_sol)
 
 
 @pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])
@@ -87,8 +106,6 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, padding: int, dilation
         stride_out=stride,
         out_trim=padding,
     )
-    logger.debug(f"Expected solution: {expected_sol}")
-    logger.debug(get_all_output_delays(expected_sol))
 
     # The torch docs poorly explain the mechanism of transposed convolutions. Here's my take:
     # Each individual input element multiplies the kernel (element-wise). That output is offset by the stride on each
@@ -106,12 +123,7 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, padding: int, dilation
         # TODO: handle output padding?
     )
 
-    sols = find_sliding_window_params_for_transform(
-        conv,
-        SeqSpec((1, 1, -1)),
-        debug_ref_params=expected_sol,
-    )
-    assert expected_sol in sols
+    _find_solution_or_equivalent(conv, SeqSpec((1, 1, -1)), expected_sol)
 
 
 # NOTE: our solver has the following modeling limitation: on any layer with an input stride > 1, the current combined
@@ -155,14 +167,6 @@ def test_conv_mix(conv_params):
 
     conv_params, expected_sol = conv_params
 
-    if expected_sol:
-        logger.debug(
-            f"Expected solution: {expected_sol}"
-            f"\nwith shape {get_canonicalized_in_out_size_params(expected_sol)}"
-            f"\nwith out delays {get_all_output_delays(expected_sol)}"
-            f"\nwith context size {get_streaming_context_size(expected_sol)}"
-        )
-
     network = nn.Sequential(
         *[
             (nn.ConvTranspose1d if params["transposed"] else nn.Conv1d)(
@@ -176,11 +180,7 @@ def test_conv_mix(conv_params):
             for params in conv_params
         ]
     )
-    sols = find_sliding_window_params_for_transform(network, SeqSpec((1, 1, -1)), debug_ref_params=expected_sol)
-    logging.info(sols)
-
-    # TODO: include expected parameters
-    assert sols, f"Expected solution, but none found for {network}"
+    _find_solution_or_equivalent(network, SeqSpec((1, 1, -1)), expected_sol)
 
 
 def test_infinite_receptive_field():
