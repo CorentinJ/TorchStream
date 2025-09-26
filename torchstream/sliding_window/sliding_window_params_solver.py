@@ -17,6 +17,7 @@ from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
     get_all_output_delays,
+    get_output_delay_bounds,
     get_streaming_context_size,
 )
 from torchstream.sliding_window.sliding_window_params_sampler import (
@@ -295,7 +296,12 @@ class SlidingWindowParamsSolver:
         # kernel size and ensuring that the pre-nan out size is larger than the output kernel size will let us
         # know with certainty whether the parameters' delays are matching the transform.
         min_nan_in_size = params.kernel_size_in
-        min_pre_nan_out_size = params.kernel_size_out
+        target_pre_nan_out_size = params.kernel_size_out
+        # TODO: get_min_input_size_for_out_size
+        min_pre_nan_in_size = next(
+            i for i in range(1, int(1e9)) if params.get_metrics_for_input(i)[2] >= target_pre_nan_out_size
+        )
+        min_pre_nan_in_size += get_output_delay_bounds(params)[1]
 
         # We'll start by going through the nan trick history. If we already have a nan trick record that validated
         # a phase for these parameters, we can skip testing that phase again
@@ -309,7 +315,7 @@ class SlidingWindowParamsSolver:
                 if (
                     rec_phase == phase
                     and record["in_nan_range"][1] - record["in_nan_range"][0] >= min_nan_in_size
-                    and record["out_nan_range"][0] >= min_pre_nan_out_size
+                    and record["in_nan_range"][0] >= min_pre_nan_in_size
                 ):
                     logger.debug(f"Found matching nan trick record for phase {phase}/{params.stride_in - 1}")
                     phases_to_test.remove(phase)
@@ -317,10 +323,6 @@ class SlidingWindowParamsSolver:
 
         # TODO
         size_factor = 3
-        # TODO: get_min_input_size_for_out_size
-        min_pre_nan_in_size = next(
-            i for i in range(1, int(1e9)) if params.get_metrics_for_input(i)[2] >= min_pre_nan_out_size
-        )
         for phase in phases_to_test:
             pre_nan_in_size = min_pre_nan_in_size * size_factor
             # Align the pre-nan input on the given phase

@@ -245,7 +245,6 @@ class SlidingWindowParamsSampler:
             # we know that the first corrupted input window ended just past where the input nans started
             # (minding the phase)
             first_post_nan_in_win_end = in_nan_range[0] + phase + n_out_corr_wins * self.s_i
-
             ctx_upper_bound = first_post_nan_in_win_end - in_nan_range[1] - 1
             ctx_lower_bound = first_post_nan_in_win_end - in_nan_range[1] - self.s_i
             bounds.append((ctx_lower_bound, ctx_upper_bound))
