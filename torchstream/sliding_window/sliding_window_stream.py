@@ -74,7 +74,8 @@ class SlidingWindowStream(Stream):
         assert out_trim_end > out_trim_start >= 0, "Internal error"
         self.stream_out_pos = self.tsfm_out_pos + out_trim_end
 
-        # Drop input that won't be necessary in the future
+        # Drop input that won't be necessary in the future. We retain only the context size rounded up to the nearest
+        # multiple of the input stride.
         wins_to_drop = max(0, (in_seq.size - self.ictx) // self.params.stride_in)
         in_seq.drop(wins_to_drop * self.params.stride_in)
         self.tsfm_out_pos += wins_to_drop * self.params.stride_out

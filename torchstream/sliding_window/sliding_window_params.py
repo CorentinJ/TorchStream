@@ -347,13 +347,12 @@ def get_streaming_context_size(
 ) -> IntLike: ...
 def get_streaming_context_size(*args) -> IntLike:
     """
-    Get the input context size necessary for streaming a transform with the given parameters.
+    Get the input context size necessary for streaming a transform with given sliding window parameters.
 
-    When streaming a transform, we discard n * s_i input elements on the left of the input buffer after each step.
-    For the streamed transform to remain equivalent to its non streamed version, we need to pick n such that the buffer
-    remains of a certain size. This function computes that size.
-    Say a transform has a context size of 3, then any new input will have at least the last 3 elements of the previous
-    input concatenated to its left before being forwarded to the transform.
+    When streaming a transform, we continuously discard seen input in order to limit the compute cost of the transform.
+    However, there is a certain minimum number of elements that need not to be discarded in order for the output to be
+    equivalent from its non-streamed version. This value is the context size and we can derive it from the sliding
+    window parameters.
     """
     k_i, s_i, p_l, p_r, k_o, s_o, t_o = _get_sli_args(args)
 

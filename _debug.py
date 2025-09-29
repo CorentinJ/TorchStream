@@ -1,14 +1,15 @@
 import logging
-from random import randint
 
-import torch
 from torch.nn import Conv1d
 
 from tests.rng import set_seed
 from torchstream.sequence.seq_spec import SeqSpec
-from torchstream.sliding_window.sliding_window_params import SlidingWindowParams, get_streaming_context_size
-from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
-from torchstream.stream_equivalence import test_stream_equivalent
+from torchstream.sliding_window.sliding_window_params import (
+    SlidingWindowParams,
+    get_output_delay_bounds,
+    get_streaming_context_size,
+)
+from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params_for_transform
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
@@ -16,37 +17,35 @@ logging.basicConfig(level=logging.DEBUG)
 set_seed(10)
 
 
-ref = SlidingWindowParams(
-    kernel_size_in=5,
-    stride_in=2,
-)
-print(ref)
-print(get_streaming_context_size(ref))
+other = SlidingWindowParams(5, 1, right_pad=3)
+print(get_streaming_context_size(other))
+print(get_output_delay_bounds(other))
+print(other.get_min_input_size())
 quit()
 
-other = SlidingWindowParams(5, 2, 0, 1, 15, 1, 13)
+
+trsfm = Conv1d(1, 1, kernel_size=5, stride=2, dilation=1)
+# conv = trsfm
 
 
-trsfm = Conv1d(1, 1, kernel_size=33, stride=2)
-conv = trsfm
+find_sliding_window_params_for_transform(trsfm, SeqSpec((1, 1, -1)), debug_ref_params=other)
+
+# def trsfm(x):
+#     # print("\x1b[31m", x, "\x1b[39m", sep="")
+#     return conv(torch.nn.functional.pad(x, (1, 4)))
 
 
-def trsfm(x):
-    # print("\x1b[31m", x, "\x1b[39m", sep="")
-    return conv(torch.nn.functional.pad(x, (1, 4)))
-
-
-print(
-    test_stream_equivalent(
-        trsfm,
-        SlidingWindowStream(
-            trsfm,
-            ref,
-            SeqSpec((1, 1, -1)),
-        ),
-        in_step_sizes=[randint(1, 200) for _ in range(100)],
-    ),
-)
+# print(
+#     test_stream_equivalent(
+#         trsfm,
+#         SlidingWindowStream(
+#             trsfm,
+#             ref,
+#             SeqSpec((1, 1, -1)),
+#         ),
+#         in_step_sizes=[randint(1, 200) for _ in range(100)],
+#     ),
+# )
 
 quit()
 
