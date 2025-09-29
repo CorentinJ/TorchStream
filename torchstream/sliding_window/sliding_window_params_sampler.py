@@ -259,7 +259,8 @@ class SlidingWindowParamsSampler:
         # NOTE: knowing the phase would let us tighten these bounds, however as more inputs with different phase
         # come in, we converge towards the same tight bounds anyway.
         ctx_upper_bound = (n_out_corr_wins + 1) * self.s_i - in_nan_size - 1
-        ctx_lower_bound = (n_out_corr_wins - 1) * self.s_i - in_nan_size + 1
+        # FIXME! lower bound seems too loose
+        ctx_lower_bound = (n_out_corr_wins - 2) * self.s_i - in_nan_size + 2
 
         logger.debug(f"CTX BOUNDS: ({ctx_lower_bound}, {ctx_upper_bound}) -> {bounds}")
 

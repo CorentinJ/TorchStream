@@ -6,8 +6,6 @@ from tests.rng import set_seed
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
-    get_output_delay_bounds,
-    get_streaming_context_size,
 )
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params_for_transform
 
@@ -17,14 +15,10 @@ logging.basicConfig(level=logging.DEBUG)
 set_seed(10)
 
 
-other = SlidingWindowParams(5, 1, right_pad=3)
-print(get_streaming_context_size(other))
-print(get_output_delay_bounds(other))
-print(other.get_min_input_size())
-quit()
+other = SlidingWindowParams(5, 2)
 
 
-trsfm = Conv1d(1, 1, kernel_size=5, stride=2, dilation=1)
+trsfm = Conv1d(1, 1, kernel_size=5, stride=2)
 # conv = trsfm
 
 

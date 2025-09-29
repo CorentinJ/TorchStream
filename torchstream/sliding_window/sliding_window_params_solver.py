@@ -338,53 +338,6 @@ class SlidingWindowParamsSolver:
 
             yield (full_in_size, (pre_nan_in_size, post_nan_in_size))
 
-    # def test_update_hypothesis_by_streaming(self, sampler: SlidingWindowParamsSampler, hypothesis: _SliHypothesis):
-    #     # TODO!!
-    #     # # If we have already validated another hypothesis with the same streaming params, we can skip any work here
-    #     # hyp_stream_params = get_canonicalized_in_out_size_params(hypothesis.params)
-    #     # if hyp_stream_params in self.validated_streaming_params:
-    #     #     hypothesis.streaming_rejected = False
-    #     #     return
-
-    #     # FIXME?: A justification for the number 10
-    #     in_size = hypothesis.params.get_min_input_size_for_num_wins(10)
-    #     in_seq = self.input_provider(in_size)
-
-    #     # FIXME! not relying on a try/catch mechanism
-    #     try:
-    #         # TODO! more elegant approach to avoiding stride in floor division issue
-    #         step_sizes = (
-    #             (7, 4, 12)
-    #             + (1,) * (self.in_out_rel_params[0] + hypothesis.params.get_min_input_size_for_num_wins(1))
-    #             + (17, 9)
-    #         )
-    #         test_stream_equivalent(
-    #             # FIXME!! tracking
-    #             self._trsfm,
-    #             SlidingWindowStream(self._trsfm, hypothesis.params, in_seq.spec, self.out_spec),
-    #             in_seq,
-    #             in_step_sizes=step_sizes,
-    #             atol=self.atol,
-    #         )
-    #         self.validated_streaming_params.add(hypothesis.params)
-    #         hypothesis.streaming_rejected = False
-
-    #         # Enforce more efficient solutions with the same size parameters
-    #         sampler.add_streamable_params(hypothesis.params)
-    #         self._debug_check_ref_params(sampler, "accepting an hypothesis for streaming", hypothesis.params)
-    #         for other_hyp in list(hypotheses):
-    #             if not sampler.is_compatible(other_hyp.params):
-    #                 other_hyp.suboptimal_rejected = True
-
-    #     except IncorrectSlidingWindowParametersError:
-    #         # FIXME!! these arise with insufficient context size for conv mix, to fix!!
-    #         pass
-
-    #     except ValueError:
-    #         hypothesis.streaming_rejected = True
-    #         sampler.add_non_streamable_params(hypothesis.params)
-    #         self._debug_check_ref_params(sampler, "rejecting an hypothesis for streaming", hypothesis.params)
-
     def _debug_check_ref_params(
         self,
         sampler,
@@ -477,39 +430,49 @@ class SlidingWindowParamsSolver:
                 break
 
             hypothesis = _SliHypothesis(params, id=step)
+            hypotheses.append(hypothesis)
             logger.debug(
                 f"[Sli params] Step {step}: {_compare_sli_params_str(hypothesis.params, self.debug_ref_params)}"
             )
 
-            pass_kernel_checks = True
             for record in self.nan_trick_history:
                 if not self._verify_hypothesis_kernels_against_record(hypothesis, **record):
-                    pass_kernel_checks = False
+                    hypotheses.remove(hypothesis)
                     logger.debug(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED after kernel check{colors.RESET}")
                     break
 
-            for nan_trick_params in self._iter_nan_trick_params_for_delays_and_context(hypothesis.params):
+            nan_trick_params_iter = self._iter_nan_trick_params_for_delays_and_context(hypothesis.params)
+            prev_infogain_n_hyps = None
+            while hypothesis in hypotheses:
+                try:
+                    nan_trick_params = next(nan_trick_params_iter)
+                except StopIteration:
+                    # In the event we now have multiple compatible hypotheses, we can search for a specific input that
+                    # will let us distinguish between them.
+                    assert prev_infogain_n_hyps is None or prev_infogain_n_hyps > len(hypotheses), (
+                        "Internal error: did not reject any hypotheses with max infogain nan trick"
+                    )
+                    nan_trick_params = nan_trick_params_by_max_infogain([hyp.params for hyp in hypotheses])
+                    if nan_trick_params is None:
+                        break
+                    prev_infogain_n_hyps = len(hypotheses)
+
                 record = self.run_nan_trick(*nan_trick_params)
                 hypotheses = self._sli_search_integrate_nan_trick_record(sampler, hypotheses, record)
-                # TODO? break if removed from hyps
 
-            if pass_kernel_checks and sampler.is_compatible(hypothesis.params):
-                hypotheses.append(hypothesis)
-
-                # In the event we now have multiple compatible hypotheses, we can search for a specific input that will
-                # let us distinguish between them.
-                if len(hypotheses) > 1:
-                    nan_trick_params = nan_trick_params_by_max_infogain([hyp.params for hyp in hypotheses])
-                    if nan_trick_params is not None:
-                        prev_n_hyps = len(hypotheses)
-                        record = self.run_nan_trick(*nan_trick_params)
-                        hypotheses = self._sli_search_integrate_nan_trick_record(sampler, hypotheses, record)
-                        assert prev_n_hyps > len(hypotheses), "Internal error: NaN trick did not discard any hypotheses"
-                        logger.info(f"Step {step}: rejected {prev_n_hyps - len(hypotheses)}/{prev_n_hyps} hypotheses")
+                if hypothesis not in hypotheses:
+                    break
 
             step += 1
 
         logger.debug(f"Hypotheses at the end of solver execution: #{', #'.join(str(hyp.id) for hyp in hypotheses)}")
+
+        assert not hypotheses or all(
+            hyp.context_size == hypotheses[0].context_size
+            and hyp.out_delays == hypotheses[0].out_delays
+            and hyp.min_input_size == hypotheses[0].min_input_size
+            for hyp in hypotheses
+        ), "Internal error: hypotheses have different streaming parameters"
 
         # TODO: sort by param complexity
         return [hypothesis.params for hypothesis in hypotheses]
