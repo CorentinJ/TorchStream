@@ -37,7 +37,10 @@ def _find_solution_or_equivalent(transform, seq_spec, expected_sol):
         f"\nwith context size {get_streaming_context_size(expected_sol)}"
     )
 
-    sols = find_sliding_window_params_for_transform(transform, seq_spec, debug_ref_params=expected_sol)
+    sols = find_sliding_window_params_for_transform(
+        transform, seq_spec, debug_ref_params=expected_sol, max_equivalent_sols=1
+    )
+    assert len(sols) == 1, f"Expected exactly one solution, got {len(sols)}: {sols}"
 
     if expected_sol not in sols:
         assert any(_get_sol_params(sol) == _get_sol_params(expected_sol) for sol in sols)

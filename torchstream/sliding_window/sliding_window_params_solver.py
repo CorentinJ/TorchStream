@@ -112,17 +112,6 @@ class SlidingWindowParamsSolver:
 
         self.debug_ref_params = debug_ref_params
 
-    def _get_equivalent_solutions_count(self, hypothesis: _SliHypothesis) -> int:
-        assert hypothesis in hypotheses
-        return sum(
-            (
-                other_hyp.in_out_size_params == hypothesis.in_out_size_params
-                and other_hyp.out_delays == hypothesis.out_delays
-                and other_hyp.context_size == hypothesis.context_size
-            )
-            for other_hyp in hypotheses
-        )
-
     def run_nan_trick(self, in_seq_size: int, in_nan_range: Tuple[int, int] | None) -> dict:
         """
         Runs the nan trick once on the transform, updating the sampler and history in the process.
@@ -223,6 +212,7 @@ class SlidingWindowParamsSolver:
         shape_params_hyps = []
         while not self.in_out_rel_params:
             # Sample new shape parameters
+            # TODO: bench values other than 2 for max sols
             shape_params_hyps = sampler.get_new_solutions(shape_params_hyps)
             log_str = f"[In/out rel] Step {step} params:\n\t"
             log_str += "\n\t".join(_compare_params_str(params, real_sol) for params in shape_params_hyps)
@@ -319,9 +309,11 @@ class SlidingWindowParamsSolver:
                     and record["in_nan_range"][1] - record["in_nan_range"][0] >= min_nan_in_size
                     and record["in_nan_range"][0] >= min_pre_nan_in_size
                 ):
-                    logger.debug(f"Found matching nan trick record for phase {phase}/{params.stride_in - 1}")
                     phases_to_test.remove(phase)
                     break
+
+        if phases_to_test:
+            logger.debug(f"Yielding inputs for phases {sorted(phases_to_test)} (stride={params.stride_in})")
 
         # TODO
         size_factor = 3
@@ -333,7 +325,7 @@ class SlidingWindowParamsSolver:
             )
             post_nan_in_size = pre_nan_in_size + size_factor * min_nan_in_size
 
-            # FIXME!!
+            # FIXME!
             full_in_size = post_nan_in_size + pre_nan_in_size
 
             yield (full_in_size, (pre_nan_in_size, post_nan_in_size))
@@ -413,14 +405,15 @@ class SlidingWindowParamsSolver:
     def find_sliding_window_params(self):
         # Start by determining the input/output size relationship, it will heavily simplify the param search to
         # know it in advance
-        sampler = SlidingWindowParamsSampler(*self.find_in_out_rel_params())
+        in_out_rel_params = self.find_in_out_rel_params()
+        sampler = SlidingWindowParamsSampler(*in_out_rel_params)
 
         # The NaN tricks we ran for the in/out size relation are relevant, we'll integrate them into the sampler
-        hypotheses = []
         for record in self.nan_trick_history:
-            self._sli_search_integrate_nan_trick_record(sampler, hypotheses, record)
+            self._sli_search_integrate_nan_trick_record(sampler, [], record)
 
         step = 1
+        hypotheses = []
         while True:
             # Sample new sliding window parameters
             params = sampler.get_new_solution(
@@ -443,7 +436,7 @@ class SlidingWindowParamsSolver:
 
             nan_trick_params_iter = self._iter_nan_trick_params_for_delays_and_context(hypothesis.params)
             prev_infogain_n_hyps = None
-            while hypothesis in hypotheses:
+            while True:
                 try:
                     nan_trick_params = next(nan_trick_params_iter)
                 except StopIteration:
