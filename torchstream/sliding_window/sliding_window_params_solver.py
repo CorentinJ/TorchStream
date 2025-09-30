@@ -457,8 +457,8 @@ class SlidingWindowParamsSolver:
         # TODO: sort by param complexity
         out_params = [hypothesis.params for hypothesis in hypotheses]
         assert not out_params or all(
-            params.context_size == out_params[0].context_size
-            and params.out_delays == out_params[0].out_delays
+            params.streaming_context_size == out_params[0].streaming_context_size
+            and params.output_delays == out_params[0].output_delays
             and params.min_input_size == out_params[0].min_input_size
             for params in out_params
         ), "Internal error: hypotheses have different streaming parameters"
