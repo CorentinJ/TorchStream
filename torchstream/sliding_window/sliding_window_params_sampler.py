@@ -267,10 +267,11 @@ class SlidingWindowParamsSampler:
         # FIXME! lower bound seems too loose
         ctx_lower_bound = (n_out_corr_wins - 2) * self.s_i - in_nan_size + 2
         ctx_upper_bound = (n_out_corr_wins + 1) * self.s_i - in_nan_size - 1
-        # FIXME! too loose, work from the context definition?
-        ctx_upper_bound += 2 * self.t_o * self.s_i
 
         logger.debug(f"CTX BOUNDS: ({ctx_lower_bound}, {ctx_upper_bound}) -> {bounds}")
+
+        # FIXME! too loose, work from the context definition?
+        ctx_upper_bound = 2 * self.t_o * self.s_i
 
         self.optimizer.add(
             Or(
@@ -312,7 +313,7 @@ class SlidingWindowParamsSampler:
 
         def _get_family_params(params: SlidingWindowParams):
             # NOTE: can't constraint on min input size because not modeled here, but shouldn't be a problem in practice
-            return (get_all_output_delays(params), get_streaming_context_size(params))
+            return (params.output_delays, params.streaming_context_size)
 
         family_count = Counter(_get_family_params(sol) for sol in valid_sols)
 

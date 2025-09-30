@@ -16,9 +16,7 @@ from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
 )
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
-    get_all_output_delays,
     get_output_delay_bounds,
-    get_streaming_context_size,
 )
 from torchstream.sliding_window.sliding_window_params_sampler import (
     SlidingWindowParamsSampler,
@@ -51,17 +49,17 @@ def _compare_params_str(params: tuple, real_params: tuple | None) -> str:
 def _compare_sli_params_str(params: SlidingWindowParams, real_params: SlidingWindowParams | None = None) -> str:
     if real_params:
         ref_params = real_params.as_tuple()
-        ref_shape = get_canonicalized_in_out_size_params(real_params)
-        ref_delays = get_all_output_delays(real_params)
-        ref_ctx = (get_streaming_context_size(real_params),)
+        ref_shape = real_params.canonicalized_in_out_size_params
+        ref_delays = real_params.output_delays
+        ref_ctx = (real_params.streaming_context_size,)
     else:
         ref_params, ref_shape, ref_delays, ref_ctx = None, None, None, None
 
     return (
         f"\n\tparameters ({_compare_params_str(params.as_tuple(), ref_params)})"
-        f"\n\twith shape ({_compare_params_str(get_canonicalized_in_out_size_params(params), ref_shape)})"
-        f"\n\twith delays ({_compare_params_str(get_all_output_delays(params), ref_delays)})"
-        f"\n\twith context size {_compare_params_str((get_streaming_context_size(params),), ref_ctx)}"
+        f"\n\twith shape ({_compare_params_str(params.canonicalized_in_out_size_params, ref_shape)})"
+        f"\n\twith delays ({_compare_params_str(params.output_delays, ref_delays)})"
+        f"\n\twith context size {_compare_params_str((params.streaming_context_size,), ref_ctx)}"
     )
 
 
@@ -73,10 +71,6 @@ class _SliHypothesis:
             get_init_kernel_array(self.params.kernel_size_in),
             get_init_kernel_array(self.params.kernel_size_out),
         )
-        self.in_out_size_params = get_canonicalized_in_out_size_params(self.params)
-        self.out_delays = get_all_output_delays(self.params)
-        self.context_size = get_streaming_context_size(self.params)
-        self.min_input_size = self.params.min_input_size
 
 
 class SlidingWindowParamsSolver:
@@ -460,15 +454,16 @@ class SlidingWindowParamsSolver:
 
         logger.debug(f"Hypotheses at the end of solver execution: #{', #'.join(str(hyp.id) for hyp in hypotheses)}")
 
-        assert not hypotheses or all(
-            hyp.context_size == hypotheses[0].context_size
-            and hyp.out_delays == hypotheses[0].out_delays
-            and hyp.min_input_size == hypotheses[0].min_input_size
-            for hyp in hypotheses
+        # TODO: sort by param complexity
+        out_params = [hypothesis.params for hypothesis in hypotheses]
+        assert not out_params or all(
+            params.context_size == out_params[0].context_size
+            and params.out_delays == out_params[0].out_delays
+            and params.min_input_size == out_params[0].min_input_size
+            for params in out_params
         ), "Internal error: hypotheses have different streaming parameters"
 
-        # TODO: sort by param complexity
-        return [hypothesis.params for hypothesis in hypotheses]
+        return out_params
 
 
 # TODO: allow transforms with multiple sequential inputs

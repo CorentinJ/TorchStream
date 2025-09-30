@@ -6,7 +6,6 @@ from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
     get_output_delay,
-    get_streaming_context_size,
 )
 from torchstream.stream import NotEnoughInputError, Stream
 
@@ -32,7 +31,7 @@ class SlidingWindowStream(Stream):
         self.transform = transform
 
         self.params = sliding_window_params
-        self.ictx = get_streaming_context_size(sliding_window_params)
+        self.ictx = sliding_window_params.streaming_context_size
 
         self.tsfm_out_pos = 0
         self.stream_out_pos = 0
