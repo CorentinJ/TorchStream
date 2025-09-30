@@ -70,7 +70,11 @@ class SlidingWindowParamsSampler:
             self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
         )
         self.ods = get_all_output_delays(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
-        self.ictx = get_streaming_context_size(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
+        self.ictx = Int("ictx")
+        self.optimizer.add(
+            self.ictx
+            == get_streaming_context_size(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
+        )
 
         # FIXME!
         # Bounds for the input size bias: -k_i < isb <= 2 * (k_i - 1)
@@ -199,6 +203,8 @@ class SlidingWindowParamsSampler:
                 Or(
                     # Usual case: the first nan we see in the output is the first that could be produced.
                     And(n_right_elems_overwritten >= 0, out_delay == n_right_elems_overwritten),
+                    # More rare but still normal case: the output delay is technically negative
+                    And(n_right_elems_overwritten < 0, self.t_o > 0, out_delay == 0),
                     # Edge case 1: the first output is a nan. Either we're in the usual case handled above, either
                     # the delay is actually larger than measured here because output nans were trimmed on the left.
                     And(
@@ -277,13 +283,9 @@ class SlidingWindowParamsSampler:
                     self.ictx > ctx_upper_bound,
                     Or(
                         And(out_nan_range[0] == 0, self.t_o > 0),
-                        And(out_nan_range[1] == out_len),
-                        self.k_i >= in_nan_range[0] + 2,
-                        self.k_i >= in_nan_size + 2,
-                        self.k_i >= post_nan_in_size + 2,
-                        self.k_o >= out_nan_range[0] + 2,
-                        self.k_o >= out_nan_size + 2,
-                        self.k_o >= post_nan_out_size + 2,
+                        out_nan_range[1] == out_len,
+                        self.k_i >= max(in_nan_range[0], in_nan_size, post_nan_in_size) + 2,
+                        self.k_o >= max(out_nan_range[0], out_nan_size, post_nan_out_size) + 2,
                     ),
                 ),
             )
@@ -311,9 +313,6 @@ class SlidingWindowParamsSampler:
             return (get_all_output_delays(params), get_streaming_context_size(params))
 
         family_count = Counter(_get_family_params(sol) for sol in valid_sols)
-        families_to_reject = [
-            fam for fam, count in family_count.items() if max_equivalent_sols and count >= max_equivalent_sols
-        ]
 
         while True:
             max_cost_value = self.max_cost_sampler.next_p()
@@ -321,13 +320,15 @@ class SlidingWindowParamsSampler:
             max_cost_value = min(max_cost_value, max_cost_limit)
             guide_constraints = [self.solution_cost <= max_cost_value]
 
-            for delays, ctx in families_to_reject:
-                guide_constraints.append(
-                    Or(
-                        self.ictx != ctx,
-                        Or(*(od != delay for od, delay in zip(self.ods, delays))),
+            for (delays, ctx), count in family_count.items():
+                # Enforce new solutions for families that meet the maximum count
+                if max_equivalent_sols and count >= max_equivalent_sols:
+                    guide_constraints.append(
+                        Or(
+                            self.ictx != ctx,
+                            Or(*(od != delay for od, delay in zip(self.ods, delays))),
+                        )
                     )
-                )
 
             import time
 

@@ -15,7 +15,9 @@ logging.basicConfig(level=logging.DEBUG)
 set_seed(10)
 
 
-other = SlidingWindowParams(5, 2)
+other = SlidingWindowParams(kernel_size_out=5, out_trim=4)
+print(other.streaming_context_size)
+quit()
 
 
 trsfm = Conv1d(1, 1, kernel_size=5, stride=2)

@@ -346,7 +346,7 @@ class SlidingWindowParamsSolver:
             and (violations := sampler.get_violations(self.debug_ref_params))
             and not any(hyp.params == self.debug_ref_params for hyp in hypotheses)
         ):
-            violations_str = "\n\n\t".join(str(v) for v in violations)
+            violations_str = "\n\n-------------------\n\t".join(str(v) for v in violations)
             logger.debug(
                 f"{colors.RED}Reference hypothesis {_compare_sli_params_str(self.debug_ref_params)} "
                 f"\nbecame incompatible with "

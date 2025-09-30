@@ -58,6 +58,22 @@ class SlidingWindowParams:
         if self.out_trim < 0 or self.out_trim >= self.kernel_size_out:
             raise ValueError("out_trim must be at least 0 and at most kernel_size_out - 1.")
 
+    @property
+    def canonicalized_in_out_size_params(self) -> Tuple[int, int, int, int]:
+        return get_canonicalized_in_out_size_params(self)
+
+    @property
+    def output_delay_bounds(self) -> Tuple[int, int]:
+        return get_output_delay_bounds(self)
+
+    @property
+    def output_delays(self) -> Tuple[int, ...]:
+        return get_all_output_delays(self)
+
+    @property
+    def streaming_context_size(self) -> int:
+        return get_streaming_context_size(self)
+
     # TODO! refactor, terrible name & mechanics
     def get_metrics_for_input(self, in_len: int) -> Tuple[Tuple[int, int], int, int]:
         """
@@ -361,7 +377,7 @@ def get_streaming_context_size(*args) -> IntLike:
     # every time. If it is possible to remove padding from the transform and manually pad the streamed input,
     # this waste of compute can be avoided.
     # Note that right padding wastes compute just as much, however it does not require any context to be stored.
-    n_left_wins_wasted = _ceil_div(p_l, s_i)
+    n_left_pad_wins_wasted = _ceil_div(p_l, s_i)
 
     # For a given output window, the number of other output windows that overlap it. Only >0 when the out stride
     # is smaller than the out kernel size.
@@ -370,14 +386,15 @@ def get_streaming_context_size(*args) -> IntLike:
     # overlapping windows (e.g. a vector sum) is known. TODO: test & implement if useful
     n_overlapping_out_wins = _ceil_div(k_o, s_o) - 1
 
+    # FIXME! doc & names
     # Output trimming might trim away the content of output windows on the right. Depending on the output overlap,
     # we might need to compute additional windows every step to make up for that.
-    n_extra_right_wins = _max(0, _ceil_div(t_o - (k_o - s_o), s_o))
-
     # With any output trimming, we'll need an extra window if there no output window overlap at all
     if isinstance(s_o, int) and isinstance(k_o, int) and isinstance(t_o, int):
+        n_extra_right_wins = 1 if t_o > (k_o - s_o) else 0
         boundary_window_needed = 1 if s_o == k_o and t_o > 0 else 0
     else:
+        n_extra_right_wins = If(t_o > (k_o - s_o), 1, 0)
         boundary_window_needed = If(And(s_o == k_o, t_o > 0), 1, 0)
 
     # Convert the number of extra right windows into a number of input elements, offset by right padding that provides
@@ -386,6 +403,6 @@ def get_streaming_context_size(*args) -> IntLike:
 
     # Total number of input elements that are needed as context
     in_delay = k_i - s_i - p_l
-    in_context_size = _max(0, (n_left_wins_wasted + n_overlapping_out_wins) * s_i + in_delay + extra_right_context)
+    in_context_size = _max(0, (n_left_pad_wins_wasted + n_overlapping_out_wins) * s_i + in_delay + extra_right_context)
 
     return in_context_size
