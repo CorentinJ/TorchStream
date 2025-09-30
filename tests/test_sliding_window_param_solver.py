@@ -7,12 +7,11 @@ import torch
 from torch import nn
 
 from tests.rng import set_seed
+from tests.sliding_window_params_edge_cases import SLI_EDGE_CASES
 from torchstream.sequence.seq_spec import SeqSpec
+from torchstream.sliding_window.dummy_sliding_window_transform import DummySlidingWindowTransform
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
-    get_all_output_delays,
-    get_canonicalized_in_out_size_params,
-    get_streaming_context_size,
 )
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params_for_transform
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
@@ -21,10 +20,10 @@ from torchstream.stream_equivalence import test_stream_equivalent
 
 def _get_sol_params(sol: SlidingWindowParams):
     return {
-        "shape": get_canonicalized_in_out_size_params(sol),
-        "min_in_size": sol.get_min_input_size(),
-        "out_delays": get_all_output_delays(sol),
-        "context_size": get_streaming_context_size(sol),
+        "shape": sol.canonicalized_in_out_size_params,
+        "min_in_size": sol.min_input_size,
+        "out_delays": sol.output_delays,
+        "context_size": sol.streaming_context_size,
     }
 
 
@@ -32,9 +31,9 @@ def _find_solution_or_equivalent(transform, seq_spec, expected_sol):
     # TODO: let the solver print this
     logger.debug(
         f"Expected solution: {expected_sol}"
-        f"\nwith shape {get_canonicalized_in_out_size_params(expected_sol)}"
-        f"\nwith out delays {get_all_output_delays(expected_sol)}"
-        f"\nwith context size {get_streaming_context_size(expected_sol)}"
+        f"\nwith shape {expected_sol.canonicalized_in_out_size_params}"
+        f"\nwith out delays {expected_sol.output_delays}"
+        f"\nwith context size {expected_sol.streaming_context_size}"
     )
 
     sols = find_sliding_window_params_for_transform(
@@ -184,6 +183,14 @@ def test_conv_mix(conv_params):
         ]
     )
     _find_solution_or_equivalent(network, SeqSpec((1, 1, -1)), expected_sol)
+
+
+@pytest.mark.parametrize("sli_params", SLI_EDGE_CASES)
+def test_edge_cases(sli_params: SlidingWindowParams):
+    set_seed(0x5EED)
+
+    transform = DummySlidingWindowTransform(sli_params)
+    _find_solution_or_equivalent(transform, SeqSpec((-1,), dtype=np.float32), sli_params)
 
 
 def test_infinite_receptive_field():

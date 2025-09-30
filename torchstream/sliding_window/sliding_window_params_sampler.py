@@ -264,9 +264,11 @@ class SlidingWindowParamsSampler:
         # (minding the phase)
         # NOTE: knowing the phase would let us tighten these bounds, however as more inputs with different phase
         # come in, we converge towards the same tight bounds anyway.
-        ctx_upper_bound = (n_out_corr_wins + 1) * self.s_i - in_nan_size - 1
         # FIXME! lower bound seems too loose
         ctx_lower_bound = (n_out_corr_wins - 2) * self.s_i - in_nan_size + 2
+        ctx_upper_bound = (n_out_corr_wins + 1) * self.s_i - in_nan_size - 1
+        # FIXME! too loose, work from the context definition?
+        ctx_upper_bound += 2 * self.t_o * self.s_i
 
         logger.debug(f"CTX BOUNDS: ({ctx_lower_bound}, {ctx_upper_bound}) -> {bounds}")
 
@@ -468,7 +470,7 @@ def nan_trick_params_by_max_infogain(
         return None
 
     # If we have hypotheses, we'll determine our nan trick parameters based on them
-    min_in_size = min(params.get_min_input_size() for params in all_params)
+    min_in_size = min(params.min_input_size for params in all_params)
     # FIXME!!
     max_in_size = min_in_size + len(all_params) + 100
 

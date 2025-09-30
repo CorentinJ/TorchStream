@@ -76,7 +76,7 @@ class _SliHypothesis:
         self.in_out_size_params = get_canonicalized_in_out_size_params(self.params)
         self.out_delays = get_all_output_delays(self.params)
         self.context_size = get_streaming_context_size(self.params)
-        self.min_input_size = self.params.get_min_input_size()
+        self.min_input_size = self.params.min_input_size
 
 
 class SlidingWindowParamsSolver:
