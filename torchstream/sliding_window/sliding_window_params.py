@@ -72,7 +72,7 @@ class SlidingWindowParams:
 
     @property
     def streaming_context_size(self) -> int:
-        return get_streaming_context_size(self)
+        return get_streaming_context_params(self)[0]
 
     # TODO: test this function with a bunch of edge cases
     @property
@@ -355,14 +355,14 @@ def get_all_output_delays(*args) -> Tuple[IntLike, ...]:
 
 
 @overload
-def get_streaming_context_size(
+def get_streaming_context_params(
     sli_params: SlidingWindowParams,
-) -> int: ...
+) -> Tuple[int, int, int, int]: ...
 @overload
-def get_streaming_context_size(
+def get_streaming_context_params(
     k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_o: IntLike
-) -> IntLike: ...
-def get_streaming_context_size(*args) -> IntLike:
+) -> Tuple[IntLike, IntLike, IntLike, IntLike]: ...
+def get_streaming_context_params(*args) -> Tuple[IntLike, IntLike, IntLike, IntLike]:
     """
     Get the input context size necessary for streaming a transform with given sliding window parameters.
 
@@ -387,23 +387,26 @@ def get_streaming_context_size(*args) -> IntLike:
     # overlapping windows (e.g. a vector sum) is known. TODO: test & implement if useful
     n_overlapping_out_wins = _ceil_div(k_o, s_o) - 1
 
-    # FIXME! doc & names
+    n_flat_ctx_wins = n_left_pad_wins_wasted + n_overlapping_out_wins
+
+    in_delay = k_i - s_i - p_l
+
+    # FIXME! doc
     # Output trimming might trim away the content of output windows on the right. Depending on the output overlap,
     # we might need to compute additional windows every step to make up for that.
     # With any output trimming, we'll need an extra window if there no output window overlap at all
     if isinstance(s_o, int) and isinstance(k_o, int) and isinstance(t_o, int):
-        n_extra_right_wins = 1 if t_o > (k_o - s_o) else 0
-        boundary_window_needed = 1 if s_o == k_o and t_o > 0 else 0
+        trimming_extra_win = 1 if t_o > (k_o - s_o) else 0
+        trimming_boundary_win = 1 if s_o == k_o and t_o > 0 else 0
     else:
-        n_extra_right_wins = If(t_o > (k_o - s_o), 1, 0)
-        boundary_window_needed = If(And(s_o == k_o, t_o > 0), 1, 0)
+        trimming_extra_win = If(t_o > (k_o - s_o), 1, 0)
+        trimming_boundary_win = If(And(s_o == k_o, t_o > 0), 1, 0)
 
     # Convert the number of extra right windows into a number of input elements, offset by right padding that provides
     # extra right context for free
-    extra_right_context = _max(0, (n_extra_right_wins + boundary_window_needed) * s_i - p_r)
+    trimming_extra_ctx = _max(0, (trimming_extra_win + trimming_boundary_win) * s_i - p_r)
 
     # Total number of input elements that are needed as context
-    in_delay = k_i - s_i - p_l
-    in_context_size = _max(0, (n_left_pad_wins_wasted + n_overlapping_out_wins) * s_i + in_delay + extra_right_context)
+    in_context_size = _max(0, n_flat_ctx_wins * s_i + in_delay + trimming_extra_ctx)
 
-    return in_context_size
+    return in_context_size, n_flat_ctx_wins, in_delay, trimming_extra_ctx

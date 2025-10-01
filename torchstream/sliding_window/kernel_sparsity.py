@@ -37,6 +37,10 @@ def determine_kernel_sparsity(
     out_nan_idx: np.ndarray,
 ) -> Tuple[np.ndarray | None, np.ndarray | None]:
     # TODO! doc
+    if kernel_in_prior.shape != (params.kernel_size_in,):
+        raise ValueError(f"kernel_in_prior must have shape ({params.kernel_size_in},), got {kernel_in_prior.shape}")
+    if kernel_out_prior.shape != (params.kernel_size_out,):
+        raise ValueError(f"kernel_out_prior must have shape ({params.kernel_size_out},), got {kernel_out_prior.shape}")
 
     _, num_wins, _ = params.get_metrics_for_input(in_len)
 
@@ -77,25 +81,23 @@ def determine_kernel_sparsity(
         )
         solver.add(any_corrupted_constraint if out_idx in out_nan_idx else Not(any_corrupted_constraint))
 
+    # If the solver can't find any solution, then the parameters do not allow to explain the observed nans
     if solver.check() == unsat:
         return None, None
 
-    model = solver.model()
-    kernel_in_values = np.zeros(params.kernel_size_in, dtype=np.int64)
-    kernel_out_values = np.zeros(params.kernel_size_out, dtype=np.int64)
+    kernel_in_values = kernel_in_prior.copy()
+    kernel_out_values = kernel_out_prior.copy()
     for i in range(params.kernel_size_in):
-        if model[kernel_in[i]] == True:
-            kernel_in_values[i] = 2
-        elif model[kernel_in[i]] == False:
-            kernel_in_values[i] = 0
-        else:
-            kernel_in_values[i] = 1
+        if kernel_in_prior[i] == 1:
+            if solver.check(kernel_in[i] == True) == unsat:
+                kernel_in_values[i] = 0
+            elif solver.check(kernel_in[i] == False) == unsat:
+                kernel_in_values[i] = 2
     for i in range(params.kernel_size_out):
-        if model[kernel_out[i]] == True:
-            kernel_out_values[i] = 2
-        elif model[kernel_out[i]] == False:
-            kernel_out_values[i] = 0
-        else:
-            kernel_out_values[i] = 1
+        if kernel_out_prior[i] == 1:
+            if solver.check(kernel_out[i] == True) == unsat:
+                kernel_out_values[i] = 0
+            elif solver.check(kernel_out[i] == False) == unsat:
+                kernel_out_values[i] = 2
 
     return kernel_in_values, kernel_out_values

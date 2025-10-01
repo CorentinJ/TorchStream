@@ -9,11 +9,12 @@ from z3 import And, Bool, Implies, Int, Ints, Or, Solver, sat
 from torchstream.sliding_window.nan_trick import get_nan_map
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
+    _max,
     get_all_output_delays,
     get_canonicalized_in_out_size_params,
     get_output_delay,
     get_output_delay_bounds,
-    get_streaming_context_size,
+    get_streaming_context_params,
 )
 from torchstream.sliding_window.threshold_harvester import ThresholdHarvester
 
@@ -70,10 +71,15 @@ class SlidingWindowParamsSampler:
             self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
         )
         self.ods = get_all_output_delays(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
-        self.ictx = Int("ictx")
+        self.ictx, self.nfctxw, self.id, self.tectx = Ints("ictx n_flat_ctx_wins in_delay trimming_extra_ctx")
         self.optimizer.add(
-            self.ictx
-            == get_streaming_context_size(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
+            *(
+                a == b
+                for a, b in zip(
+                    (self.ictx, self.nfctxw, self.id, self.tectx),
+                    get_streaming_context_params(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o),
+                )
+            )
         )
 
         # FIXME!
@@ -270,25 +276,27 @@ class SlidingWindowParamsSampler:
 
         logger.debug(f"CTX BOUNDS: ({ctx_lower_bound}, {ctx_upper_bound}) -> {bounds}")
 
-        # FIXME! too loose, work from the context definition?
-        ctx_upper_bound = 2 * self.t_o * self.s_i
+        # Our trick here does not account for delay induced by output trimming, so we formulate the context
+        # without it
+        # FIXME: remove max?
+        ictx_no_trimming = _max(self.nfctxw * self.s_i + self.id, 0)
 
         self.optimizer.add(
             Or(
                 # Usual case: the bounds are correct
                 And(
-                    self.ictx >= ctx_lower_bound,
-                    self.ictx <= ctx_upper_bound,
+                    ictx_no_trimming >= ctx_lower_bound,
+                    ictx_no_trimming <= ctx_upper_bound,
                     # TODO! modulo size on kernel out
                 ),
                 # Edge cases: we are necessarily underestimating the context
                 And(
-                    self.ictx > ctx_upper_bound,
+                    ictx_no_trimming > ctx_upper_bound,
                     Or(
                         And(out_nan_range[0] == 0, self.t_o > 0),
                         out_nan_range[1] == out_len,
-                        self.k_i >= max(in_nan_range[0], in_nan_size, post_nan_in_size) + 2,
-                        self.k_o >= max(out_nan_range[0], out_nan_size, post_nan_out_size) + 2,
+                        self.k_i >= min(in_nan_range[0], in_nan_size, post_nan_in_size) + 2,
+                        self.k_o >= min(out_nan_range[0], out_nan_size, post_nan_out_size) + 2,
                     ),
                 ),
             )
