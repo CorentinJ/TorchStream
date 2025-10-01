@@ -31,19 +31,22 @@ from torchstream.stream_equivalence import test_stream_equivalent
 logger = logging.getLogger(__name__)
 
 
-def _compare_params_str(params: tuple, real_params: tuple | None) -> str:
+def _compare_params_str(params: tuple, real_params: tuple | None, names: List[str] | None = None) -> str:
     assert not real_params or len(params) == len(real_params)
+    assert not names or len(params) == len(names)
+    names = [n + "=" for n in names] if names else [""] * len(params)
+
     if real_params is None:
-        return ", ".join(map(str, params))
+        return ", ".join(f"{name}{p}" for p, name in zip(params, names))
     if real_params != params:
         return ", ".join(
-            f"{p}"
+            f"{name}{p}"
             + ("" if p == p_ref else (f"{colors.RED}(>{p_ref})" if p > p_ref else f"{colors.GREEN}(<{p_ref})"))
             + colors.RESET
-            for p, p_ref in zip(params, real_params)
+            for p, p_ref, name in zip(params, real_params, names)
         )
     else:
-        return colors.BLUE + ", ".join(map(str, params)) + colors.RESET
+        return colors.BLUE + ", ".join(f"{name}{p}" for p, name in zip(params, names)) + colors.RESET
 
 
 def _compare_sli_params_str(params: SlidingWindowParams, real_params: SlidingWindowParams | None = None) -> str:
@@ -56,7 +59,7 @@ def _compare_sli_params_str(params: SlidingWindowParams, real_params: SlidingWin
         ref_params, ref_shape, ref_delays, ref_ctx = None, None, None, None
 
     return (
-        f"\n\tparameters ({_compare_params_str(params.as_tuple(), ref_params)})"
+        f"\n\tparameters ({_compare_params_str(params.as_tuple(), ref_params, 'ki,si,lp,rp,ko,so,ot'.split(','))})"
         f"\n\twith shape ({_compare_params_str(params.canonicalized_in_out_size_params, ref_shape)})"
         f"\n\twith delays ({_compare_params_str(params.output_delays, ref_delays)})"
         f"\n\twith context size {_compare_params_str((params.streaming_context_size,), ref_ctx)}"
@@ -287,6 +290,7 @@ class SlidingWindowParamsSolver:
         min_pre_nan_in_size = next(
             i for i in range(1, int(1e9)) if params.get_metrics_for_input(i)[2] >= target_pre_nan_out_size
         )
+        min_pre_nan_in_size = max(min_pre_nan_in_size, params.kernel_size_in)
 
         # We'll start by going through the nan trick history. If we already have a nan trick record that validated
         # a phase for these parameters, we can skip testing that phase again
