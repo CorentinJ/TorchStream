@@ -9,10 +9,12 @@ from torchstream.sliding_window.sliding_window_params_solver import (
 )
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG)
 
 
 def main():
     device = torch.device("cpu")
+    # device = torch.device("cuda")
     bigvgan = load_uninit_bigvgan("config_base_22khz_80band", device)
 
     in_spec = SeqSpec((1, bigvgan.h.num_mels, -1), device=device)
@@ -25,8 +27,6 @@ def main():
         print(x.shape)
         y_g_hat = bigvgan(x)
         print(y_g_hat.shape)
-
-        logging.basicConfig(level=logging.DEBUG)
 
         params = find_sliding_window_params_for_transform(bigvgan, in_spec, out_spec)
         print(params)

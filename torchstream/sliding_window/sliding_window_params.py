@@ -366,9 +366,9 @@ def get_streaming_context_params(*args) -> Tuple[IntLike, IntLike, IntLike, IntL
     Get the input context size necessary for streaming a transform with given sliding window parameters.
 
     When streaming a transform, we continuously discard seen input in order to limit the compute cost of the transform.
-    However, there is a certain minimum number of elements that need not to be discarded in order for the output to be
-    equivalent from its non-streamed version. This value is the context size and we can derive it from the sliding
-    window parameters.
+    However, there is a certain minimum number of elements on the right that need not to be discarded in order for the 
+    output to be equivalent from its non-streamed version. This value is the context size and we can derive it from 
+    the sliding window parameters.
     """
     k_i, s_i, p_l, p_r, k_o, s_o, t_o = _get_sli_args(args)
 

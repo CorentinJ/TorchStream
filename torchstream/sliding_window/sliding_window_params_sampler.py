@@ -292,17 +292,29 @@ class SlidingWindowParamsSampler:
                 And(
                     ictx_no_trimming >= ctx_lower_bound,
                     ictx_no_trimming <= ctx_upper_bound,
-                    # TODO! modulo size on kernel out
                 ),
                 # Edge cases: we are necessarily underestimating the context
                 And(
                     ictx_no_trimming > ctx_upper_bound,
                     Or(
+                        # FIXME! doesn't need to be first or last... let's fix these
                         And(out_nan_range[0] == 0, self.t_o > 0),
-                        out_nan_range[1] == out_len,
+                        And(out_nan_range[1] == out_len, self.t_o > 0),
                         self.k_i >= min(in_nan_range[0], in_nan_size, post_nan_in_size) + 2,
                         self.k_o >= min(out_nan_range[0], out_nan_size, post_nan_out_size) + 2,
                     ),
+                ),
+            )
+        )
+
+        kernel_mod = out_nan_size % self.s_o
+        self.optimizer.add(
+            Or(
+                self.k_o % self.s_o == kernel_mod,
+                And(
+                    self.k_o % self.s_o != kernel_mod,
+                    self.k_o >= min(out_nan_range[0], out_nan_size, post_nan_out_size) + 2,
+                    self.t_o > 0,
                 ),
             )
         )
@@ -313,7 +325,6 @@ class SlidingWindowParamsSampler:
         valid_sols = valid_sols or []
 
         # TODO! doc
-        # TODO! simplify constraints.
 
         _MAX_COST_REL_LIMIT = 2.0
         _MAX_COST_FLAT_LIMIT = 10_000
