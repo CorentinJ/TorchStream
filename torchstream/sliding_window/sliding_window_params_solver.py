@@ -282,12 +282,11 @@ class SlidingWindowParamsSolver:
         # know with certainty whether the parameters' delays are matching the transform.
         min_nan_in_size = params.kernel_size_in
         # TODO! more constraints, based on the sampler's edge cases
-        target_pre_nan_out_size = params.kernel_size_out
+        target_pre_nan_out_size = max(params.kernel_size_out, get_output_delay_bounds(params)[1])
         # TODO: get_min_input_size_for_out_size
         min_pre_nan_in_size = next(
             i for i in range(1, int(1e9)) if params.get_metrics_for_input(i)[2] >= target_pre_nan_out_size
         )
-        min_pre_nan_in_size += get_output_delay_bounds(params)[1]
 
         # We'll start by going through the nan trick history. If we already have a nan trick record that validated
         # a phase for these parameters, we can skip testing that phase again
