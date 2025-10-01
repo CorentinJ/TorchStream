@@ -9,12 +9,13 @@ from z3 import And, Bool, Implies, Int, Ints, Or, Solver, sat
 from torchstream.sliding_window.nan_trick import get_nan_map
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
-    _max,
     get_all_output_delays,
     get_canonicalized_in_out_size_params,
     get_output_delay,
     get_output_delay_bounds,
     get_streaming_context_params,
+    z3_ceil_div,
+    z3_max,
 )
 from torchstream.sliding_window.threshold_harvester import ThresholdHarvester
 
@@ -60,6 +61,12 @@ class SlidingWindowParamsSampler:
             0 <= self.t_o,
             self.t_o < self.k_o,
         )
+
+        # TODO: isolate?
+        out_needed = 1 + self.t_o * 2
+        num_wins_needed = z3_ceil_div(z3_max(0, out_needed - self.k_o), self.s_o) + 1
+        non_padded_min_input_size = (num_wins_needed - 1) * self.s_i + self.k_i
+        self.mis = z3_max(1, non_padded_min_input_size - self.p_l - self.p_r)
 
         ## Streaming parameters
         self.isbc, self.osbc = in_size_bias_canonical, out_size_bias_canonical
@@ -132,7 +139,6 @@ class SlidingWindowParamsSampler:
                 raise ValueError("Output range must be non-empty and contained within (0, out_len), or be None")
 
         # Model the input to output size relation with the number of windows
-        # TODO: remove? The input size relation is known beforehand
         constraint_idx = len(self.optimizer.assertions())
         c = Int(f"c_{constraint_idx}")
         if (in_len, out_len) not in self.seen_in_out_pairs:
@@ -172,6 +178,8 @@ class SlidingWindowParamsSampler:
         # FIXME? Add assertions when we have no output
         if not in_nan_range or not out_nan_range:
             return
+        in_nan_size = in_nan_range[1] - in_nan_range[0]
+        out_nan_size = out_nan_range[1] - out_nan_range[0]
 
         # TODO? I could strengthen the constraints on crs/cre by putting the out nan range into a var that could also
         # be the indices trimmed by out_trim. I just need to ensure this is compatible with kernels that have gaps.
@@ -225,7 +233,6 @@ class SlidingWindowParamsSampler:
                     # constraints for this case, but we at least know that the gap in the output kernel needs to be
                     # larger than the first non-nan portion of the output.
                     And(
-                        n_right_elems_overwritten >= 0,
                         self.k_o >= out_nan_range[0] + 2,
                         out_delay > pre_nan_out_size,
                         out_delay <= pre_nan_out_size + self.t_o,
@@ -246,8 +253,6 @@ class SlidingWindowParamsSampler:
         # FIXME!! doc
         # Count how many elements lie between the first output NaNs and the expected output size of the pre-nan
         # input
-        in_nan_size = in_nan_range[1] - in_nan_range[0]
-        out_nan_size = out_nan_range[1] - out_nan_range[0]
         post_nan_in_size = in_len - in_nan_range[1]
         post_nan_out_size = out_len - out_nan_range[1]
 
@@ -279,7 +284,7 @@ class SlidingWindowParamsSampler:
         # Our trick here does not account for delay induced by output trimming, so we formulate the context
         # without it
         # FIXME: remove max?
-        ictx_no_trimming = _max(self.nfctxw * self.s_i + self.id, 0)
+        ictx_no_trimming = z3_max(self.nfctxw * self.s_i + self.id, 0)
 
         self.optimizer.add(
             Or(
@@ -321,7 +326,7 @@ class SlidingWindowParamsSampler:
 
         def _get_family_params(params: SlidingWindowParams):
             # NOTE: can't constraint on min input size because not modeled here, but shouldn't be a problem in practice
-            return (params.output_delays, params.streaming_context_size)
+            return (params.output_delays, params.streaming_context_size, params.min_input_size)
 
         family_count = Counter(_get_family_params(sol) for sol in valid_sols)
 
@@ -331,13 +336,14 @@ class SlidingWindowParamsSampler:
             max_cost_value = min(max_cost_value, max_cost_limit)
             guide_constraints = [self.solution_cost <= max_cost_value]
 
-            for (delays, ctx), count in family_count.items():
+            for (delays, ctx, min_input_size), count in family_count.items():
                 # Enforce new solutions for families that meet the maximum count
                 if max_equivalent_sols and count >= max_equivalent_sols:
                     guide_constraints.append(
                         Or(
                             self.ictx != ctx,
                             Or(*(od != delay for od, delay in zip(self.ods, delays))),
+                            self.mis != min_input_size,
                         )
                     )
 

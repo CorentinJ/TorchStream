@@ -91,7 +91,7 @@ class SlidingWindowParams:
         Returns the minimum input size necessary to have a given number of output windows.
         """
         non_padded_min_input_size = (num_wins - 1) * self.stride_in + self.kernel_size_in
-        return max(1, non_padded_min_input_size - self.right_pad - self.left_pad)
+        return max(1, non_padded_min_input_size - self.left_pad - self.right_pad)
 
     # TODO! refactor, terrible name & mechanics
     def get_metrics_for_input(self, in_len: int) -> Tuple[Tuple[int, int], int, int]:
@@ -227,22 +227,21 @@ class SlidingWindowParams:
 IntLike = Union[int, ArithRef]
 
 
-# FIXME! more efficient expression of all constraints below
-def _ceil_div(a, b) -> IntLike:
+def z3_ceil_div(a, b) -> IntLike:
     """Ceiling division that works for both Python ints and z3 expressions."""
     if isinstance(a, int) and isinstance(b, int):
         return int(math.ceil(a / b))
     return If(a >= 0, (a + b - 1) / b, -((-a) / b))
 
 
-def _floor_div(a, b) -> IntLike:
+def z3_floor_div(a, b) -> IntLike:
     """Floor division that works for both Python ints and z3 expressions."""
     if isinstance(a, int) and isinstance(b, int):
         return a // b
     return If(a >= 0, a / b, -((-a + b - 1) / b))
 
 
-def _max(a: IntLike, b: IntLike) -> IntLike:
+def z3_max(a: IntLike, b: IntLike) -> IntLike:
     """max() for both Python ints and z3 expressions."""
     if isinstance(a, int) and isinstance(b, int):
         return max(a, b)
@@ -319,9 +318,9 @@ def get_output_delay(*args, as_phase=False) -> IntLike:
     else:
         phase = (p_l + input_size - k_i) % s_i
 
-    n_right_pad_corrupted_wins = _floor_div(phase + p_r, s_i)
+    n_right_pad_corrupted_wins = z3_floor_div(phase + p_r, s_i)
     output_delay_pre_trim = k_o + (n_right_pad_corrupted_wins - 1) * s_o
-    output_delay = _max(0, output_delay_pre_trim - t_o)
+    output_delay = z3_max(0, output_delay_pre_trim - t_o)
 
     return output_delay
 
@@ -378,14 +377,14 @@ def get_streaming_context_params(*args) -> Tuple[IntLike, IntLike, IntLike, IntL
     # every time. If it is possible to remove padding from the transform and manually pad the streamed input,
     # this waste of compute can be avoided.
     # Note that right padding wastes compute just as much, however it does not require any context to be stored.
-    n_left_pad_wins_wasted = _ceil_div(p_l, s_i)
+    n_left_pad_wins_wasted = z3_ceil_div(p_l, s_i)
 
     # For a given output window, the number of other output windows that overlap it. Only >0 when the out stride
     # is smaller than the out kernel size.
     # Note that we need to buffer enough past context in order to have the overlapping windows necessary in
     # computing a given output. This induces redundant compute that could be avoided if the reduce operation on
     # overlapping windows (e.g. a vector sum) is known. TODO: test & implement if useful
-    n_overlapping_out_wins = _ceil_div(k_o, s_o) - 1
+    n_overlapping_out_wins = z3_ceil_div(k_o, s_o) - 1
 
     n_flat_ctx_wins = n_left_pad_wins_wasted + n_overlapping_out_wins
 
@@ -404,9 +403,9 @@ def get_streaming_context_params(*args) -> Tuple[IntLike, IntLike, IntLike, IntL
 
     # Convert the number of extra right windows into a number of input elements, offset by right padding that provides
     # extra right context for free
-    trimming_extra_ctx = _max(0, (trimming_extra_win + trimming_boundary_win) * s_i - p_r)
+    trimming_extra_ctx = z3_max(0, (trimming_extra_win + trimming_boundary_win) * s_i - p_r)
 
     # Total number of input elements that are needed as context
-    in_context_size = _max(0, n_flat_ctx_wins * s_i + in_delay + trimming_extra_ctx)
+    in_context_size = z3_max(0, n_flat_ctx_wins * s_i + in_delay + trimming_extra_ctx)
 
     return in_context_size, n_flat_ctx_wins, in_delay, trimming_extra_ctx
