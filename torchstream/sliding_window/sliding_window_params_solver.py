@@ -308,7 +308,8 @@ class SlidingWindowParamsSolver:
                 ):
                     phases_to_test.remove(phase)
                     break
-
+        
+        # TODO? Only test phases that differ across hypotheses?
         if phases_to_test:
             logger.debug(f"Yielding inputs for phases {sorted(phases_to_test)} (stride={params.stride_in})")
 
@@ -391,7 +392,6 @@ class SlidingWindowParamsSolver:
             if not self._verify_hypothesis_kernels_against_record(hypothesis, **record):
                 logger.debug(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED after kernel check{colors.RESET}")
                 continue
-            # TODO!! time this
             if not sampler.is_compatible(hypothesis.params):
                 logger.debug(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED by constraints{colors.RESET}")
                 continue
