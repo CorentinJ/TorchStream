@@ -11,34 +11,23 @@ class SeqSpec:
     # TODO! overloads in pyi
     def __init__(
         self,
-        *shape_args,
+        *shape,
         dtype: SeqDTypeLike | SeqArrayLike = torch.float32,
         device: str | torch.device = None,
     ):
         """
         TODO: doc
         """
-        # Shape overload
-        if not isinstance(shape_args[0], numbers.Number):
-            self.shape = tuple(int(dim_size) for dim_size in shape_args[0])
-            if not self.shape.count(-1) == 1:
-                raise ValueError(f"Shape must have a single -1, got {self.shape}")
-            self.seq_dim = self.shape.index(-1)
-            self.ndim = len(self.shape)
+        if not isinstance(shape[0], numbers.Number):
+            if not isinstance(shape[0], (list, tuple)):
+                raise ValueError(f"Shape must be a list or tuple of integers, got {shape[0]}")
+            shape = shape[0]
 
-        # Seqdim overload
-        else:
-            # TODO: handle negative dims?
-            self.seq_dim = shape_args[0]
-            self.ndim = shape_args[1] if len(shape_args) > 1 else None
-            if self.ndim:
-                if self.seq_dim >= self.ndim:
-                    raise ValueError(f"seq_dim {self.seq_dim} must be less than ndims {self.ndim}")
-                shape = [None] * self.ndim
-                shape[self.seq_dim] = -1
-                self.shape = tuple(shape)
-            else:
-                self.shape = None
+        self.shape = tuple(int(dim_size) for dim_size in shape)
+        if not self.shape.count(-1) == 1:
+            raise ValueError(f"Shape must have a single -1, got {self.shape}")
+        self.seq_dim = self.shape.index(-1)
+        self.ndim = len(self.shape)
 
         self._arr_if = ArrayInterface(dtype, device)
 

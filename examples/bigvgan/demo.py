@@ -20,8 +20,8 @@ def main():
     # device = torch.device("cuda")
     bigvgan = load_uninit_bigvgan("config_base_22khz_80band", device)
 
-    in_spec = SeqSpec((1, bigvgan.h.num_mels, -1), device=device)
-    out_spec = SeqSpec((1, 1, -1), device=device)
+    in_spec = SeqSpec(1, bigvgan.h.num_mels, -1, device=device)
+    out_spec = SeqSpec(1, 1, -1, device=device)
 
     params = SlidingWindowParams(
         kernel_size_in=35,

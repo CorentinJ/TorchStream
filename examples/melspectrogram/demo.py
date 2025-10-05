@@ -13,8 +13,8 @@ logging.basicConfig(level=logging.DEBUG)
 
 # FIXME! the default pad_mode="reflect" fails as it requires a minimum input size higher than modeled
 transform = torchaudio.transforms.Spectrogram(n_fft=800, center=True, pad_mode="constant")
-in_spec = SeqSpec((-1,))
-out_spec = SeqSpec((401, -1))
+in_spec = SeqSpec(-1)
+out_spec = SeqSpec(401, -1)
 
 # test_stream_equivalent(
 #     bigvgan,

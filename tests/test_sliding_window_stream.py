@@ -59,7 +59,7 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
     conv_stream = SlidingWindowStream(
         transform,
         sli_params,
-        SeqSpec((1, 1, -1)),
+        SeqSpec(1, 1, -1),
     )
 
     test_stream_equivalent(
@@ -104,7 +104,7 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, dilation: int, out_tri
     conv_stream = SlidingWindowStream(
         conv,
         sli_params,
-        SeqSpec((1, 1, -1)),
+        SeqSpec(1, 1, -1),
     )
 
     test_stream_equivalent(
@@ -125,7 +125,7 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, dilation: int, out_tri
 
     #     logger.info(f"Ensuring failure with param change:\n    {stream_params}\n -> {bad_stream_params}")
     #     with pytest.raises((ValueError, IncorrectSlidingWindowParametersError)):
-    #         test_stream_equivalent(conv, SlidingWindowStream(conv, bad_stream_params, SeqSpec((1, 1, -1))))
+    #         test_stream_equivalent(conv, SlidingWindowStream(conv, bad_stream_params, SeqSpec(1, 1, -1)))
 
 
 # TODO!!
@@ -172,7 +172,7 @@ def test_moving_average(
     tsfm_stream = SlidingWindowStream(
         tsfm,
         sliding_window_params,
-        SeqSpec((-1,), dtype=np.float32),
+        SeqSpec(-1, dtype=np.float32),
     )
 
     test_stream_equivalent(

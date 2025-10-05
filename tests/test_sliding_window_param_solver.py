@@ -86,7 +86,7 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
         x = conv(x)
         return x
 
-    _find_solution_or_equivalent(transform, SeqSpec((1, 1, -1)), expected_sol)
+    _find_solution_or_equivalent(transform, SeqSpec(1, 1, -1), expected_sol)
 
 
 @pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])
@@ -126,7 +126,7 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, padding: int, dilation
         # TODO: handle output padding?
     )
 
-    _find_solution_or_equivalent(conv, SeqSpec((1, 1, -1)), expected_sol)
+    _find_solution_or_equivalent(conv, SeqSpec(1, 1, -1), expected_sol)
 
 
 # NOTE: our solver has the following modeling limitation: on any layer with an input stride > 1, the current combined
@@ -183,7 +183,7 @@ def test_conv_mix(conv_params):
             for params in conv_params
         ]
     )
-    _find_solution_or_equivalent(network, SeqSpec((1, 1, -1)), expected_sol)
+    _find_solution_or_equivalent(network, SeqSpec(1, 1, -1), expected_sol)
 
 
 @pytest.mark.parametrize("sli_params", SLI_EDGE_CASES)
@@ -191,7 +191,7 @@ def test_edge_cases(sli_params: SlidingWindowParams):
     set_seed(0x5EED)
 
     transform = DummySlidingWindowTransform(sli_params)
-    _find_solution_or_equivalent(transform, SeqSpec((-1,), dtype=np.float32), sli_params)
+    _find_solution_or_equivalent(transform, SeqSpec(-1, dtype=np.float32), sli_params)
 
 
 def test_infinite_receptive_field():
@@ -202,7 +202,7 @@ def test_infinite_receptive_field():
     def transform(x: np.ndarray):
         return np.full_like(x, fill_value=np.mean(x))
 
-    sols = find_sliding_window_params(transform, SeqSpec((-1,), dtype=np.float32))
+    sols = find_sliding_window_params(transform, SeqSpec(-1, dtype=np.float32))
     assert not sols
 
 
@@ -215,7 +215,7 @@ def test_no_receptive_field():
     def transform(x: np.ndarray):
         return np.full_like(x, fill_value=3.0)
 
-    sols = find_sliding_window_params(transform, SeqSpec((-1,), dtype=np.float32))
+    sols = find_sliding_window_params(transform, SeqSpec(-1, dtype=np.float32))
     assert not sols
 
 
@@ -245,5 +245,5 @@ def test_variable_receptive_field(variant: str):
 
         return y
 
-    sols = find_sliding_window_params(transform, SeqSpec((-1,), dtype=np.float32))
+    sols = find_sliding_window_params(transform, SeqSpec(-1, dtype=np.float32))
     assert not sols
