@@ -13,7 +13,7 @@ from torchstream.sliding_window.dummy_sliding_window_transform import DummySlidi
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
 )
-from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params_for_transform
+from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 from torchstream.stream_equivalence import test_stream_equivalent
 
@@ -37,7 +37,7 @@ def _find_solution_or_equivalent(transform, seq_spec, expected_sol):
             f"\nwith context size {expected_sol.streaming_context_size}"
         )
 
-    sols = find_sliding_window_params_for_transform(
+    sols = find_sliding_window_params(
         transform, seq_spec, debug_ref_params=expected_sol, max_equivalent_sols=1
     )
     assert len(sols) == 1, f"Expected exactly one solution, got {len(sols)}: {sols}"
@@ -202,7 +202,7 @@ def test_infinite_receptive_field():
     def transform(x: np.ndarray):
         return np.full_like(x, fill_value=np.mean(x))
 
-    sols = find_sliding_window_params_for_transform(transform, SeqSpec((-1,), dtype=np.float32))
+    sols = find_sliding_window_params(transform, SeqSpec((-1,), dtype=np.float32))
     assert not sols
 
 
@@ -215,7 +215,7 @@ def test_no_receptive_field():
     def transform(x: np.ndarray):
         return np.full_like(x, fill_value=3.0)
 
-    sols = find_sliding_window_params_for_transform(transform, SeqSpec((-1,), dtype=np.float32))
+    sols = find_sliding_window_params(transform, SeqSpec((-1,), dtype=np.float32))
     assert not sols
 
 
@@ -245,5 +245,5 @@ def test_variable_receptive_field(variant: str):
 
         return y
 
-    sols = find_sliding_window_params_for_transform(transform, SeqSpec((-1,), dtype=np.float32))
+    sols = find_sliding_window_params(transform, SeqSpec((-1,), dtype=np.float32))
     assert not sols

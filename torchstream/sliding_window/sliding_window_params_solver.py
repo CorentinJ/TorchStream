@@ -139,7 +139,7 @@ class SlidingWindowParamsSolver:
         # Keep track of the outcome in the history
         out_nan_idx = get_seq_nan_idx(out_seq)
         out_nan_range = (out_nan_idx[0], out_nan_idx[-1] + 1) if len(out_nan_idx) else None
-        logger.debug(f"Forwarded {in_seq.size}->{out_seq.size} with nans {in_nan_range}->{out_nan_range}")
+        logger.info(f"Forwarded {in_seq.size}->{out_seq.size} with nans {in_nan_range}->{out_nan_range}")
         record = {
             "in_seq_size": in_seq.size,
             "in_nan_range": in_nan_range,
@@ -390,10 +390,10 @@ class SlidingWindowParamsSolver:
         validated_hypotheses = []
         for hypothesis in hypotheses:
             if not self._verify_hypothesis_kernels_against_record(hypothesis, **record):
-                logger.debug(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED after kernel check{colors.RESET}")
+                logger.info(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED after kernel check{colors.RESET}")
                 continue
             if not sampler.is_compatible(hypothesis.params):
-                logger.debug(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED by constraints{colors.RESET}")
+                logger.info(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED by constraints{colors.RESET}")
                 continue
             validated_hypotheses.append(hypothesis)
 
@@ -421,14 +421,14 @@ class SlidingWindowParamsSolver:
 
             hypothesis = _SliHypothesis(params, id=step)
             hypotheses.append(hypothesis)
-            logger.debug(
+            logger.info(
                 f"[Sli params] Step {step}: {_compare_sli_params_str(hypothesis.params, self.debug_ref_params)}"
             )
 
             for record in self.nan_trick_history:
                 if not self._verify_hypothesis_kernels_against_record(hypothesis, **record):
                     hypotheses.remove(hypothesis)
-                    logger.debug(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED after kernel check{colors.RESET}")
+                    logger.info(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED after kernel check{colors.RESET}")
                     break
 
             nan_trick_params_iter = self._iter_nan_trick_params_for_delays_and_context(hypothesis.params)
@@ -472,7 +472,7 @@ class SlidingWindowParamsSolver:
 # TODO: allow transforms with multiple sequential inputs
 #   -> Or simply call the function multiple times? unsure
 @torch.no_grad()
-def find_sliding_window_params_for_transform(
+def find_sliding_window_params(
     trsfm: Callable,
     input_provider: Callable[[int], Sequence] | SeqSpec,
     out_spec: SeqSpec | None = None,

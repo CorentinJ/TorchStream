@@ -7,7 +7,7 @@ from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
 )
-from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params_for_transform
+from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
@@ -24,7 +24,7 @@ trsfm = Conv1d(1, 1, kernel_size=5, stride=2)
 # conv = trsfm
 
 
-find_sliding_window_params_for_transform(trsfm, SeqSpec((1, 1, -1)), debug_ref_params=other)
+find_sliding_window_params(trsfm, SeqSpec((1, 1, -1)), debug_ref_params=other)
 
 # def trsfm(x):
 #     # print("\x1b[31m", x, "\x1b[39m", sep="")
@@ -49,7 +49,7 @@ quit()
 real_sol = SlidingWindowParams(kernel_size_in=3, left_pad=2)
 
 if False:  # or True:
-    sols = find_sliding_window_params_for_transform(trsfm, SeqSpec((1, 1, -1)), debug_ref_params=real_sol)
+    sols = find_sliding_window_params(trsfm, SeqSpec((1, 1, -1)), debug_ref_params=real_sol)
     quit()
 
 

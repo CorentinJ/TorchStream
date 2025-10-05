@@ -6,7 +6,7 @@ from examples.bigvgan.bigvgan import load_uninit_bigvgan
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_solver import (
-    find_sliding_window_params_for_transform,
+    find_sliding_window_params,
 )
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 from torchstream.stream_equivalence import test_stream_equivalent
@@ -48,7 +48,7 @@ def main():
         y_g_hat = bigvgan(x)
         print(y_g_hat.shape)
 
-        params = find_sliding_window_params_for_transform(bigvgan, in_spec, out_spec)
+        params = find_sliding_window_params(bigvgan, in_spec, out_spec)
         print(params)
 
 
