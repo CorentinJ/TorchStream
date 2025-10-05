@@ -12,17 +12,15 @@ logging.basicConfig(level=logging.DEBUG)
 
 
 # FIXME! the default pad_mode="reflect" fails as it requires a minimum input size higher than modeled
-transform = torchaudio.transforms.Spectrogram(n_fft=800, center=True, pad_mode="constant")
+n_fft = 100
+transform = torchaudio.transforms.Spectrogram(n_fft=n_fft, center=True, pad_mode="constant")
 in_spec = SeqSpec(-1)
-out_spec = SeqSpec(401, -1)
-
-# test_stream_equivalent(
-#     bigvgan,
-#     SlidingWindowStream(bigvgan, params, in_spec, out_spec),
-#     in_step_sizes=(7, 4, 12) + (1,) * 100 + (17, 9),
-#     throughput_check_max_delay=params.out_trim,
-# )
-# quit()
+out_spec = SeqSpec(n_fft // 2 + 1, -1)
 
 params = find_sliding_window_params(transform, in_spec, out_spec)
 print(params)
+
+# test_stream_equivalent(
+#     transform,
+#     SlidingWindowStream(transform, params, in_spec, out_spec),
+# )
