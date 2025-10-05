@@ -1,3 +1,4 @@
+import logging
 import numbers
 from typing import Callable, Optional, Tuple, overload
 
@@ -6,6 +7,8 @@ import torch
 from torchstream.sequence.array_interface import ArrayInterface
 from torchstream.sequence.dtype import SeqArrayLike
 from torchstream.sequence.seq_spec import SeqSpec
+
+logger = logging.getLogger(__name__)
 
 
 class Sequence:
@@ -314,7 +317,7 @@ class Sequence:
         trsfm: Callable,
         in_seq: "Sequence",
         out_spec: SeqSpec | None = None,
-        catch_zero_size_errors: bool = False,
+        zero_size_exception_types: Tuple[type[Exception], ...] = (RuntimeError,),
     ) -> "Sequence":
         out_spec = out_spec or in_seq
         out_spec = out_spec.spec if isinstance(out_spec, Sequence) else out_spec
@@ -322,12 +325,11 @@ class Sequence:
         with torch.inference_mode():
             try:
                 out_arr = trsfm(in_seq.data)
-            except RuntimeError:
-                # We'll assume that RuntimeError are conv errors for a too small input size
-                # TODO: more reliable mechanism
-                # TODO: handle errors due to nans
-                if not catch_zero_size_errors:
-                    raise
+            except zero_size_exception_types as e:
+                logger.info(
+                    f"Caught a {e.__class__.__name__} when running transform with a {in_seq.shape} input, "
+                    f"returning an empty {out_spec}."
+                )
                 out_arr = Sequence.empty(out_spec)
 
             out_seq = out_arr if isinstance(out_arr, Sequence) else cls(out_spec, out_arr, close_input=True)

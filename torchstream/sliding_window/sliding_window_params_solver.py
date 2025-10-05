@@ -87,6 +87,7 @@ class SlidingWindowParamsSolver:
         atol: float = 1e-5,
         max_equivalent_sols: int | None = 1,
         debug_ref_params: SlidingWindowParams | None = None,
+        zero_size_exception_types: Tuple[type[Exception], ...] = (RuntimeError,),
     ):
         if isinstance(input_provider, SeqSpec):
             in_spec = input_provider
@@ -99,6 +100,7 @@ class SlidingWindowParamsSolver:
         self.max_in_seq_size = max_in_seq_size
         self.atol = atol
         self.max_equivalent_sols = max_equivalent_sols
+        self.zero_size_exception_types = zero_size_exception_types
 
         self.in_out_rel_params = None
         self.validated_streaming_params = set()
@@ -134,7 +136,9 @@ class SlidingWindowParamsSolver:
         if in_nan_range:
             in_seq[slice(*in_nan_range)] = float("nan")
 
-        out_seq = Sequence.apply(self._trsfm, in_seq, self.out_spec, catch_zero_size_errors=True)
+        out_seq = Sequence.apply(
+            self._trsfm, in_seq, self.out_spec, zero_size_exception_types=self.zero_size_exception_types
+        )
 
         # Keep track of the outcome in the history
         out_nan_idx = get_seq_nan_idx(out_seq)
@@ -210,7 +214,7 @@ class SlidingWindowParamsSolver:
         while not self.in_out_rel_params:
             # Sample new shape parameters
             # TODO: bench values other than 2 for max sols
-            shape_params_hyps = sampler.get_new_solutions(shape_params_hyps)
+            shape_params_hyps = sampler.get_new_solutions(shape_params_hyps, max_sols=5)
             log_str = f"[In/out rel] Step {step} params:\n\t"
             log_str += "\n\t".join(_compare_params_str(params, real_sol) for params in shape_params_hyps)
             logger.info(log_str)
@@ -482,6 +486,7 @@ def find_sliding_window_params(
     max_in_seq_size: int = 10_000,
     atol: float = 1e-5,
     max_equivalent_sols: int | None = 1,
+    zero_size_exception_types: Tuple[type[Exception], ...] = (RuntimeError,),
     debug_ref_params: SlidingWindowParams | None = None,
 ) -> List[SlidingWindowParams]:
     """
@@ -514,5 +519,6 @@ def find_sliding_window_params(
         max_in_seq_size=max_in_seq_size,
         atol=atol,
         max_equivalent_sols=max_equivalent_sols,
+        zero_size_exception_types=zero_size_exception_types,
         debug_ref_params=debug_ref_params,
     ).find_sliding_window_params()

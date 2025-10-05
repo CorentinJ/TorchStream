@@ -27,6 +27,7 @@ def run_nan_trick(
     in_seq: Sequence,
     in_nan_range: Tuple[int, int] | None,
     out_spec: Optional[SeqSpec] = None,
+    zero_size_exception_types: Tuple[type[Exception], ...] = (RuntimeError,),
 ) -> Tuple[Sequence, np.ndarray]:
     """
     TODO: doc
@@ -44,7 +45,7 @@ def run_nan_trick(
         in_seq[slice(*in_nan_range)] = float("nan")
 
     # Forward the input through the transform
-    out_seq = Sequence.apply(trsfm, in_seq, out_spec, catch_zero_size_errors=True)
+    out_seq = Sequence.apply(trsfm, in_seq, out_spec, zero_size_exception_types=zero_size_exception_types)
 
     out_nan_idx = get_seq_nan_idx(out_seq)
     logger.debug(f"Got a {tuple(out_seq.shape)} shaped output with nans at {out_nan_idx}")
