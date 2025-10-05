@@ -172,7 +172,7 @@ class SlidingWindowParamsSolver:
         # TODO! doc
         # In the first part of the process, we'll forward inputs to the transform and stop as soon as we get a
         # output sequence of non-zero size
-        while not self.nan_trick_history:
+        while True:
             # Use sane defaults for the NaN trick
             record = self.run_nan_trick(self.init_seq_size, (self.init_seq_size // 2, self.init_seq_size // 2 + 1))
             if record["out_seq_size"]:
@@ -219,12 +219,14 @@ class SlidingWindowParamsSolver:
             # If we have only one solution, it is the correct one and does not require further testing.
             if not len(shape_params_hyps):
                 raise RuntimeError(
-                    "Could not determine input/output size relationship for your model. This means that your model "
-                    "does not behave like a sliding window. If your model is indeed a succession of sliding window "
-                    "operations, you must have upsampling operations (e.g. conv transposed) followed by a downsampling "
-                    "operation (e.g. conv, pool) with respective strides that cannot be expressed as a 1/x or x/1 "
-                    "ratio of integers.\n"
-                    "Either way, or if you believe this is a bug, opening an issue on the TorchStream repo would be "
+                    "Could not determine input/output size relationship for your transform. This means that your "
+                    "transform does not behave like a sliding window. "
+                    # TODO: this is rarely going to be the case for the users that get this message... Adapt
+                    "\nIf your transform is a model that is indeed a succession of sliding window "
+                    "operations, you must avoid upsampling operations (e.g. conv transposed) followed by a "
+                    "downsampling operation (e.g. conv, pool) with respective strides that cannot be expressed as "
+                    "a 1/x or x/1 ratio of integers."
+                    "\nEither way, or if you believe this is a bug, opening an issue on the TorchStream repo would be "
                     "greatly appreciated: https://github.com/CorentinJ/TorchStream/issues"
                 )
             if len(shape_params_hyps) == 1:
@@ -308,7 +310,7 @@ class SlidingWindowParamsSolver:
                 ):
                     phases_to_test.remove(phase)
                     break
-        
+
         # TODO? Only test phases that differ across hypotheses?
         if phases_to_test:
             logger.debug(f"Yielding inputs for phases {sorted(phases_to_test)} (stride={params.stride_in})")
