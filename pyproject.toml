@@ -29,6 +29,11 @@ include = ["torchstream*"]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
+[dependency-groups]
+dev = [
+    "torchaudio>=2.5.1",
+]
+
 [tool.ruff]
 line-length = 120
 # ignore = ["F841"]

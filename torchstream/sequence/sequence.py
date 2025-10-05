@@ -328,7 +328,7 @@ class Sequence:
             except zero_size_exception_types as e:
                 logger.info(
                     f"Caught a {e.__class__.__name__} when running transform with a {in_seq.shape} input, "
-                    f"returning an empty {out_spec}."
+                    f"returning an empty sequence."
                 )
                 out_arr = Sequence.empty(out_spec)
 
