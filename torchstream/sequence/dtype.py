@@ -6,6 +6,7 @@ from numpy.typing import ArrayLike, DTypeLike
 Notes on typing:
 - In torch, a "dtype" is a scalar type such as float32, in64, etc... In numpy, a "dtype" is a rich instance containing 
 a similar scalar type but also memory layout information, byte encoding order, etc...
+- With numpy>1.20, np.float, np.int etc started being deprecated in favor of python native types (float, int, ...). 
 """
 
 # Used for argument typing. Supports a broad range of types.

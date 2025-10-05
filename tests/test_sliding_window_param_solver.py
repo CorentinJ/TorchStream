@@ -191,7 +191,7 @@ def test_edge_cases(sli_params: SlidingWindowParams):
     set_seed(0x5EED)
 
     transform = DummySlidingWindowTransform(sli_params)
-    _find_solution_or_equivalent(transform, SeqSpec(-1, dtype=np.float32), sli_params)
+    _find_solution_or_equivalent(transform, SeqSpec(-1, dtype=float), sli_params)
 
 
 def test_infinite_receptive_field():
@@ -202,7 +202,7 @@ def test_infinite_receptive_field():
     def transform(x: np.ndarray):
         return np.full_like(x, fill_value=np.mean(x))
 
-    sols = find_sliding_window_params(transform, SeqSpec(-1, dtype=np.float32))
+    sols = find_sliding_window_params(transform, SeqSpec(-1, dtype=float))
     assert not sols
 
 
@@ -215,7 +215,7 @@ def test_no_receptive_field():
     def transform(x: np.ndarray):
         return np.full_like(x, fill_value=3.0)
 
-    sols = find_sliding_window_params(transform, SeqSpec(-1, dtype=np.float32))
+    sols = find_sliding_window_params(transform, SeqSpec(-1, dtype=float))
     assert not sols
 
 
@@ -245,5 +245,5 @@ def test_variable_receptive_field(variant: str):
 
         return y
 
-    sols = find_sliding_window_params(transform, SeqSpec(-1, dtype=np.float32))
+    sols = find_sliding_window_params(transform, SeqSpec(-1, dtype=float))
     assert not sols

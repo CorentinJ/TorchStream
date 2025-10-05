@@ -172,7 +172,7 @@ def test_moving_average(
     tsfm_stream = SlidingWindowStream(
         tsfm,
         sliding_window_params,
-        SeqSpec(-1, dtype=np.float32),
+        SeqSpec(-1, dtype=float),
     )
 
     test_stream_equivalent(
