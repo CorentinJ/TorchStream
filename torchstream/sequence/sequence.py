@@ -327,7 +327,8 @@ class Sequence:
                 out_arr = trsfm(in_seq.data)
             except zero_size_exception_types as e:
                 logger.info(
-                    f"Forwarding a {in_seq.size} input gave a {e.__class__.__name__}, returning an empty sequence."
+                    f"Forwarding an input of size {in_seq.size} gave a {e.__class__.__name__}, "
+                    f"returning an empty sequence."
                 )
                 out_arr = Sequence.empty(out_spec)
 

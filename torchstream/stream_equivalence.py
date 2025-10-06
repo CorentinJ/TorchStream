@@ -62,7 +62,7 @@ def test_stream_equivalent(
             raise ValueError(f"Shape mismatch on step {i} (got {out_seq_stream_i.shape}, expected {out_sync_i.shape})")
         if out_seq_stream_i.size:
             max_error = np.abs(out_sync_i - out_seq_stream_i.data).max()
-            if max_error > atol:
+            if max_error > atol or np.isnan(max_error):
                 raise ValueError(
                     f"Error too large on step {i} (got {max_error}, expected <= {atol})\n"
                     f"Sync: {out_sync_i}\nStream: {out_seq_stream_i.data}"
