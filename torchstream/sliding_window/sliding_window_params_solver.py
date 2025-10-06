@@ -16,6 +16,7 @@ from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
 )
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
+    get_output_delay,
     get_output_delay_bounds,
 )
 from torchstream.sliding_window.sliding_window_params_sampler import (
@@ -118,11 +119,12 @@ class SlidingWindowParamsSolver:
         if in_nan_range and not (0 <= in_nan_range[0] < in_nan_range[1] <= in_seq_size):
             raise ValueError(f"Nan range must be positive and within the input sequence size, got {in_nan_range}")
 
-        # Running the same nan trick twice is a waste of compute. Callers are expected not to do this.
-        assert not any(
-            (in_seq_size, in_nan_range) == (record["in_seq_size"], record["in_nan_range"])
-            for record in self.nan_trick_history
-        ), "Internal error: reusing previously seen NaN trick parameters"
+        # FIXME!! RESTORE
+        # # Running the same nan trick twice is a waste of compute. Callers are expected not to do this.
+        # assert not any(
+        #     (in_seq_size, in_nan_range) == (record["in_seq_size"], record["in_nan_range"])
+        #     for record in self.nan_trick_history
+        # ), "Internal error: reusing previously seen NaN trick parameters"
 
         # Get an input of said size and perform the nan trick on the actual transform
         in_seq = self.input_provider(in_seq_size)
@@ -335,12 +337,9 @@ class SlidingWindowParamsSolver:
             yield (full_in_size, (pre_nan_in_size, post_nan_in_size))
 
         # Finally we'll yield parameters to test the minimum input size
-        input_sizes_to_test = [params.min_input_size - 1, params.min_input_size]
-        for record in self.nan_trick_history:
-            if record["in_seq_size"] in input_sizes_to_test:
-                input_sizes_to_test.remove(record["in_seq_size"])
-        for in_size in input_sizes_to_test:
-            yield (in_size, None)
+        input_sizes_to_test = set([max(params.min_input_size - 1, 1), params.min_input_size])
+        input_sizes_to_test -= {rec["in_seq_size"] for rec in self.nan_trick_history}
+        yield from ((in_size, None) for in_size in input_sizes_to_test)
 
     def _debug_check_ref_params(
         self,
@@ -445,6 +444,49 @@ class SlidingWindowParamsSolver:
                     break
 
             if checks_passed:
+                # FIXME! remove
+                params = hypothesis.params
+                # bad_ctx = params.streaming_context_size
+                # for record in self.nan_trick_history:
+                #     logger.debug(f"Record: {record}")
+                #     for in_range, out_range in params.iter_bounded_kernel_map(record["in_seq_size"]):
+                #         color = (
+                #             colors.MAGENTA
+                #             if record["out_nan_range"]
+                #             and out_range[1] > record["out_nan_range"][0]
+                #             and out_range[0] < record["out_nan_range"][1]
+                #             else colors.RESET
+                #         )
+                #         color = (
+                #             colors.RED
+                #             if record["in_nan_range"]
+                #             and in_range[1] > record["in_nan_range"][0]
+                #             and in_range[0] < record["in_nan_range"][1]
+                #             else color
+                #         )
+                #         logger.debug(f"{color}In {in_range} -> Out {out_range}{colors.RESET}")
+                #     logger.debug("--------")
+
+                in_size = 100
+                *_, first_out_size = params.get_metrics_for_input(in_size)
+                first_out_delay = get_output_delay(params, in_size)
+                stream_out_pos = max(first_out_size - first_out_delay, 0)
+
+                for ictx in range(self.debug_ref_params.streaming_context_size + 1):
+                    wins_to_drop = max(0, (in_size - ictx) // params.stride_in)
+                    new_in_size = wins_to_drop * params.stride_in
+                    tsfm_out_pos = wins_to_drop * params.stride_out
+                    out_trim_start = stream_out_pos - tsfm_out_pos
+
+                    record = self.run_nan_trick(new_in_size, (0, 1))
+
+                    # Derive function for obtaining the real context size
+                    # Adapt the function that obtains it from sli params
+                    # Improve tests with this new check
+
+                    success = out_trim_start >= record["out_nan_range"][1]
+                    3 + 2
+
                 return [hypothesis.params]
 
             step += 1
