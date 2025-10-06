@@ -1,12 +1,9 @@
-import itertools
 import logging
-import math
 from collections import Counter
-from typing import Iterable, List, Tuple
+from typing import List, Tuple
 
 from z3 import And, Bool, Implies, Int, Ints, Or, Solver, sat
 
-from torchstream.sliding_window.nan_trick import get_nan_map
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
     get_all_output_delays,
@@ -137,6 +134,12 @@ class SlidingWindowParamsSampler:
             out_nan_range = (int(out_nan_range[0]), int(out_nan_range[1]))
             if not (0 <= out_nan_range[0] < out_nan_range[1] <= out_len):
                 raise ValueError("Output range must be non-empty and contained within (0, out_len), or be None")
+
+        # Model the minimum input size
+        if out_len:
+            self.optimizer.add(self.mis <= in_len)
+        else:
+            self.optimizer.add(self.mis > in_len)
 
         # Model the input to output size relation with the number of windows
         constraint_idx = len(self.optimizer.assertions())
@@ -436,88 +439,3 @@ class SlidingWindowParamsSampler:
 
     def is_compatible(self, solution: SlidingWindowParams) -> bool:
         return not self.get_violations(solution)
-
-
-# FIXME!
-def _get_infogain(category_counts: Iterable[int]) -> float:
-    category_counts = list(category_counts)
-    infogain = math.log(sum(category_counts))
-    for category_count in category_counts:
-        infogain -= (category_count * math.log(category_count)) / sum(category_counts)
-    return infogain
-
-
-def _get_infogain_for_hypotheses(all_params: List[SlidingWindowParams], input_size: int, in_nan_idx: Iterable[int]):
-    # FIXME!!
-    if in_nan_idx:
-        in_nan_idx = next(iter(in_nan_idx))
-        nan_range = (in_nan_idx, in_nan_idx + 1)
-    else:
-        nan_range = None
-
-    # TODO! integrate kernels
-    nan_maps = [get_nan_map(params, input_size, nan_range) for params in all_params]
-
-    groups = [tuple(map_idx) for _, map_idx in itertools.groupby(range(len(nan_maps)), key=lambda i: len(nan_maps[i]))]
-    max_out_len = max(len(nan_map) for nan_map in nan_maps)
-
-    # FIXME!!
-    if len(groups) > 1:
-        return 1.0
-
-    for out_idx in range(max_out_len):
-        # new_groups = []
-        # for group in groups:
-        #     if len(group) == 1:
-        #         new_groups.append(group)
-        #         continue
-
-        nan_values = [(nan_map[out_idx] if len(nan_map) > out_idx else None) for nan_map in nan_maps]
-
-        unique_values = set(nan_values)
-        if 1 in unique_values:
-            unique_values.remove(1)
-        if len(unique_values) > 1:
-            return 1.0
-
-    return 0.0
-
-
-def nan_trick_params_by_max_infogain(
-    all_params: List[SlidingWindowParams],
-) -> Tuple[int, Tuple[int, int] | None] | None:
-    """
-    FIXME: docstring
-    Determines an input size and an input nan range for the next nan trick step.
-    When hypotheses are available, this function will return parameters not used before that allows discrimating
-    between at least two hypotheses. If that cannot be guaranteed, it will return None instead.
-    """
-    if len(all_params) <= 1:
-        return None
-
-    # If we have hypotheses, we'll determine our nan trick parameters based on them
-    min_in_size = min(params.min_input_size for params in all_params)
-    # FIXME!!
-    max_in_size = min_in_size + len(all_params) + 100
-
-    best_infogain = 0.0
-    # FIXME!!
-    best_in_size = 100
-    for in_size in range(min_in_size, max_in_size + 1):
-        infogain = _get_infogain_for_hypotheses(all_params, in_size, set())
-        if infogain > best_infogain:
-            best_infogain = infogain
-            best_in_size = in_size
-
-    best_nan_range = None
-    for nan_idx in range(0, best_in_size):
-        infogain = _get_infogain_for_hypotheses(all_params, best_in_size, {nan_idx})
-        if infogain > best_infogain:
-            best_infogain = infogain
-            best_nan_range = (nan_idx, nan_idx + 1)
-
-    # FIXME!!
-    if best_infogain == 0.0:
-        return None
-
-    return best_in_size, best_nan_range
