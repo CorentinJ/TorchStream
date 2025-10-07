@@ -114,6 +114,8 @@ def get_nan_map(
     kernel_out_prior: np.ndarray | None = None,
 ):
     # TODO! doc
+    assert in_nan_range is None or (0 <= in_nan_range[0] < in_nan_range[1] <= in_len)
+
     if kernel_in_prior is None:
         kernel_in_prior = get_init_kernel_array(params.kernel_size_in, full=True)
     if kernel_out_prior is None:

@@ -178,6 +178,7 @@ class Sequence:
         """
         return self._n_consumed
 
+    # TODO: rename seqdim?
     @property
     def dim(self) -> int:
         """

@@ -7,7 +7,7 @@ import torch
 from torchstream.sequence.dtype import SeqDTypeLike
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
-from torchstream.sliding_window.nan_trick import get_seq_nan_idx
+from torchstream.sliding_window.nan_trick import get_nan_idx
 
 
 @pytest.mark.parametrize(
@@ -40,4 +40,4 @@ def test_get_nan_range(
     if nan_range is not None:
         seq[nan_range] = float("nan")
     # FIXME!!
-    assert get_seq_nan_idx(seq) == nan_range
+    assert get_nan_idx(seq) == nan_range

@@ -9,14 +9,13 @@ from colorama import Fore as colors
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.kernel_sparsity import determine_kernel_sparsity, get_init_kernel_array
-from torchstream.sliding_window.nan_trick import get_seq_nan_idx
+from torchstream.sliding_window.nan_trick import get_nan_idx
 from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
     SlidingWindowInOutRelSampler,
     input_size_by_max_infogain,
 )
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
-    get_output_delay,
     get_output_delay_bounds,
 )
 from torchstream.sliding_window.sliding_window_params_sampler import (
@@ -143,7 +142,7 @@ class SlidingWindowParamsSolver:
         )
 
         # Keep track of the outcome in the history
-        out_nan_idx = get_seq_nan_idx(out_seq)
+        out_nan_idx = get_nan_idx(out_seq)
         out_nan_range = (out_nan_idx[0], out_nan_idx[-1] + 1) if len(out_nan_idx) else None
         logger.info(f"Forwarded {in_seq.size}->{out_seq.size} with nans {in_nan_range}->{out_nan_range}")
         record = {
@@ -467,25 +466,7 @@ class SlidingWindowParamsSolver:
                 #         logger.debug(f"{color}In {in_range} -> Out {out_range}{colors.RESET}")
                 #     logger.debug("--------")
 
-                in_size = 100
-                *_, first_out_size = params.get_metrics_for_input(in_size)
-                first_out_delay = get_output_delay(params, in_size)
-                stream_out_pos = max(first_out_size - first_out_delay, 0)
 
-                for ictx in range(self.debug_ref_params.streaming_context_size + 1):
-                    wins_to_drop = max(0, (in_size - ictx) // params.stride_in)
-                    new_in_size = wins_to_drop * params.stride_in
-                    tsfm_out_pos = wins_to_drop * params.stride_out
-                    out_trim_start = stream_out_pos - tsfm_out_pos
-
-                    record = self.run_nan_trick(new_in_size, (0, 1))
-
-                    # Derive function for obtaining the real context size
-                    # Adapt the function that obtains it from sli params
-                    # Improve tests with this new check
-
-                    success = out_trim_start >= record["out_nan_range"][1]
-                    3 + 2
 
                 return [hypothesis.params]
 
