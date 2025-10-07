@@ -6,7 +6,7 @@ from z3 import And, Bool, Not, Or, Solver, unsat
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 
 
-def get_init_kernel_array(kernel_size: int) -> np.ndarray:
+def get_init_kernel_array(kernel_size: int, full: bool = False) -> np.ndarray:
     """
     Initialize a default kernel sparsity array.
 
@@ -16,7 +16,8 @@ def get_init_kernel_array(kernel_size: int) -> np.ndarray:
     - 2: the kernel covers the element at that index
 
     By default, we set all elements to 1 (unknown) and force the first and last
-    elements to 2 (covered) to ensure a minimum span.
+    elements to 2 (covered) to ensure a minimum span. If full is True, all elements
+    are set to 2 (covered).
 
     :param kernel_size: Span/size of the kernel.
     :return: A kernel sparsity array initialized with 1s, with the first and last elements set to 2.
@@ -24,6 +25,8 @@ def get_init_kernel_array(kernel_size: int) -> np.ndarray:
     kernel = np.ones(int(kernel_size), dtype=np.int64)
     if kernel.size > 0:
         kernel[0] = kernel[-1] = 2
+    if full:
+        kernel[:] = 2
     return kernel
 
 
@@ -101,3 +104,38 @@ def determine_kernel_sparsity(
                 kernel_out_values[i] = 2
 
     return kernel_in_values, kernel_out_values
+
+
+def get_nan_map(
+    params: SlidingWindowParams,
+    in_len: int,
+    in_nan_range: Tuple[int, int] | None,
+    kernel_in_prior: np.ndarray | None = None,
+    kernel_out_prior: np.ndarray | None = None,
+):
+    # TODO! doc
+    if kernel_in_prior is None:
+        kernel_in_prior = get_init_kernel_array(params.kernel_size_in, full=True)
+    if kernel_out_prior is None:
+        kernel_out_prior = get_init_kernel_array(params.kernel_size_out, full=True)
+
+    if kernel_in_prior.shape != (params.kernel_size_in,):
+        raise ValueError(f"kernel_in_prior must have shape ({params.kernel_size_in},), got {kernel_in_prior.shape}")
+    if kernel_out_prior.shape != (params.kernel_size_out,):
+        raise ValueError(f"kernel_out_prior must have shape ({params.kernel_size_out},), got {kernel_out_prior.shape}")
+
+    _, num_wins, out_len = params.get_metrics_for_input(in_len)
+    nan_map = np.zeros(out_len, dtype=np.int64)
+    if not in_nan_range:
+        return nan_map
+
+    for (in_start, in_stop), (out_start, out_stop) in params.iter_kernel_map(num_wins):
+        window_value = max(
+            kernel_in_prior[i] if in_nan_range[0] <= in_start + i < in_nan_range[1] else 0
+            for i in range(params.kernel_size_in)
+        )
+        for i in range(params.kernel_size_out):
+            if 0 <= out_start + i < out_len:
+                nan_map[out_start + i] = max(nan_map[out_start + i], min(kernel_out_prior[i], window_value))
+
+    return nan_map
