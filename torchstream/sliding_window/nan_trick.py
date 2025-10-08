@@ -83,6 +83,7 @@ def get_context_size_empirically(params: SlidingWindowParams):
             out_trim_start = stream_out_pos - tsfm_out_pos
 
             out_nan_map = get_nan_map(params, in_size, in_nan_range=(0, params.stride_in))
+            assert len(out_nan_map[out_trim_start:]), "Input size is not sufficient"
             ctx_is_enough = out_nan_map[out_trim_start:].sum() == 0
 
             if ctx_is_enough:

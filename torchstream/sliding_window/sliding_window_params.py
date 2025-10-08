@@ -1,7 +1,9 @@
 import math
-from typing import Iterator, Tuple, Union, overload
+from typing import Iterator, Tuple, overload
 
-from z3 import ArithRef, If, Int
+from z3 import If, Int
+
+from torchstream.transforms.z3_utils import IntLike, z3_ceil_div, z3_divmod, z3_floor_div, z3_max
 
 
 class SlidingWindowParams:
@@ -224,30 +226,6 @@ class SlidingWindowParams:
         )
 
 
-IntLike = Union[int, ArithRef]
-
-
-def z3_ceil_div(a, b) -> IntLike:
-    """Ceiling division that works for both Python ints and z3 expressions."""
-    if isinstance(a, int) and isinstance(b, int):
-        return int(math.ceil(a / b))
-    return If(a >= 0, (a + b - 1) / b, -((-a) / b))
-
-
-def z3_floor_div(a, b) -> IntLike:
-    """Floor division that works for both Python ints and z3 expressions."""
-    if isinstance(a, int) and isinstance(b, int):
-        return a // b
-    return If(a >= 0, a / b, -((-a + b - 1) / b))
-
-
-def z3_max(a: IntLike, b: IntLike) -> IntLike:
-    """max() for both Python ints and z3 expressions."""
-    if isinstance(a, int) and isinstance(b, int):
-        return max(a, b)
-    return If(a > b, a, b)
-
-
 def _get_sli_args(args):
     if len(args) == 1 and isinstance(args[0], SlidingWindowParams):
         p = args[0]
@@ -372,27 +350,29 @@ def get_streaming_context_size(*args) -> Tuple[IntLike, IntLike, IntLike, IntLik
     """
     k_i, s_i, p_l, p_r, k_o, s_o, t_o = _get_sli_args(args)
 
-    # Number of windows that are wasted on the left solely due to padding. "Wasted" here means that we recompute
-    # these windows on each step despite them being unnecessary, simply because the transform re-pads the input
-    # every time. If it is possible to remove padding from the transform and manually pad the streamed input,
-    # this waste of compute can be avoided.
-    # Note that right padding wastes compute just as much, however it does not require any context to be stored.
-    n_left_pad_wins_wasted = z3_ceil_div(p_l, s_i)
+    in_delay = p_l + p_r - k_i
+    in_delay_n_wins, in_delay_remainder = z3_divmod(in_delay, s_i)
 
-    # For a given output window, the number of other output windows that overlap it. Only >0 when the out stride
-    # is smaller than the out kernel size.
-    # Note that we need to buffer enough past context in order to have the overlapping windows necessary in
-    # computing a given output. This induces redundant compute that could be avoided if the reduce operation on
-    # overlapping windows (e.g. a vector sum) is known. TODO: test & implement if useful
-    n_overlapping_out_wins = z3_ceil_div(k_o, s_o) - 1
+    last_left_incomplete_out_idx = z3_ceil_div(p_l, s_i) * s_o + (k_o - 1) - t_o
 
-    in_delay = k_i - s_i - p_l
+    def ctx_for_remainder(remainder: int) -> int:
+        out_delay = get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_o, remainder)
+        effective_out_core = k_o - 2 * t_o - out_delay
 
-    n_wins_trimmed = z3_ceil_div(2 * t_o - k_o, s_o) + 1
+        if isinstance(in_delay_remainder, int) and isinstance(remainder, int):
+            bias_carry = 1 if (in_delay_remainder + remainder) >= s_i else 0
+        else:
+            bias_carry = If(in_delay_remainder + remainder >= s_i, 1, 0)
 
-    x = n_left_pad_wins_wasted * s_i + z3_max(n_overlapping_out_wins * s_i, n_wins_trimmed * s_i - p_r)
+        min_wins_vs_left_incomplete = z3_ceil_div(effective_out_core - last_left_incomplete_out_idx, s_o)
+        min_wins_vs_core = z3_floor_div(effective_out_core, s_o)
+        wins_to_keep = -in_delay_n_wins - bias_carry - min(min_wins_vs_left_incomplete, min_wins_vs_core)
+        return max(0, (wins_to_keep - 1) * s_i + remainder + 1)
 
-    # Total number of input elements that are needed as context
-    in_context_size = z3_max(0, x + in_delay)
+    r_best = (s_i - in_delay_remainder - 1) % s_i
+    r_neighbor = (r_best + 1) % s_i
+    r_delay = (k_i - p_l - 1) % s_i
+    candidates = {r_best, r_neighbor, r_delay}
+    in_context_size = max(ctx_for_remainder(r) for r in candidates)
 
     return in_context_size, None, None, None
