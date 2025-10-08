@@ -1,7 +1,7 @@
 import math
 from typing import Iterator, Tuple, Union, overload
 
-from z3 import And, ArithRef, If, Int
+from z3 import ArithRef, If, Int
 
 
 class SlidingWindowParams:
@@ -72,7 +72,7 @@ class SlidingWindowParams:
 
     @property
     def streaming_context_size(self) -> int:
-        return get_streaming_context_params(self)[0]
+        return get_streaming_context_size(self)[0]
 
     # TODO: test this function with a bunch of edge cases
     @property
@@ -354,20 +354,20 @@ def get_all_output_delays(*args) -> Tuple[IntLike, ...]:
 
 
 @overload
-def get_streaming_context_params(
+def get_streaming_context_size(
     sli_params: SlidingWindowParams,
 ) -> Tuple[int, int, int, int]: ...
 @overload
-def get_streaming_context_params(
+def get_streaming_context_size(
     k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_o: IntLike
 ) -> Tuple[IntLike, IntLike, IntLike, IntLike]: ...
-def get_streaming_context_params(*args) -> Tuple[IntLike, IntLike, IntLike, IntLike]:
+def get_streaming_context_size(*args) -> Tuple[IntLike, IntLike, IntLike, IntLike]:
     """
     Get the input context size necessary for streaming a transform with given sliding window parameters.
 
     When streaming a transform, we continuously discard seen input in order to limit the compute cost of the transform.
-    However, there is a certain minimum number of elements on the right that need not to be discarded in order for the 
-    output to be equivalent from its non-streamed version. This value is the context size and we can derive it from 
+    However, there is a certain minimum number of elements on the right that need not to be discarded in order for the
+    output to be equivalent from its non-streamed version. This value is the context size and we can derive it from
     the sliding window parameters.
     """
     k_i, s_i, p_l, p_r, k_o, s_o, t_o = _get_sli_args(args)
@@ -386,26 +386,13 @@ def get_streaming_context_params(*args) -> Tuple[IntLike, IntLike, IntLike, IntL
     # overlapping windows (e.g. a vector sum) is known. TODO: test & implement if useful
     n_overlapping_out_wins = z3_ceil_div(k_o, s_o) - 1
 
-    n_flat_ctx_wins = n_left_pad_wins_wasted + n_overlapping_out_wins
-
     in_delay = k_i - s_i - p_l
 
-    # FIXME! doc
-    # Output trimming might trim away the content of output windows on the right. Depending on the output overlap,
-    # we might need to compute additional windows every step to make up for that.
-    # With any output trimming, we'll need an extra window if there no output window overlap at all
-    if isinstance(s_o, int) and isinstance(k_o, int) and isinstance(t_o, int):
-        trimming_extra_win = 1 if t_o > (k_o - s_o) else 0
-        trimming_boundary_win = 1 if s_o == k_o and t_o > 0 else 0
-    else:
-        trimming_extra_win = If(t_o > (k_o - s_o), 1, 0)
-        trimming_boundary_win = If(And(s_o == k_o, t_o > 0), 1, 0)
+    n_wins_trimmed = z3_ceil_div(2 * t_o - k_o, s_o) + 1
 
-    # Convert the number of extra right windows into a number of input elements, offset by right padding that provides
-    # extra right context for free
-    trimming_extra_ctx = z3_max(0, (trimming_extra_win + trimming_boundary_win) * s_i - p_r)
+    x = n_left_pad_wins_wasted * s_i + z3_max(n_overlapping_out_wins * s_i, n_wins_trimmed * s_i - p_r)
 
     # Total number of input elements that are needed as context
-    in_context_size = z3_max(0, n_flat_ctx_wins * s_i + in_delay + trimming_extra_ctx)
+    in_context_size = z3_max(0, x + in_delay)
 
-    return in_context_size, n_flat_ctx_wins, in_delay, trimming_extra_ctx
+    return in_context_size, None, None, None

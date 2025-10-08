@@ -10,7 +10,7 @@ from torchstream.sliding_window.sliding_window_params import (
     get_canonicalized_in_out_size_params,
     get_output_delay,
     get_output_delay_bounds,
-    get_streaming_context_params,
+    get_streaming_context_size,
     z3_ceil_div,
     z3_max,
 )
@@ -81,7 +81,7 @@ class SlidingWindowParamsSampler:
                 a == b
                 for a, b in zip(
                     (self.ictx, self.nfctxw, self.id, self.tectx),
-                    get_streaming_context_params(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o),
+                    get_streaming_context_size(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o),
                 )
             )
         )

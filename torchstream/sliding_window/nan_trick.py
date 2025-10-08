@@ -99,6 +99,8 @@ def get_context_size_empirically(params: SlidingWindowParams):
         assert (in_size - ctx) // params.stride_in == in_size // params.stride_in - wins_to_keep
 
     assert min(ctxs) + params.stride_in > ctx
-    assert ctx == params.streaming_context_size, (ctx, params.streaming_context_size)
+    assert ctx == params.streaming_context_size, (
+        f"Failure for params {params} -> real ctx={ctx}, params.ctx={params.streaming_context_size}"
+    )
 
     return ctx
