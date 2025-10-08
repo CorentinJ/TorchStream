@@ -33,8 +33,8 @@ class SlidingWindowStream(Stream):
 
         self.params = sliding_window_params
         # FIXME!! remove
-        verify_context_size(sliding_window_params)
-        self.ictx = sliding_window_params.streaming_context_size
+        self.ictx = verify_context_size(sliding_window_params)
+        # self.ictx = sliding_window_params.streaming_context_size
 
         self.tsfm_out_pos = 0
         self.stream_out_pos = 0

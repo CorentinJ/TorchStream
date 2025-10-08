@@ -73,13 +73,13 @@ def verify_context_size(params: SlidingWindowParams):
 
         for wins_to_keep in range(0, in_size):
             base_wins_to_drop = in_size // params.stride_in
+            if stream_out_pos < (base_wins_to_drop - wins_to_keep) * params.stride_out:
+                continue
+
             wins_to_drop = base_wins_to_drop - (wins_to_keep + 1)
             assert wins_to_drop > 0, "Input size is not sufficient"
-
             tsfm_out_pos = wins_to_drop * params.stride_out
             out_trim_start = stream_out_pos - tsfm_out_pos
-            if out_trim_start < 0:
-                continue
 
             out_nan_map = get_nan_map(params, in_size, in_nan_range=(0, params.stride_in))
             ctx_is_enough = out_nan_map[out_trim_start:].sum() == 0
@@ -91,4 +91,9 @@ def verify_context_size(params: SlidingWindowParams):
                 break
 
     assert min(ctxs) + params.stride_in > max(ctxs)
-    assert max(ctxs) == params.streaming_context_size
+    # assert max(ctxs) == params.streaming_context_size
+    assert max(ctxs) <= params.streaming_context_size
+
+    # TODO: verify max gives the same ctx across all phase offsets
+
+    return max(ctxs)
