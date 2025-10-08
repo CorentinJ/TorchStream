@@ -3,7 +3,7 @@ from typing import Callable
 from torchstream.sequence.dtype import SeqArrayLike
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
-from torchstream.sliding_window.nan_trick import verify_context_size
+from torchstream.sliding_window.nan_trick import get_context_size_empirically
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
     get_output_delay,
@@ -33,7 +33,7 @@ class SlidingWindowStream(Stream):
 
         self.params = sliding_window_params
         # FIXME!! remove
-        self.ictx = verify_context_size(sliding_window_params)
+        self.ictx = get_context_size_empirically(sliding_window_params)
         # self.ictx = sliding_window_params.streaming_context_size
 
         self.tsfm_out_pos = 0

@@ -61,7 +61,8 @@ def run_nan_trick(
     return out_seq, out_nan_idx
 
 
-def verify_context_size(params: SlidingWindowParams):
+def get_context_size_empirically(params: SlidingWindowParams):
+    all_wins_to_keep = []
     ctxs = []
     for phase_offset in range(params.stride_in):
         # FIXME!
@@ -87,13 +88,17 @@ def verify_context_size(params: SlidingWindowParams):
             if ctx_is_enough:
                 ctx = max(0, (wins_to_keep - 1) * params.stride_in + (in_size % params.stride_in) + 1)
                 assert (in_size - ctx) // params.stride_in == base_wins_to_drop - wins_to_keep
+                all_wins_to_keep.append(wins_to_keep)
                 ctxs.append(ctx)
                 break
 
-    assert min(ctxs) + params.stride_in > max(ctxs)
-    # assert max(ctxs) == params.streaming_context_size
-    assert max(ctxs) <= params.streaming_context_size
+    ctx = max(ctxs)
 
-    # TODO: verify max gives the same ctx across all phase offsets
+    for phase_offset, wins_to_keep in enumerate(all_wins_to_keep):
+        in_size = 100 + phase_offset
+        assert (in_size - ctx) // params.stride_in == in_size // params.stride_in - wins_to_keep
 
-    return max(ctxs)
+    assert min(ctxs) + params.stride_in > ctx
+    assert ctx == params.streaming_context_size, (ctx, params.streaming_context_size)
+
+    return ctx

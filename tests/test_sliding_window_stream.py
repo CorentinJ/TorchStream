@@ -1,12 +1,12 @@
 import logging
 from typing import Tuple
 
-import numpy as np
 import pytest
 import torch
 from torch import nn
 
 from tests.rng import set_seed
+from tests.sliding_window_params_edge_cases import SLI_EDGE_CASES
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.dummy_sliding_window_transform import DummySlidingWindowTransform
 from torchstream.sliding_window.sliding_window_params import (
@@ -178,5 +178,22 @@ def test_moving_average(
     test_stream_equivalent(
         tsfm,
         tsfm_stream,
-        # throughput_check_max_delay=out_trim,
+        throughput_check_max_delay=out_trim,
+    )
+
+
+@pytest.mark.parametrize("sli_params", SLI_EDGE_CASES)
+def test_edge_cases(sli_params: SlidingWindowParams):
+    tsfm = DummySlidingWindowTransform(sli_params)
+
+    tsfm_stream = SlidingWindowStream(
+        tsfm,
+        sli_params,
+        SeqSpec(-1, dtype=float),
+    )
+
+    test_stream_equivalent(
+        tsfm,
+        tsfm_stream,
+        throughput_check_max_delay=sli_params.out_trim,
     )
