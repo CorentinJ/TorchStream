@@ -3,7 +3,6 @@ from typing import Tuple, Union
 
 from z3 import ArithRef, If
 
-
 IntLike = Union[int, ArithRef]
 
 
@@ -28,6 +27,13 @@ def z3_max(a: IntLike, b: IntLike) -> IntLike:
     return If(a > b, a, b)
 
 
+def z3_min(a: IntLike, b: IntLike) -> IntLike:
+    """min() for both Python ints and z3 expressions."""
+    if isinstance(a, int) and isinstance(b, int):
+        return min(a, b)
+    return If(a < b, a, b)
+
+
 def z3_divmod(a: IntLike, b: IntLike) -> Tuple[IntLike, IntLike]:
     """Divmod that works for both Python ints and z3 expressions."""
     if isinstance(a, int) and isinstance(b, int):
@@ -35,4 +41,3 @@ def z3_divmod(a: IntLike, b: IntLike) -> Tuple[IntLike, IntLike]:
     q = z3_floor_div(a, b)
     r = a - q * b
     return q, r
-

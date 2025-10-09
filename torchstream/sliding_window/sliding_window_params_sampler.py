@@ -75,15 +75,10 @@ class SlidingWindowParamsSampler:
             self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
         )
         self.ods = get_all_output_delays(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
-        self.ictx, self.nfctxw, self.id, self.tectx = Ints("ictx n_flat_ctx_wins in_delay trimming_extra_ctx")
+        self.ictx = Ints("ictx")
         self.optimizer.add(
-            *(
-                a == b
-                for a, b in zip(
-                    (self.ictx, self.nfctxw, self.id, self.tectx),
-                    get_streaming_context_size(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o),
-                )
-            )
+            self.ictx
+            == get_streaming_context_size(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
         )
 
         # FIXME!

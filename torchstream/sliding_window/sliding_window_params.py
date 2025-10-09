@@ -74,7 +74,7 @@ class SlidingWindowParams:
 
     @property
     def streaming_context_size(self) -> int:
-        return get_streaming_context_size(self)[0]
+        return get_streaming_context_size(self)
 
     # TODO: test this function with a bunch of edge cases
     @property
@@ -334,12 +334,12 @@ def get_all_output_delays(*args) -> Tuple[IntLike, ...]:
 @overload
 def get_streaming_context_size(
     sli_params: SlidingWindowParams,
-) -> Tuple[int, int, int, int]: ...
+) -> int: ...
 @overload
 def get_streaming_context_size(
     k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_o: IntLike
-) -> Tuple[IntLike, IntLike, IntLike, IntLike]: ...
-def get_streaming_context_size(*args) -> Tuple[IntLike, IntLike, IntLike, IntLike]:
+) -> IntLike: ...
+def get_streaming_context_size(*args) -> IntLike:
     """
     Get the input context size necessary for streaming a transform with given sliding window parameters.
 
@@ -376,4 +376,4 @@ def get_streaming_context_size(*args) -> Tuple[IntLike, IntLike, IntLike, IntLik
         z3_max(ctx_for_remainder(r_best), ctx_for_remainder(r_neighbor)), ctx_for_remainder(r_delay)
     )
 
-    return in_context_size, None, None, None
+    return in_context_size
