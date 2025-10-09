@@ -9,7 +9,7 @@ from colorama import Fore as colors
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.kernel_sparsity import determine_kernel_sparsity, get_init_kernel_array
-from torchstream.sliding_window.nan_trick import get_context_size_empirically, get_nan_idx
+from torchstream.sliding_window.nan_trick import get_nan_idx
 from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
     SlidingWindowInOutRelSampler,
     input_size_by_max_infogain,
@@ -317,7 +317,6 @@ class SlidingWindowParamsSolver:
                     phases_to_test.remove(phase)
                     break
 
-        # TODO? Only test phases that differ across hypotheses?
         if phases_to_test:
             logger.debug(f"Yielding inputs for phases {sorted(phases_to_test)} (stride={params.stride_in})")
 
@@ -444,33 +443,12 @@ class SlidingWindowParamsSolver:
                     break
 
             if checks_passed:
-                # FIXME! remove
-                params = hypothesis.params
-                # bad_ctx = params.streaming_context_size
-                # for record in self.nan_trick_history:
-                #     logger.debug(f"Record: {record}")
-                #     for in_range, out_range in params.iter_bounded_kernel_map(record["in_seq_size"]):
-                #         color = (
-                #             colors.MAGENTA
-                #             if record["out_nan_range"]
-                #             and out_range[1] > record["out_nan_range"][0]
-                #             and out_range[0] < record["out_nan_range"][1]
-                #             else colors.RESET
-                #         )
-                #         color = (
-                #             colors.RED
-                #             if record["in_nan_range"]
-                #             and in_range[1] > record["in_nan_range"][0]
-                #             and in_range[0] < record["in_nan_range"][1]
-                #             else color
-                #         )
-                #         logger.debug(f"{color}In {in_range} -> Out {out_range}{colors.RESET}")
-                logger.debug(get_context_size_empirically(self.debug_ref_params))
-
+                # TODO!! try to setup tighter constraints for the context based on the empirical check
                 return [hypothesis.params]
 
             step += 1
 
+        # FIXME: rewrite
         logger.debug(f"Hypotheses at the end of solver execution: #{', #'.join(str(hyp.id) for hyp in hypotheses)}")
 
         # TODO: sort by param complexity
