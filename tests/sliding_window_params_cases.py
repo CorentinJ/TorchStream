@@ -22,19 +22,27 @@ SLI_EDGE_CASES = [
 
 
 def _sli_params_to_test_args(params_iter) -> Tuple[List[Tuple[SlidingWindowParams, int, int]], List[str]]:
-    out_args = set()
+    out_args = []
     for params_dict in params_iter:
         try:
+            # Skip these cases that are duplicates (dilation has no effect if the kernel size is 1)
+            if (
+                "dilation" in params_dict
+                and params_dict["dilation"] > 1
+                and params_dict.get("kernel_size_in", 1) == 1
+                and params_dict.get("kernel_size_out", 1) == 1
+            ):
+                continue
+
             # Kernel size -> kernel span conversion for convolutions with dilation
             dilation = params_dict.pop("dilation", 1)
             params_dict["kernel_size_in"] = (params_dict.get("kernel_size_in", 1) - 1) * dilation + 1
             params_dict["kernel_size_out"] = (params_dict.get("kernel_size_out", 1) - 1) * dilation + 1
 
             sli_params = SlidingWindowParams(**params_dict)
-            out_args.add(
-                # The sli params specify the span, we'll keep the kernel size/dilation pair for building conv layers
-                (sli_params, params_dict.get("dilation", 1)),
-            )
+            # The sli params only specify the span, we'll need to keep the dilation info for building conv layers
+            out_args.append((sli_params, params_dict.get("dilation", 1)))
+
         except ValueError:
             pass
 
@@ -55,7 +63,7 @@ def _sli_params_to_test_args(params_iter) -> Tuple[List[Tuple[SlidingWindowParam
         for p, dilation in out_args
     ]
 
-    return list(out_args), ids
+    return out_args, ids
 
 
 CONV_1D_PARAMS = _sli_params_to_test_args(
