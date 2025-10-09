@@ -17,7 +17,7 @@ from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 from torchstream.stream_equivalence import test_stream_equivalent
 
 
-def _get_sol_params(sol: SlidingWindowParams):
+def _get_streaming_params(sol: SlidingWindowParams):
     return {
         "shape": sol.canonicalized_in_out_size_params,
         "min_in_size": sol.min_input_size,
@@ -27,20 +27,11 @@ def _get_sol_params(sol: SlidingWindowParams):
 
 
 def _find_solution_or_equivalent(transform, seq_spec, expected_sol):
-    if expected_sol:
-        # TODO: let the solver print this
-        logger.debug(
-            f"Expected solution: {expected_sol}"
-            f"\nwith shape {expected_sol.canonicalized_in_out_size_params}"
-            f"\nwith out delays {expected_sol.output_delays}"
-            f"\nwith context size {expected_sol.streaming_context_size}"
-        )
-
     sols = find_sliding_window_params(transform, seq_spec, debug_ref_params=expected_sol, max_equivalent_sols=1)
     assert len(sols) == 1, f"Expected exactly one solution, got {len(sols)}: {sols}"
 
     if expected_sol and expected_sol not in sols:
-        assert any(_get_sol_params(sol) == _get_sol_params(expected_sol) for sol in sols)
+        assert any(_get_streaming_params(sol) == _get_streaming_params(expected_sol) for sol in sols)
         logger.warning("Could not find the expected solution, but found an equivalent one")
 
     test_stream_equivalent(transform, SlidingWindowStream(transform, sols[0], seq_spec))
@@ -187,8 +178,6 @@ def test_no_receptive_field():
 def test_variable_receptive_field(variant: str):
     """
     Tests that the solver does not find a solution for a transform that has a receptive field of variable size.
-
-    NOTE: these could technically be handled
     """
     if variant in ("prefix_mean", "suffix_mean"):
         pytest.skip("These cases are not properly handled yet")

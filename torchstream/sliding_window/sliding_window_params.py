@@ -355,7 +355,7 @@ def get_streaming_context_size(*args) -> Tuple[IntLike, IntLike, IntLike, IntLik
 
     last_left_incomplete_out_idx = z3_ceil_div(p_l, s_i) * s_o + (k_o - 1) - t_o
 
-    def ctx_for_remainder(remainder: int) -> int:
+    def ctx_for_remainder(remainder: IntLike) -> IntLike:
         out_delay = get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_o, remainder)
         effective_out_core = k_o - 2 * t_o - out_delay
 
@@ -367,12 +367,13 @@ def get_streaming_context_size(*args) -> Tuple[IntLike, IntLike, IntLike, IntLik
         min_wins_vs_left_incomplete = z3_ceil_div(effective_out_core - last_left_incomplete_out_idx, s_o)
         min_wins_vs_core = z3_floor_div(effective_out_core, s_o)
         wins_to_keep = -in_delay_n_wins - bias_carry - min(min_wins_vs_left_incomplete, min_wins_vs_core)
-        return max(0, (wins_to_keep - 1) * s_i + remainder + 1)
+        return z3_max(0, (wins_to_keep - 1) * s_i + remainder + 1)
 
     r_best = (s_i - in_delay_remainder - 1) % s_i
     r_neighbor = (r_best + 1) % s_i
     r_delay = (k_i - p_l - 1) % s_i
-    candidates = {r_best, r_neighbor, r_delay}
-    in_context_size = max(ctx_for_remainder(r) for r in candidates)
+    in_context_size = z3_max(
+        z3_max(ctx_for_remainder(r_best), ctx_for_remainder(r_neighbor)), ctx_for_remainder(r_delay)
+    )
 
     return in_context_size, None, None, None

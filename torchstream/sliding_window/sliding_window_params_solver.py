@@ -110,6 +110,8 @@ class SlidingWindowParamsSolver:
         self.in_spec = self.input_provider(0).spec
 
         self.debug_ref_params = debug_ref_params
+        if debug_ref_params:
+            logger.debug(f"Debug reference parameters: {_compare_sli_params_str(debug_ref_params)}")
 
     def run_nan_trick(self, in_seq_size: int, in_nan_range: Tuple[int, int] | None) -> dict:
         """

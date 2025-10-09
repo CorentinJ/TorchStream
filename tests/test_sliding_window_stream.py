@@ -1,12 +1,16 @@
 import logging
-from typing import Tuple
 
 import pytest
 import torch
 from torch import nn
 
 from tests.rng import set_seed
-from tests.sliding_window_params_cases import CONV_1D_PARAMS, SLI_EDGE_CASES, TRANSPOSED_CONV_1D_PARAMS
+from tests.sliding_window_params_cases import (
+    CONV_1D_PARAMS,
+    MOVING_AVERAGE_PARAMS,
+    SLI_EDGE_CASES,
+    TRANSPOSED_CONV_1D_PARAMS,
+)
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.dummy_sliding_window_transform import DummySlidingWindowTransform
 from torchstream.sliding_window.sliding_window_params import (
@@ -82,48 +86,20 @@ def test_conv_transpose_1d(sli_params: SlidingWindowParams, dilation: int):
     )
 
 
-@pytest.mark.parametrize("kernel_size_in", [1, 2, 5, 10])
-@pytest.mark.parametrize("stride_in", [1, 2, 3])
-@pytest.mark.parametrize("padding", [(0, 0), (3, 0), (1, 2)])
-@pytest.mark.parametrize("kernel_size_out", [1, 2, 4, 7])
-@pytest.mark.parametrize("stride_out", [1, 2, 7])
-@pytest.mark.parametrize("out_trim", [0, 1, 3, 6])
-def test_moving_average(
-    kernel_size_in: int,
-    stride_in: int,
-    padding: Tuple[int, int],
-    kernel_size_out: int,
-    stride_out: int,
-    out_trim: int,
-):
-    if stride_in > kernel_size_in or stride_out > kernel_size_out:
-        pytest.skip("Stride should be smaller than the kernel span")
-    if padding[0] >= kernel_size_in or padding[1] >= kernel_size_in:
-        pytest.skip("Padding should be smaller than the kernel span")
-    if out_trim >= kernel_size_out:
-        pytest.skip("Output trim should be smaller than the kernel span")
-
-    sliding_window_params = SlidingWindowParams(
-        kernel_size_in=kernel_size_in,
-        stride_in=stride_in,
-        left_pad=padding[0],
-        right_pad=padding[1],
-        kernel_size_out=kernel_size_out,
-        stride_out=stride_out,
-        out_trim=out_trim,
-    )
-    tsfm = DummySlidingWindowTransform(sliding_window_params)
+@pytest.mark.parametrize("sli_params,dilation", MOVING_AVERAGE_PARAMS[0], ids=MOVING_AVERAGE_PARAMS[1])
+def test_moving_average(sli_params: SlidingWindowParams, dilation: int):
+    tsfm = DummySlidingWindowTransform(sli_params)
 
     tsfm_stream = SlidingWindowStream(
         tsfm,
-        sliding_window_params,
+        sli_params,
         SeqSpec(-1, dtype=float),
     )
 
     test_stream_equivalent(
         tsfm,
         tsfm_stream,
-        throughput_check_max_delay=out_trim,
+        throughput_check_max_delay=sli_params.out_trim,
     )
 
 
