@@ -1,8 +1,29 @@
-# conftest.py
+import logging
 import platform
 import subprocess
 import sys
 import time
+from pathlib import Path
+
+# Add a logging filter that injects repo-relative paths for clickable links
+_REPO_ROOT = Path(__file__).resolve().parent
+
+
+# Ensure every LogRecord carries a repo-relative path attribute early
+_orig_factory = logging.getLogRecordFactory()
+
+
+def _record_factory(*args, **kwargs):
+    record = _orig_factory(*args, **kwargs)
+    try:
+        rel = Path(record.pathname).resolve().relative_to(_REPO_ROOT)
+        record.relpath = rel.as_posix()
+    except Exception:
+        record.relpath = getattr(record, "pathname", getattr(record, "filename", "<unknown>"))
+    return record
+
+
+logging.setLogRecordFactory(_record_factory)
 
 
 def _beep_ok():

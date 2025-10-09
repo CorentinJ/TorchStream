@@ -3,7 +3,7 @@ from typing import Iterator, Tuple, overload
 
 from z3 import If, Int
 
-from torchstream.transforms.z3_utils import IntLike, z3_ceil_div, z3_divmod, z3_floor_div, z3_max
+from torchstream.transforms.z3_utils import IntLike, z3_ceil_div, z3_divmod, z3_floor_div, z3_max, z3_min
 
 
 class SlidingWindowParams:
@@ -366,7 +366,7 @@ def get_streaming_context_size(*args) -> IntLike:
 
         min_wins_vs_left_incomplete = z3_ceil_div(effective_out_core - last_left_incomplete_out_idx, s_o)
         min_wins_vs_core = z3_floor_div(effective_out_core, s_o)
-        wins_to_keep = -in_delay_n_wins - bias_carry - min(min_wins_vs_left_incomplete, min_wins_vs_core)
+        wins_to_keep = -in_delay_n_wins - bias_carry - z3_min(min_wins_vs_left_incomplete, min_wins_vs_core)
         return z3_max(0, (wins_to_keep - 1) * s_i + remainder + 1)
 
     r_best = (s_i - in_delay_remainder - 1) % s_i
