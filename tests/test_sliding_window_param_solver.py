@@ -1,4 +1,3 @@
-from typing import Tuple
 from venv import logger
 
 import numpy as np
@@ -7,7 +6,7 @@ import torch
 from torch import nn
 
 from tests.rng import set_seed
-from tests.sliding_window_params_edge_cases import SLI_EDGE_CASES
+from tests.sliding_window_params_cases import CONV_1D_PARAMS, SLI_EDGE_CASES, TRANSPOSED_CONV_1D_PARAMS
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.dummy_sliding_window_transform import DummySlidingWindowTransform
 from torchstream.sliding_window.sliding_window_params import (
@@ -37,9 +36,7 @@ def _find_solution_or_equivalent(transform, seq_spec, expected_sol):
             f"\nwith context size {expected_sol.streaming_context_size}"
         )
 
-    sols = find_sliding_window_params(
-        transform, seq_spec, debug_ref_params=expected_sol, max_equivalent_sols=1
-    )
+    sols = find_sliding_window_params(transform, seq_spec, debug_ref_params=expected_sol, max_equivalent_sols=1)
     assert len(sols) == 1, f"Expected exactly one solution, got {len(sols)}: {sols}"
 
     if expected_sol and expected_sol not in sols:
@@ -49,84 +46,51 @@ def _find_solution_or_equivalent(transform, seq_spec, expected_sol):
     test_stream_equivalent(transform, SlidingWindowStream(transform, sols[0], seq_spec))
 
 
-@pytest.mark.parametrize("padding", [(0, 0), (2, 0), (0, 3), (1, 4)])
-@pytest.mark.parametrize("dilation", [1, 2, 3])
-@pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])
-@pytest.mark.parametrize("stride", [1, 2, 3, 10, 17])
-def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilation: int):
-    kernel_span = (kernel_size - 1) * dilation + 1
-    if stride > kernel_span:
-        pytest.skip("Stride should be smaller than the kernel span")
-    if padding[0] >= kernel_span or padding[1] >= kernel_span:
-        pytest.skip("Padding should be smaller than the kernel span")
-    if kernel_size == 1 and dilation > 1:
-        pytest.skip("Redundant")
-
+@pytest.mark.parametrize("sli_params,dilation", CONV_1D_PARAMS[0], ids=CONV_1D_PARAMS[1])
+def test_conv_1d(sli_params: SlidingWindowParams, dilation: int):
     set_seed(0x5EED)
 
-    expected_sol = SlidingWindowParams(
-        kernel_size_in=kernel_span,
-        stride_in=stride,
-        left_pad=padding[0],
-        right_pad=padding[1],
-    )
-
+    conv1d_ki = (sli_params.kernel_size_in - 1) // dilation + 1
     conv = nn.Conv1d(
         in_channels=1,
         out_channels=1,
-        kernel_size=kernel_size,
-        stride=stride,
+        kernel_size=conv1d_ki,
+        stride=sli_params.stride_in,
         dilation=dilation,
         # TODO: handle grouping?
     )
 
     def transform(x):
         # TODO: handle different padding modes
-        x = torch.nn.functional.pad(x, padding)
+        x = torch.nn.functional.pad(x, (sli_params.left_pad, sli_params.right_pad))
         x = conv(x)
         return x
 
-    _find_solution_or_equivalent(transform, SeqSpec(1, 1, -1), expected_sol)
+    _find_solution_or_equivalent(transform, SeqSpec(1, 1, -1), sli_params)
 
 
-@pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])
-@pytest.mark.parametrize("stride", [1, 2, 3, 10, 17])
-@pytest.mark.parametrize("padding", [1, 2, 5])
-@pytest.mark.parametrize("dilation", [1, 2, 3])
-def test_conv_transpose_1d(kernel_size: int, stride: int, padding: int, dilation: int):
-    kernel_span = (kernel_size - 1) * dilation + 1
-    if stride > kernel_span:
-        pytest.skip("Stride should be smaller than the kernel span")
-    if padding >= kernel_span:
-        pytest.skip(
-            'Output trimming (named "padding" for transposed convs) should be smaller than the output kernel span'
-        )
-
+@pytest.mark.parametrize("sli_params,dilation", TRANSPOSED_CONV_1D_PARAMS[0], ids=TRANSPOSED_CONV_1D_PARAMS[1])
+def test_conv_transpose_1d(sli_params: SlidingWindowParams, dilation: int):
     set_seed(0x5EED)
-
-    expected_sol = SlidingWindowParams(
-        kernel_size_out=kernel_span,
-        stride_out=stride,
-        out_trim=padding,
-    )
 
     # The torch docs poorly explain the mechanism of transposed convolutions. Here's my take:
     # Each individual input element multiplies the kernel (element-wise). That output is offset by the stride on each
     # step, and all resulting vectors are summed.
+    tconv1d_ko = (sli_params.kernel_size_out - 1) // dilation + 1
     conv = nn.ConvTranspose1d(
         in_channels=1,
         out_channels=1,
-        kernel_size=kernel_size,
-        stride=stride,
+        kernel_size=tconv1d_ko,
+        stride=sli_params.stride_out,
         # "padding" is poorly explained in https://pytorch.org/docs/stable/generated/torch.nn.ConvTranspose1d.html
         # A better explanation of the parameter is that it trims the output on both sides by the given amount.
-        padding=padding,
+        padding=sli_params.out_trim,
         dilation=dilation,
         # TODO: handle grouping?
         # TODO: handle output padding?
     )
 
-    _find_solution_or_equivalent(conv, SeqSpec(1, 1, -1), expected_sol)
+    _find_solution_or_equivalent(conv, SeqSpec(1, 1, -1), sli_params)
 
 
 # NOTE: our solver has the following modeling limitation: on any layer with an input stride > 1, the current combined

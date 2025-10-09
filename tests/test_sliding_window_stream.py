@@ -6,12 +6,11 @@ import torch
 from torch import nn
 
 from tests.rng import set_seed
-from tests.sliding_window_params_edge_cases import SLI_EDGE_CASES
+from tests.sliding_window_params_cases import CONV_1D_PARAMS, SLI_EDGE_CASES, TRANSPOSED_CONV_1D_PARAMS
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.dummy_sliding_window_transform import DummySlidingWindowTransform
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
-    get_all_output_delays,
 )
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 from torchstream.stream_equivalence import test_stream_equivalent
@@ -19,42 +18,25 @@ from torchstream.stream_equivalence import test_stream_equivalent
 logger = logging.getLogger(__name__)
 
 
-@pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])
-@pytest.mark.parametrize("stride", [1, 2, 3, 10, 17])
-@pytest.mark.parametrize("padding", [(0, 0), (1, 1), (2, 0), (0, 3), (1, 4)])
-@pytest.mark.parametrize("dilation", [1, 2, 3])
-def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilation: int):
-    kernel_span = (kernel_size - 1) * dilation + 1
-    if stride > kernel_span:
-        pytest.skip("Stride should be smaller than the kernel span")
-    if padding[0] >= kernel_span or padding[1] >= kernel_span:
-        pytest.skip("Padding should be smaller than the kernel span")
-    if kernel_size == 1 and dilation > 1:
-        pytest.skip("Redundant")
-
+@pytest.mark.parametrize("sli_params,dilation", CONV_1D_PARAMS[0], ids=CONV_1D_PARAMS[1])
+def test_conv_1d(sli_params: SlidingWindowParams, dilation: int):
     set_seed(0x5EED)
 
+    conv1d_ki = (sli_params.kernel_size_in - 1) // dilation + 1
     conv = nn.Conv1d(
         in_channels=1,
         out_channels=1,
-        kernel_size=kernel_size,
-        stride=stride,
+        kernel_size=conv1d_ki,
+        stride=sli_params.stride_in,
         dilation=dilation,
         # TODO: handle grouping?
     )
 
     def transform(x):
         # TODO: handle different padding modes
-        x = torch.nn.functional.pad(x, padding)
+        x = torch.nn.functional.pad(x, (sli_params.left_pad, sli_params.right_pad))
         x = conv(x)
         return x
-
-    sli_params = SlidingWindowParams(
-        kernel_size_in=kernel_span,
-        stride_in=stride,
-        left_pad=padding[0],
-        right_pad=padding[1],
-    )
 
     conv_stream = SlidingWindowStream(
         transform,
@@ -69,37 +51,23 @@ def test_conv_1d(kernel_size: int, stride: int, padding: Tuple[int, int], dilati
     )
 
 
-@pytest.mark.parametrize("kernel_size", [1, 2, 3, 10, 17])
-@pytest.mark.parametrize("stride", [1, 2, 3, 10, 17])
-@pytest.mark.parametrize("dilation", [1, 2, 3])
-@pytest.mark.parametrize("out_trim", [0, 1, 2, 8, 9])
-def test_conv_transpose_1d(kernel_size: int, stride: int, dilation: int, out_trim: int):
-    kernel_span = (kernel_size - 1) * dilation + 1
-    if stride > kernel_span:
-        pytest.skip("Stride should be smaller than the kernel span")
-    if out_trim >= kernel_span:
-        pytest.skip("Output trim should be smaller than the kernel span")
-    if kernel_size == 1 and dilation > 1:
-        pytest.skip("Redundant")
-
+@pytest.mark.parametrize("sli_params,dilation", TRANSPOSED_CONV_1D_PARAMS[0], ids=TRANSPOSED_CONV_1D_PARAMS[1])
+def test_conv_transpose_1d(sli_params: SlidingWindowParams, dilation: int):
     set_seed(0x5EED)
 
+    tconv1d_ko = (sli_params.kernel_size_out - 1) // dilation + 1
     conv = nn.ConvTranspose1d(
         in_channels=1,
         out_channels=1,
-        kernel_size=kernel_size,
-        stride=stride,
+        kernel_size=tconv1d_ko,
+        stride=sli_params.stride_out,
         # "padding" is poorly explained in https://pytorch.org/docs/stable/generated/torch.nn.ConvTranspose1d.html
         # A better explanation of the parameter is that it trims the output on both sides by the given amount.
-        padding=out_trim,
+        padding=sli_params.out_trim,
         dilation=dilation,
         # TODO: handle grouping?
         # TODO: handle output padding?
     )
-
-    sli_params = SlidingWindowParams(kernel_size_out=kernel_span, stride_out=stride, out_trim=out_trim)
-    logger.debug(f"Sli params: {sli_params}")
-    logger.debug(get_all_output_delays(sli_params))
 
     conv_stream = SlidingWindowStream(
         conv,
@@ -110,31 +78,8 @@ def test_conv_transpose_1d(kernel_size: int, stride: int, dilation: int, out_tri
     test_stream_equivalent(
         conv,
         conv_stream,
-        throughput_check_max_delay=out_trim,
+        throughput_check_max_delay=sli_params.out_trim,
     )
-
-    # for param_idx in range(4, 7):
-    #     bad_stream_params = list(stream_params)
-    #     # FIXME: this is silly
-    #     if param_idx in (4, 6) and bad_stream_params[param_idx] == 0:
-    #         continue
-    #     if param_idx == 5 and bad_stream_params[4] == 0 and bad_stream_params[5] == 0:
-    #         continue
-    #     bad_stream_params[param_idx] -= 1
-    #     bad_stream_params = tuple(bad_stream_params)
-
-    #     logger.info(f"Ensuring failure with param change:\n    {stream_params}\n -> {bad_stream_params}")
-    #     with pytest.raises((ValueError, IncorrectSlidingWindowParametersError)):
-    #         test_stream_equivalent(conv, SlidingWindowStream(conv, bad_stream_params, SeqSpec(1, 1, -1)))
-
-
-# TODO!!
-# SlidingWindowParams(
-#     kernel_size_in=3, stride_in=1,
-#     left_pad=0, right_pad=2,
-#     kernel_size_out=2, stride_out=2,
-#     out_trim=1,
-# )
 
 
 @pytest.mark.parametrize("kernel_size_in", [1, 2, 5, 10])
