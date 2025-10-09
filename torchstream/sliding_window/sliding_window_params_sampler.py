@@ -253,7 +253,7 @@ class SlidingWindowParamsSampler:
                 ),
             )
 
-        # FIXME!! doc
+        # FIXME! doc
         # Count how many elements lie between the first output NaNs and the expected output size of the pre-nan
         # input
         post_nan_in_size = in_len - in_nan_range[1]

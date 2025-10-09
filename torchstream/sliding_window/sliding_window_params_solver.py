@@ -120,12 +120,11 @@ class SlidingWindowParamsSolver:
         if in_nan_range and not (0 <= in_nan_range[0] < in_nan_range[1] <= in_seq_size):
             raise ValueError(f"Nan range must be positive and within the input sequence size, got {in_nan_range}")
 
-        # FIXME!! RESTORE
-        # # Running the same nan trick twice is a waste of compute. Callers are expected not to do this.
-        # assert not any(
-        #     (in_seq_size, in_nan_range) == (record["in_seq_size"], record["in_nan_range"])
-        #     for record in self.nan_trick_history
-        # ), "Internal error: reusing previously seen NaN trick parameters"
+        # Running the same nan trick twice is a waste of compute. Callers are expected not to do this.
+        assert not any(
+            (in_seq_size, in_nan_range) == (record["in_seq_size"], record["in_nan_range"])
+            for record in self.nan_trick_history
+        ), "Internal error: reusing previously seen NaN trick parameters"
 
         # Get an input of said size and perform the nan trick on the actual transform
         in_seq = self.input_provider(in_seq_size)

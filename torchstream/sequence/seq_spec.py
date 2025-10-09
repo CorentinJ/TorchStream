@@ -53,7 +53,7 @@ class SeqSpec:
                 if expected_dim_size is not None and i != self.seq_dim and dim_size != expected_dim_size:
                     return False  # , f"shape mismatch on dimension {i} (got {arr.shape}, expected {self.shape})"
         else:
-            pass  # TODO!!
+            pass  # TODO!
 
         return True
 

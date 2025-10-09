@@ -39,5 +39,5 @@ def test_get_nan_range(
 
     if nan_range is not None:
         seq[nan_range] = float("nan")
-    # FIXME!!
+    # FIXME!
     assert get_nan_idx(seq) == nan_range
