@@ -89,3 +89,23 @@ TRANSPOSED_CONV_1D_PARAMS = _sli_params_to_test_args(
         for dilation in [1, 2, 3]
     )
 )
+
+MOVING_AVERAGE_PARAMS = _sli_params_to_test_args(
+    (
+        dict(
+            kernel_size_in=kernel_size_in,
+            stride_in=stride_in,
+            left_pad=padding[0],
+            right_pad=padding[1],
+            kernel_size_out=kernel_size_out,
+            stride_out=stride_out,
+            out_trim=out_trim,
+        )
+        for kernel_size_in in [1, 2, 5, 10]
+        for stride_in in [1, 2, 3]
+        for padding in [(0, 0), (3, 0), (1, 2)]
+        for kernel_size_out in [1, 2, 4, 7]
+        for stride_out in [1, 2, 7]
+        for out_trim in [0, 1, 3, 6]
+    )
+)
