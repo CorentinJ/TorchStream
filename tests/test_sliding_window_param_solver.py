@@ -6,7 +6,7 @@ import torch
 from torch import nn
 
 from tests.rng import set_seed
-from tests.sliding_window_params_cases import CONV_1D_PARAMS, SLI_EDGE_CASES, TRANSPOSED_CONV_1D_PARAMS
+from tests.sliding_window_params_cases import CONV_1D_PARAMS, EDGE_CASES_PARAMS, TRANSPOSED_CONV_1D_PARAMS
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.dummy_sliding_window_transform import DummySlidingWindowTransform
 from torchstream.sliding_window.sliding_window_params import (
@@ -141,8 +141,8 @@ def test_conv_mix(conv_params):
     _find_solution_or_equivalent(network, SeqSpec(1, 1, -1), expected_sol)
 
 
-@pytest.mark.parametrize("sli_params", SLI_EDGE_CASES)
-def test_edge_cases(sli_params: SlidingWindowParams):
+@pytest.mark.parametrize("sli_params,dilation", EDGE_CASES_PARAMS[0], ids=EDGE_CASES_PARAMS[1])
+def test_edge_cases(sli_params: SlidingWindowParams, dilation: int):
     set_seed(0x5EED)
 
     transform = DummySlidingWindowTransform(sli_params)

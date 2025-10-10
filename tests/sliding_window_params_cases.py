@@ -2,24 +2,6 @@ from typing import List, Tuple
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 
-SLI_EDGE_CASES = [
-    SlidingWindowParams(),
-    SlidingWindowParams(kernel_size_out=5, stride_out=5, out_trim=4),
-    SlidingWindowParams(
-        kernel_size_in=2, stride_in=2, left_pad=1, right_pad=1, kernel_size_out=2, stride_out=2, out_trim=1
-    ),
-    SlidingWindowParams(kernel_size_out=7, out_trim=5),
-    # TODO? Add dilation=2 kernel
-    SlidingWindowParams(kernel_size_in=33, stride_in=17, left_pad=2),
-    SlidingWindowParams(kernel_size_out=10, stride_out=3, out_trim=8),
-    SlidingWindowParams(
-        kernel_size_in=5, stride_in=1, left_pad=3, right_pad=0, kernel_size_out=7, stride_out=2, out_trim=6
-    ),
-    SlidingWindowParams(
-        kernel_size_in=3, stride_in=1, left_pad=0, right_pad=2, kernel_size_out=2, stride_out=2, out_trim=1
-    ),
-]
-
 
 def _sli_params_to_test_args(params_iter) -> Tuple[List[Tuple[SlidingWindowParams, int, int]], List[str]]:
     out_args = []
@@ -41,7 +23,7 @@ def _sli_params_to_test_args(params_iter) -> Tuple[List[Tuple[SlidingWindowParam
 
             sli_params = SlidingWindowParams(**params_dict)
             # The sli params only specify the span, we'll need to keep the dilation info for building conv layers
-            out_args.append((sli_params, params_dict.get("dilation", 1)))
+            out_args.append((sli_params, dilation))
 
         except ValueError:
             pass
@@ -116,4 +98,19 @@ MOVING_AVERAGE_PARAMS = _sli_params_to_test_args(
         for stride_out in [1, 2, 7]
         for out_trim in [0, 1, 3, 6]
     )
+)
+
+EDGE_CASES_PARAMS = _sli_params_to_test_args(
+    [
+        dict(),
+        dict(kernel_size_out=5, stride_out=5, out_trim=4),
+        dict(kernel_size_in=2, stride_in=2, left_pad=1, right_pad=1, kernel_size_out=2, stride_out=2, out_trim=1),
+        dict(kernel_size_out=7, out_trim=5),
+        dict(kernel_size_out=10, stride_out=3, out_trim=8),
+        dict(kernel_size_in=5, stride_in=1, left_pad=3, right_pad=0, kernel_size_out=7, stride_out=2, out_trim=6),
+        dict(kernel_size_in=3, stride_in=1, left_pad=0, right_pad=2, kernel_size_out=2, stride_out=2, out_trim=1),
+        dict(kernel_size_in=31, stride_in=17),
+        # TODO Add dilation=2
+        dict(kernel_size_in=33, stride_in=17, left_pad=2),
+    ]
 )

@@ -7,8 +7,8 @@ from torch import nn
 from tests.rng import set_seed
 from tests.sliding_window_params_cases import (
     CONV_1D_PARAMS,
+    EDGE_CASES_PARAMS,
     MOVING_AVERAGE_PARAMS,
-    SLI_EDGE_CASES,
     TRANSPOSED_CONV_1D_PARAMS,
 )
 from torchstream.sequence.seq_spec import SeqSpec
@@ -103,8 +103,8 @@ def test_moving_average(sli_params: SlidingWindowParams, dilation: int):
     )
 
 
-@pytest.mark.parametrize("sli_params", SLI_EDGE_CASES)
-def test_edge_cases(sli_params: SlidingWindowParams):
+@pytest.mark.parametrize("sli_params,dilation", EDGE_CASES_PARAMS[0], ids=EDGE_CASES_PARAMS[1])
+def test_edge_cases(sli_params: SlidingWindowParams, dilation: int):
     tsfm = DummySlidingWindowTransform(sli_params)
 
     tsfm_stream = SlidingWindowStream(

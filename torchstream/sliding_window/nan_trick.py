@@ -62,7 +62,6 @@ def run_nan_trick(
 
 
 def get_context_size_empirically(params: SlidingWindowParams):
-    all_wins_to_keep = []
     phase_ctxs = []
     for phase_offset in range(params.stride_in):
         # FIXME!
@@ -89,16 +88,14 @@ def get_context_size_empirically(params: SlidingWindowParams):
             if ctx_is_enough:
                 ctx = max(0, (wins_to_keep - 1) * params.stride_in + (in_size % params.stride_in) + 1)
                 assert (in_size - ctx) // params.stride_in == base_wins_to_drop - wins_to_keep
-                all_wins_to_keep.append(wins_to_keep)
                 phase_ctxs.append(ctx)
                 break
 
     ctx = max(phase_ctxs)
 
-    for phase_offset, (phase_ctx, wins_to_keep) in enumerate(zip(phase_ctxs, all_wins_to_keep)):
+    for phase_offset, phase_ctx in enumerate(phase_ctxs):
         in_size = 100 + phase_offset
         assert (in_size - ctx) // params.stride_in == (in_size - phase_ctx) // params.stride_in
-        assert (in_size - ctx) // params.stride_in == in_size // params.stride_in - wins_to_keep
 
     assert min(phase_ctxs) + params.stride_in > ctx
 
