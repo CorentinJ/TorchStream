@@ -243,17 +243,22 @@ class SlidingWindowParamsSolver:
 
             # Pick an input size to test
             if all(params[:4] == shape_params_hyps[0][:4] for params in shape_params_hyps):
-                # Heuristic: if all hypotheses have the same (s_i, s_o, isbc, osbc), we'll bisect for finding the
-                # min input size
-                lower_bound = max(
-                    (record["in_seq_size"] for record in self.nan_trick_history if record["out_seq_size"] == 0),
-                    default=get_canonicalized_min_in_size(*shape_params_hyps[0][:4]),
-                )
-                upper_bound = min(
-                    (record["in_seq_size"] for record in self.nan_trick_history if record["out_seq_size"] > 0),
-                    default=self.max_in_seq_size + 1,
-                )
-                in_size = (lower_bound + upper_bound) // 2
+                # Heuristic: if all hypotheses have the same (s_i, s_o, isbc, osbc)
+                #   - If the canonical min input size hasn't been tested, we'll test it
+                #   - Otherwise we'll bisect
+                canon_min_in_size = get_canonicalized_min_in_size(*shape_params_hyps[0][:4])
+                if not any(record["in_seq_size"] == canon_min_in_size for record in self.nan_trick_history):
+                    in_size = canon_min_in_size
+                else:
+                    lower_bound = max(
+                        (record["in_seq_size"] for record in self.nan_trick_history if record["out_seq_size"] == 0),
+                        default=canon_min_in_size,
+                    )
+                    upper_bound = min(
+                        (record["in_seq_size"] for record in self.nan_trick_history if record["out_seq_size"] > 0),
+                        default=self.max_in_seq_size + 1,
+                    )
+                    in_size = (lower_bound + upper_bound) // 2
             else:
                 # Discriminate between hypotheses by finding an input size that will allow us to reject at least one of
                 # them based on the observed output size of the relation.
