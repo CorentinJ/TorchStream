@@ -20,7 +20,6 @@ from torchstream.sliding_window.sliding_window_params import (
 )
 from torchstream.sliding_window.sliding_window_params_sampler import (
     SlidingWindowParamsSampler,
-    get_canonicalized_in_out_size_params,
 )
 from torchstream.sliding_window.sliding_window_stream import (
     SlidingWindowStream,
@@ -32,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 def _compare_params_str(params: tuple, real_params: tuple | None, names: List[str] | None = None) -> str:
     assert not real_params or len(params) == len(real_params)
-    assert not names or len(params) == len(names)
+    assert not names or len(params) == len(names), (params, names)
     names = [n + "=" for n in names] if names else [""] * len(params)
 
     if real_params is None:
@@ -54,16 +53,14 @@ def _compare_sli_params_str(params: SlidingWindowParams, real_params: SlidingWin
         ref_shape = real_params.canonicalized_in_out_size_params
         ref_delays = real_params.output_delays
         ref_ctx = (real_params.streaming_context_size,)
-        ref_min_in_size = (real_params.min_input_size,)
     else:
-        ref_params, ref_shape, ref_delays, ref_ctx, ref_min_in_size = None, None, None, None, None
+        ref_params, ref_shape, ref_delays, ref_ctx = None, None, None, None
 
     return (
         f"\n\tparameters ({_compare_params_str(params.as_tuple(), ref_params, 'ki,si,lp,rp,ko,so,ot'.split(','))})"
-        f"\n\twith shape ({_compare_params_str(params.canonicalized_in_out_size_params, ref_shape)})"
+        f"\n\twith shape ({_compare_params_str(params.canonicalized_in_out_size_params, ref_shape, 's_i,s_o,isbc,osbc,mis'.split(','))})"
         f"\n\twith delays ({_compare_params_str(params.output_delays, ref_delays)})"
         f"\n\twith context size {_compare_params_str((params.streaming_context_size,), ref_ctx)}"
-        f"\n\twith min input size {_compare_params_str((params.min_input_size,), ref_min_in_size)}"
     )
 
 
@@ -195,9 +192,6 @@ class SlidingWindowParamsSolver:
         return self.nan_trick_history[0]
 
     def find_in_out_rel_params(self) -> tuple[int, int, int, int]:
-        # TODO? Model/constraint minimum input size too?
-        #   Valuable relation: ictx + s_i >= min_input_size
-
         # TODO! doc
         if self.in_out_rel_params:
             return self.in_out_rel_params
@@ -209,7 +203,7 @@ class SlidingWindowParamsSolver:
         for record in self.nan_trick_history:
             sampler.add_in_out_size(record["in_seq_size"], record["out_seq_size"])
 
-        real_sol = get_canonicalized_in_out_size_params(self.debug_ref_params) if self.debug_ref_params else None
+        real_sol = self.debug_ref_params.canonicalized_in_out_size_params if self.debug_ref_params else None
 
         step = 1
         shape_params_hyps = []
@@ -218,7 +212,10 @@ class SlidingWindowParamsSolver:
             # TODO: bench values other than 2 for max sols
             shape_params_hyps = sampler.get_new_solutions(shape_params_hyps, max_sols=5)
             log_str = f"[In/out rel] Step {step} params:\n\t"
-            log_str += "\n\t".join(_compare_params_str(params, real_sol) for params in shape_params_hyps)
+            log_str += "\n\t".join(
+                _compare_params_str(params, real_sol, "s_i,s_o,isbc,osbc,mis".split(","))
+                for params in shape_params_hyps
+            )
             logger.info(log_str)
 
             # Our sampler explores the entire space, so if we have no solution, the transform is not a sliding window.
@@ -336,6 +333,7 @@ class SlidingWindowParamsSolver:
             yield (full_in_size, (pre_nan_in_size, post_nan_in_size))
 
         # Finally we'll yield parameters to test the minimum input size
+        # FIXME!! use the real min input size
         input_sizes_to_test = set([max(params.min_input_size - 1, 1), params.min_input_size])
         input_sizes_to_test -= {rec["in_seq_size"] for rec in self.nan_trick_history}
         yield from ((in_size, None) for in_size in input_sizes_to_test)

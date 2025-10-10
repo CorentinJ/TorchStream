@@ -61,8 +61,9 @@ class SlidingWindowParams:
             raise ValueError("out_trim must be at least 0 and at most kernel_size_out - 1.")
 
     @property
-    def canonicalized_in_out_size_params(self) -> Tuple[int, int, int, int]:
-        return get_canonicalized_in_out_size_params(self)
+    def canonicalized_in_out_size_params(self) -> Tuple[int, int, int, int, int]:
+        # FIXME!
+        return get_canonicalized_in_out_size_params(self) + (self.min_input_size,)
 
     @property
     def output_delay_bounds(self) -> Tuple[int, int]:
@@ -83,6 +84,7 @@ class SlidingWindowParams:
         Returns the minimum input size necessary to have any output element (i.e. length>0). The returned value is
         always at least one.
         """
+        # FIXME!! Allow providing a hard minimum input size in the constructor cli
         out_needed = 1 + self.out_trim * 2
         num_wins_needed = int(math.ceil(max(0, out_needed - self.kernel_size_out) / self.stride_out)) + 1
         return self.get_min_input_size_for_num_wins(num_wins_needed)

@@ -110,7 +110,9 @@ EDGE_CASES_PARAMS = _sli_params_to_test_args(
         dict(kernel_size_in=5, stride_in=1, left_pad=3, right_pad=0, kernel_size_out=7, stride_out=2, out_trim=6),
         dict(kernel_size_in=3, stride_in=1, left_pad=0, right_pad=2, kernel_size_out=2, stride_out=2, out_trim=1),
         dict(kernel_size_in=31, stride_in=17),
-        # TODO Add dilation=2
+        # TODO Add dilation=2 (k=17)
         dict(kernel_size_in=33, stride_in=17, left_pad=2),
+        # TODO Add dilation=2 (k=10)
+        dict(kernel_size_in=19, stride_in=10, left_pad=1, right_pad=4),
     ]
 )

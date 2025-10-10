@@ -20,7 +20,14 @@ logger = logging.getLogger(__name__)
 
 
 class SlidingWindowParamsSampler:
-    def __init__(self, stride_in: int, stride_out: int, in_size_bias_canonical: int, out_size_bias_canonical: int):
+    def __init__(
+        self,
+        stride_in: int,
+        stride_out: int,
+        in_size_bias_canonical: int,
+        out_size_bias_canonical: int,
+        minimum_input_size: int,
+    ):
         # TODO: doc
 
         self.optimizer = Solver()
@@ -59,11 +66,16 @@ class SlidingWindowParamsSampler:
             self.t_o < self.k_o,
         )
 
+        ## Minimum input size
+        self.mis = minimum_input_size
         # TODO: isolate?
         out_needed = 1 + self.t_o * 2
         num_wins_needed = z3_ceil_div(z3_max(0, out_needed - self.k_o), self.s_o) + 1
         non_padded_min_input_size = (num_wins_needed - 1) * self.s_i + self.k_i
-        self.mis = z3_max(1, non_padded_min_input_size - self.p_l - self.p_r)
+        mis = z3_max(1, non_padded_min_input_size - self.p_l - self.p_r)
+        # TODO? model ictx + s_i >= min_input_size
+        # TODO? use leq because actual mis might be virtually greater (e.g. reflect padding)
+        self.optimizer.add(mis == self.mis)
 
         ## Streaming parameters
         self.isbc, self.osbc = in_size_bias_canonical, out_size_bias_canonical
@@ -75,7 +87,7 @@ class SlidingWindowParamsSampler:
             self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
         )
         self.ods = get_all_output_delays(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
-        self.ictx = Ints("ictx")
+        self.ictx = Int("ictx")
         self.optimizer.add(
             self.ictx
             == get_streaming_context_size(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
@@ -101,7 +113,6 @@ class SlidingWindowParamsSampler:
 
         # Constraints added to keep only new solutions
         self.prev_sol_constraints = []
-        self.seen_in_out_pairs = set()
 
         # Indicates if more solutions are available
         self.exhausted = False
@@ -129,38 +140,32 @@ class SlidingWindowParamsSampler:
             out_nan_range = (int(out_nan_range[0]), int(out_nan_range[1]))
             if not (0 <= out_nan_range[0] < out_nan_range[1] <= out_len):
                 raise ValueError("Output range must be non-empty and contained within (0, out_len), or be None")
-
-        # Model the minimum input size
-        if out_len:
-            self.optimizer.add(self.mis <= in_len)
-        else:
-            self.optimizer.add(self.mis > in_len)
+        if in_len < self.mis and out_len > 0:
+            raise ValueError("The input length is smaller than the minimum input size but the output length is > 0")
 
         # Model the input to output size relation with the number of windows
         constraint_idx = len(self.optimizer.assertions())
         c = Int(f"c_{constraint_idx}")
-        if (in_len, out_len) not in self.seen_in_out_pairs:
-            padded_in_len = self.p_l + in_len + self.p_r
-            rem = Int(f"rem_{constraint_idx}")
-            self.optimizer.add(
-                # Two cases: either we have enough input to get one window, either we don't
-                Implies(padded_in_len < self.k_i, c == 0),
-                Implies(padded_in_len >= self.k_i, c >= 1),
-                Implies(
-                    c >= 1,
-                    And(
-                        # Division-free expression of: c = (padded_in_len - k_i) // s_i + 1,
-                        padded_in_len - self.k_i == (c - 1) * self.s_i + rem,
-                        0 <= rem,
-                        rem < self.s_i,
-                    ),
+        padded_in_len = self.p_l + in_len + self.p_r
+        rem = Int(f"rem_{constraint_idx}")
+        self.optimizer.add(
+            # Two cases: either we have enough input to get one window, either we don't
+            Implies(padded_in_len < self.k_i, c == 0),
+            Implies(padded_in_len >= self.k_i, c >= 1),
+            Implies(
+                c >= 1,
+                And(
+                    # Division-free expression of: c = (padded_in_len - k_i) // s_i + 1,
+                    padded_in_len - self.k_i == (c - 1) * self.s_i + rem,
+                    0 <= rem,
+                    rem < self.s_i,
                 ),
-                # Output length relation
-                Implies(c == 0, out_len == 0),
-                Implies(And(c > 0, out_len == 0), (c - 1) * self.s_o + self.k_o <= 2 * self.t_o),
-                Implies(And(c > 0, out_len > 0), out_len == (c - 1) * self.s_o + self.k_o - 2 * self.t_o),
-            )
-            self.seen_in_out_pairs.add((in_len, out_len))
+            ),
+            # Output length relation
+            Implies(c == 0, out_len == 0),
+            Implies(And(c > 0, out_len == 0), (c - 1) * self.s_o + self.k_o <= 2 * self.t_o),
+            Implies(And(c > 0, out_len > 0), out_len == (c - 1) * self.s_o + self.k_o - 2 * self.t_o),
+        )
 
         # Nan trick - it has many edge cases:
         #   - Input kernels may have gaps (e.g. dilation) and thus hop over some inputs - but a proper model should
@@ -254,56 +259,57 @@ class SlidingWindowParamsSampler:
         post_nan_in_size = in_len - in_nan_range[1]
         post_nan_out_size = out_len - out_nan_range[1]
 
-        # Starting from the first corrupted output element, how many windows have been produced before getting
-        # an output window that is entirely not corrupted
-        n_out_corr_wins = (out_nan_size + self.s_o - 1) // self.s_o
+        # FIXME!!
+        # # Starting from the first corrupted output element, how many windows have been produced before getting
+        # # an output window that is entirely not corrupted
+        # n_out_corr_wins = (out_nan_size + self.s_o - 1) // self.s_o
 
-        bounds = []
-        for phase in range(1, self.s_i + 1):
-            # This lets us know where the first window without nans in its output range ends in the input, because
-            # we know that the first corrupted input window ended just past where the input nans started
-            # (minding the phase)
-            first_post_nan_in_win_end = in_nan_range[0] + phase + n_out_corr_wins * self.s_i
-            ctx_upper_bound = first_post_nan_in_win_end - in_nan_range[1] - 1
-            ctx_lower_bound = first_post_nan_in_win_end - in_nan_range[1] - self.s_i
-            bounds.append((ctx_lower_bound, ctx_upper_bound))
+        # bounds = []
+        # for phase in range(1, self.s_i + 1):
+        #     # This lets us know where the first window without nans in its output range ends in the input, because
+        #     # we know that the first corrupted input window ended just past where the input nans started
+        #     # (minding the phase)
+        #     first_post_nan_in_win_end = in_nan_range[0] + phase + n_out_corr_wins * self.s_i
+        #     ctx_upper_bound = first_post_nan_in_win_end - in_nan_range[1] - 1
+        #     ctx_lower_bound = first_post_nan_in_win_end - in_nan_range[1] - self.s_i
+        #     bounds.append((ctx_lower_bound, ctx_upper_bound))
 
-        # This lets us know where the first window without nans in its output range ends in the input, because
-        # we know that the first corrupted input window ended just past where the input nans started
-        # (minding the phase)
-        # NOTE: knowing the phase would let us tighten these bounds, however as more inputs with different phase
-        # come in, we converge towards the same tight bounds anyway.
-        # FIXME! lower bound seems too loose
-        ctx_lower_bound = (n_out_corr_wins - 2) * self.s_i - in_nan_size + 2
-        ctx_upper_bound = (n_out_corr_wins + 1) * self.s_i - in_nan_size - 1
+        # # This lets us know where the first window without nans in its output range ends in the input, because
+        # # we know that the first corrupted input window ended just past where the input nans started
+        # # (minding the phase)
+        # # NOTE: knowing the phase would let us tighten these bounds, however as more inputs with different phase
+        # # come in, we converge towards the same tight bounds anyway.
+        # # FIXME! lower bound seems too loose
+        # ctx_lower_bound = (n_out_corr_wins - 2) * self.s_i - in_nan_size + 2
+        # ctx_upper_bound = (n_out_corr_wins + 1) * self.s_i - in_nan_size - 1
 
-        logger.debug(f"CTX BOUNDS: ({ctx_lower_bound}, {ctx_upper_bound}) -> {bounds}")
+        # logger.debug(f"CTX BOUNDS: ({ctx_lower_bound}, {ctx_upper_bound}) -> {bounds}")
 
-        # Our trick here does not account for delay induced by output trimming, so we formulate the context
-        # without it
-        # FIXME: remove max?
-        ictx_no_trimming = z3_max(self.nfctxw * self.s_i + self.id, 0)
+        # # Our trick here does not account for delay induced by output trimming, so we formulate the context
+        # # without it
+        # # FIXME: remove max?
+        # ictx_no_trimming = z3_max(self.nfctxw * self.s_i + self.id, 0)
 
-        self.optimizer.add(
-            Or(
-                # Usual case: the bounds are correct
-                And(
-                    ictx_no_trimming >= ctx_lower_bound,
-                    ictx_no_trimming <= ctx_upper_bound,
-                ),
-                # Edge cases: we are necessarily underestimating the context
-                And(
-                    ictx_no_trimming > ctx_upper_bound,
-                    Or(
-                        # FIXME! doesn't need to be first or last... let's fix these
-                        And(out_nan_range[0] == 0, self.t_o > 0),
-                        And(out_nan_range[1] == out_len, self.t_o > 0),
-                        self.k_i >= min(in_nan_range[0], in_nan_size, post_nan_in_size) + 2,
-                        self.k_o >= min(out_nan_range[0], out_nan_size, post_nan_out_size) + 2,
-                    ),
-                ),
-            )
-        )
+        # self.optimizer.add(
+        #     Or(
+        #         # Usual case: the bounds are correct
+        #         And(
+        #             ictx_no_trimming >= ctx_lower_bound,
+        #             ictx_no_trimming <= ctx_upper_bound,
+        #         ),
+        #         # Edge cases: we are necessarily underestimating the context
+        #         And(
+        #             ictx_no_trimming > ctx_upper_bound,
+        #             Or(
+        #                 # FIXME! doesn't need to be first or last... let's fix these
+        #                 And(out_nan_range[0] == 0, self.t_o > 0),
+        #                 And(out_nan_range[1] == out_len, self.t_o > 0),
+        #                 self.k_i >= min(in_nan_range[0], in_nan_size, post_nan_in_size) + 2,
+        #                 self.k_o >= min(out_nan_range[0], out_nan_size, post_nan_out_size) + 2,
+        #             ),
+        #         ),
+        #     )
+        # )
 
         kernel_mod = out_nan_size % self.s_o
         self.optimizer.add(
@@ -335,7 +341,7 @@ class SlidingWindowParamsSampler:
 
         def _get_family_params(params: SlidingWindowParams):
             # NOTE: can't constraint on min input size because not modeled here, but shouldn't be a problem in practice
-            return (params.output_delays, params.streaming_context_size, params.min_input_size)
+            return (params.output_delays, params.streaming_context_size)
 
         family_count = Counter(_get_family_params(sol) for sol in valid_sols)
 
@@ -345,14 +351,13 @@ class SlidingWindowParamsSampler:
             max_cost_value = min(max_cost_value, max_cost_limit)
             guide_constraints = [self.solution_cost <= max_cost_value]
 
-            for (delays, ctx, min_input_size), count in family_count.items():
+            for (delays, ctx), count in family_count.items():
                 # Enforce new solutions for families that meet the maximum count
                 if max_equivalent_sols and count >= max_equivalent_sols:
                     guide_constraints.append(
                         Or(
                             self.ictx != ctx,
                             Or(*(od != delay for od, delay in zip(self.ods, delays))),
-                            self.mis != min_input_size,
                         )
                     )
 

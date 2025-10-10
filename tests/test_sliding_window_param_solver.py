@@ -6,7 +6,12 @@ import torch
 from torch import nn
 
 from tests.rng import set_seed
-from tests.sliding_window_params_cases import CONV_1D_PARAMS, EDGE_CASES_PARAMS, TRANSPOSED_CONV_1D_PARAMS
+from tests.sliding_window_params_cases import (
+    CONV_1D_PARAMS,
+    EDGE_CASES_PARAMS,
+    MOVING_AVERAGE_PARAMS,
+    TRANSPOSED_CONV_1D_PARAMS,
+)
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.dummy_sliding_window_transform import DummySlidingWindowTransform
 from torchstream.sliding_window.sliding_window_params import (
@@ -20,7 +25,6 @@ from torchstream.stream_equivalence import test_stream_equivalent
 def _get_streaming_params(sol: SlidingWindowParams):
     return {
         "shape": sol.canonicalized_in_out_size_params,
-        "min_in_size": sol.min_input_size,
         "out_delays": sol.output_delays,
         "context_size": sol.streaming_context_size,
     }
@@ -139,6 +143,13 @@ def test_conv_mix(conv_params):
         ]
     )
     _find_solution_or_equivalent(network, SeqSpec(1, 1, -1), expected_sol)
+
+
+@pytest.mark.parametrize("sli_params,dilation", MOVING_AVERAGE_PARAMS[0], ids=MOVING_AVERAGE_PARAMS[1])
+def test_moving_average(sli_params: SlidingWindowParams, dilation: int):
+    tsfm = DummySlidingWindowTransform(sli_params)
+
+    _find_solution_or_equivalent(tsfm, SeqSpec(-1, dtype=float), sli_params)
 
 
 @pytest.mark.parametrize("sli_params,dilation", EDGE_CASES_PARAMS[0], ids=EDGE_CASES_PARAMS[1])

@@ -2,7 +2,9 @@ import logging
 from typing import List
 
 import numpy as np
-from z3 import And, Int, Ints, Not, Or, Solver, sat
+from z3 import And, Bool, Int, Ints, Not, Or, Solver, sat
+
+from torchstream.transforms.z3_utils import z3_floor_div
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +15,9 @@ class SlidingWindowInOutRelSampler:
         self.s_i, self.s_o = Ints("s_i s_o")
         # Input and output size biases in computation, canonicalized to ensure uniqueness of the relation
         self.isbc, self.osbc = Ints("isbc osbc")
+        # Minimum input size. This model allows it to be greater than the minimum input size imposed by the in/out
+        # size relation to have an output of at least 1
+        self.mis = Int("mis")
 
         self.optimizer = Solver()
         self.optimizer.add(
@@ -20,7 +25,10 @@ class SlidingWindowInOutRelSampler:
             self.s_o > 0,
             self.isbc >= 0,
             self.isbc < self.s_i,
-            # osbc is the only parameter that can be negative -> no constraint here
+            # osbc is the only parameter that can be negative -> no constraint for it
+            self.mis > 0,
+            # The minimum input size cannot be so small that it gives an output size of 0
+            z3_floor_div(self.mis + self.isbc, self.s_i) >= z3_floor_div(-self.osbc, self.s_o) + 1,
         )
 
     # FIXME: name
@@ -33,14 +41,19 @@ class SlidingWindowInOutRelSampler:
         if out_len < 0:
             raise ValueError("The output length must be a non-negative integer")
 
-        # z3 efficient encoding of out_len = max(0, ((in_len + isbc) // s_i) * s_o + osbc)
+        # z3 encoding of out_len = max(0, ((in_len + isbc) // s_i) * s_o + osbc)
         quotient = Int(f"quotient_{in_len}_{out_len}")
         self.optimizer.add(quotient >= 0, quotient <= in_len + self.isbc)
         self.optimizer.add(self.s_i * quotient <= in_len + self.isbc)
         self.optimizer.add(in_len + self.isbc < self.s_i * (quotient + 1))
 
         out_len_var = self.s_o * quotient + self.osbc
-        self.optimizer.add((out_len_var <= 0) if out_len == 0 else (out_len_var == out_len))
+        if out_len > 0:
+            self.optimizer.add(self.mis <= in_len, out_len_var == out_len)
+        else:
+            # Note: we can't infer out_len_var <= 0 because it might be >0 for some input size smaller than the minimum
+            # input size e.g. for params (ki=2, si=1, ko=7, so=2) and input size 1
+            self.optimizer.add(self.mis > in_len)
 
     def get_new_solutions(self, known_sols: List, max_sols=2):
         # TODO: doc
@@ -50,7 +63,15 @@ class SlidingWindowInOutRelSampler:
         self.optimizer.push()
         for sol in out_sols:
             self.optimizer.add(
-                Not(And(self.s_i == sol[0], self.s_o == sol[1], self.isbc == sol[2], self.osbc == sol[3]))
+                Not(
+                    And(
+                        self.s_i == sol[0],
+                        self.s_o == sol[1],
+                        self.isbc == sol[2],
+                        self.osbc == sol[3],
+                        self.mis == sol[4],
+                    )
+                )
             )
 
         # Search for newer solutions
@@ -62,6 +83,7 @@ class SlidingWindowInOutRelSampler:
                     model[self.s_o].as_long(),
                     model[self.isbc].as_long(),
                     model[self.osbc].as_long(),
+                    model[self.mis].as_long(),
                 )
                 out_sols.append(model_values)
 
@@ -71,6 +93,7 @@ class SlidingWindowInOutRelSampler:
                     self.s_o != model[self.s_o],
                     self.isbc != model[self.isbc],
                     self.osbc != model[self.osbc],
+                    self.mis != model[self.mis],
                 )
                 self.optimizer.add(new_sol_constraint)
             else:
@@ -79,6 +102,23 @@ class SlidingWindowInOutRelSampler:
 
         return out_sols
 
+    def get_violations(self, s_i, s_o, isbc, osbc, mis):
+        unsat_solver = Solver()
+
+        trackers = []
+        for idx, assertion in enumerate(self.optimizer.assertions()):
+            bool_tracker = Bool(f"assertion_{idx}")
+            unsat_solver.assert_and_track(assertion, bool_tracker)
+            trackers.append((bool_tracker, assertion))
+
+        unsat_solver.add(And(self.s_i == s_i, self.s_o == s_o, self.isbc == isbc, self.osbc == osbc, self.mis == mis))
+
+        unsat_solver.check()
+        violations = [
+            expression for (bool_tracker, expression) in trackers if bool_tracker in unsat_solver.unsat_core()
+        ]
+        return violations
+
 
 def input_size_by_max_infogain(
     shape_params: List[tuple],
@@ -86,10 +126,10 @@ def input_size_by_max_infogain(
     method="entropy",
 ) -> tuple[int, np.ndarray]:
     # TODO: doc
-    si, so, isbc, osbc = [np.array(param_group)[..., None] for param_group in zip(*shape_params)]
+    si, so, isbc, osbc, mis = [np.array(param_group)[..., None] for param_group in zip(*shape_params)]
 
     out_sizes = np.stack([np.arange(0, max_input_size)] * len(shape_params))
-    out_sizes = np.maximum(((out_sizes + isbc) // si) * so + osbc, 0)
+    out_sizes = np.where(out_sizes >= mis, np.maximum(((out_sizes + isbc) // si) * so + osbc, 0), 0)
 
     if len(shape_params) <= 2 or method == "n_unique":
         # Vectorized method for counting unique values
