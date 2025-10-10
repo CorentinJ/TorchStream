@@ -4,7 +4,7 @@ from typing import List
 import numpy as np
 from z3 import And, Bool, Int, Ints, Not, Or, Solver, sat
 
-from torchstream.transforms.z3_utils import z3_floor_div
+from torchstream.sliding_window.sliding_window_params import get_canonicalized_min_in_size
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +15,7 @@ class SlidingWindowInOutRelSampler:
         self.s_i, self.s_o = Ints("s_i s_o")
         # Input and output size biases in computation, canonicalized to ensure uniqueness of the relation
         self.isbc, self.osbc = Ints("isbc osbc")
-        # Minimum input size. This model allows it to be greater than the minimum input size imposed by the in/out
-        # size relation to have an output of at least 1
+        # Minimum input size. This model allows it to be greater than the canonical minimum input size.
         self.mis = Int("mis")
 
         self.optimizer = Solver()
@@ -26,9 +25,7 @@ class SlidingWindowInOutRelSampler:
             self.isbc >= 0,
             self.isbc < self.s_i,
             # osbc is the only parameter that can be negative -> no constraint for it
-            self.mis > 0,
-            # The minimum input size cannot be so small that it gives an output size of 0
-            z3_floor_div(self.mis + self.isbc, self.s_i) >= z3_floor_div(-self.osbc, self.s_o) + 1,
+            self.mis >= get_canonicalized_min_in_size(self.s_i, self.s_o, self.isbc, self.osbc),
         )
 
     # FIXME: name
@@ -120,27 +117,31 @@ class SlidingWindowInOutRelSampler:
         return violations
 
 
-def input_size_by_max_infogain(
+def compute_in_to_out_sizes(
     shape_params: List[tuple],
     max_input_size=10_000,
-    method="entropy",
-) -> tuple[int, np.ndarray]:
+) -> np.ndarray:
     # TODO: doc
     si, so, isbc, osbc, mis = [np.array(param_group)[..., None] for param_group in zip(*shape_params)]
 
     out_sizes = np.stack([np.arange(0, max_input_size)] * len(shape_params))
     out_sizes = np.where(out_sizes >= mis, np.maximum(((out_sizes + isbc) // si) * so + osbc, 0), 0)
 
-    if len(shape_params) <= 2 or method == "n_unique":
+    return out_sizes
+
+
+def input_size_by_max_infogain(in_to_out_sizes: np.ndarray, method="entropy") -> int:
+    # TODO: doc
+    if in_to_out_sizes.shape[0] <= 2 or method == "n_unique":
         # Vectorized method for counting unique values
-        unique_counts = 1 + np.count_nonzero(np.diff(np.sort(out_sizes, axis=0), axis=0), axis=0)
+        unique_counts = 1 + np.count_nonzero(np.diff(np.sort(in_to_out_sizes, axis=0), axis=0), axis=0)
         in_size = int(np.argmax(unique_counts[1:])) + 1
         assert unique_counts[in_size] > 1
 
     elif method == "entropy":
         # Vectorized entropy computation
-        R, C = out_sizes.shape
-        s = np.sort(out_sizes, axis=0)
+        R, C = in_to_out_sizes.shape
+        s = np.sort(in_to_out_sizes, axis=0)
         sf = s.ravel(order="F")
 
         breaks = np.empty(R * C, dtype=bool)
@@ -166,7 +167,7 @@ def input_size_by_max_infogain(
     else:
         raise ValueError(f"Unknown method '{method}'")
 
-    return in_size, out_sizes[:, in_size]
+    return in_size
 
     # NOTE: I started writing this more efficient version but then I realized the above clocks at 1ms, and we're not
     # going to use input sizes that are magnitudes larger than 10^4 anyway.

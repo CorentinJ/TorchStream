@@ -1,6 +1,6 @@
 import logging
 from functools import partial
-from typing import Callable, List, Tuple
+from typing import Callable, Iterable, List, Tuple
 
 import numpy as np
 import torch
@@ -12,10 +12,12 @@ from torchstream.sliding_window.kernel_sparsity import determine_kernel_sparsity
 from torchstream.sliding_window.nan_trick import get_nan_idx
 from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
     SlidingWindowInOutRelSampler,
+    compute_in_to_out_sizes,
     input_size_by_max_infogain,
 )
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
+    get_canonicalized_min_in_size,
     get_output_delay_bounds,
 )
 from torchstream.sliding_window.sliding_window_params_sampler import (
@@ -29,10 +31,10 @@ from torchstream.stream_equivalence import test_stream_equivalent
 logger = logging.getLogger(__name__)
 
 
-def _compare_params_str(params: tuple, real_params: tuple | None, names: List[str] | None = None) -> str:
+def _compare_params_str(params: tuple, real_params: tuple | None, names: Iterable[str] | None = None) -> str:
     assert not real_params or len(params) == len(real_params)
-    assert not names or len(params) == len(names), (params, names)
     names = [n + "=" for n in names] if names else [""] * len(params)
+    assert len(params) == len(names), (params, names)
 
     if real_params is None:
         return ", ".join(f"{name}{p}" for p, name in zip(params, names))
@@ -211,8 +213,8 @@ class SlidingWindowParamsSolver:
             # Sample new shape parameters
             # TODO: bench values other than 2 for max sols
             shape_params_hyps = sampler.get_new_solutions(shape_params_hyps, max_sols=5)
-            log_str = f"[In/out rel] Step {step} params:\n\t"
-            log_str += "\n\t".join(
+            log_str = f"[In/out rel] Step {step} params:\n  "
+            log_str += "\n  ".join(
                 _compare_params_str(params, real_sol, "s_i,s_o,isbc,osbc,mis".split(","))
                 for params in shape_params_hyps
             )
@@ -236,9 +238,27 @@ class SlidingWindowParamsSolver:
                 self.in_out_rel_params = shape_params_hyps[0]
                 break
 
-            # Discriminate between hypotheses by finding an input size that will allow us to reject at least one of
-            # them based on the observed output size of the relation.
-            in_size, out_sizes = input_size_by_max_infogain(shape_params_hyps)
+            # Obtain the input size -> output size map for all hypotheses
+            in_to_out_sizes = compute_in_to_out_sizes(shape_params_hyps, max_input_size=self.max_in_seq_size)
+
+            # Pick an input size to test
+            if all(params[:4] == shape_params_hyps[0][:4] for params in shape_params_hyps):
+                # Heuristic: if all hypotheses have the same (s_i, s_o, isbc, osbc), we'll bisect for finding the
+                # min input size
+                lower_bound = max(
+                    (record["in_seq_size"] for record in self.nan_trick_history if record["out_seq_size"] == 0),
+                    default=get_canonicalized_min_in_size(*shape_params_hyps[0][:4]),
+                )
+                upper_bound = min(
+                    (record["in_seq_size"] for record in self.nan_trick_history if record["out_seq_size"] > 0),
+                    default=self.max_in_seq_size + 1,
+                )
+                in_size = (lower_bound + upper_bound) // 2
+            else:
+                # Discriminate between hypotheses by finding an input size that will allow us to reject at least one of
+                # them based on the observed output size of the relation.
+                in_size = input_size_by_max_infogain(in_to_out_sizes)
+
             # TODO? should we try different nan idx values here already?
             #   -> Yes! That would help with converging towards solutions faster. Determine a heuristic size based
             #      on the input size relations
@@ -249,9 +269,10 @@ class SlidingWindowParamsSolver:
             # Exclude solutions that do not match the observed output size
             prev_n_hyps = len(shape_params_hyps)
             shape_params_hyps = [
-                params for idx, params in enumerate(shape_params_hyps) if out_sizes[idx] == record["out_seq_size"]
+                params
+                for idx, params in enumerate(shape_params_hyps)
+                if in_to_out_sizes[idx, in_size] == record["out_seq_size"]
             ]
-            assert prev_n_hyps > len(shape_params_hyps), "Internal error: did not reject any shape hypotheses"
             logger.info(
                 f"[In/out rel] Step {step}: rejected {prev_n_hyps - len(shape_params_hyps)}/{prev_n_hyps} hypotheses"
             )
@@ -331,12 +352,6 @@ class SlidingWindowParamsSolver:
             full_in_size = post_nan_in_size + pre_nan_in_size
 
             yield (full_in_size, (pre_nan_in_size, post_nan_in_size))
-
-        # Finally we'll yield parameters to test the minimum input size
-        # FIXME!! use the real min input size
-        input_sizes_to_test = set([max(params.min_input_size - 1, 1), params.min_input_size])
-        input_sizes_to_test -= {rec["in_seq_size"] for rec in self.nan_trick_history}
-        yield from ((in_size, None) for in_size in input_sizes_to_test)
 
     def _debug_check_ref_params(
         self,

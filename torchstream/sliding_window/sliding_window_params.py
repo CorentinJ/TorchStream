@@ -273,6 +273,10 @@ def get_canonicalized_in_out_size_params(*args) -> Tuple[IntLike, IntLike, IntLi
     return s_i, s_o, in_size_bias_canon, out_size_bias_canon
 
 
+def get_canonicalized_min_in_size(s_i: IntLike, s_o: IntLike, isbc: IntLike, osbc: IntLike) -> IntLike:
+    return z3_max((z3_floor_div(-osbc, s_o) + 1) * s_i - isbc, 1)
+
+
 @overload
 def get_output_delay(sli_params: SlidingWindowParams, input_size: int, as_phase=False) -> int: ...
 @overload
