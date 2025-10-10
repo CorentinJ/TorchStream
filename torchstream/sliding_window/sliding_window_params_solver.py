@@ -193,7 +193,7 @@ class SlidingWindowParamsSolver:
 
         return self.nan_trick_history[0]
 
-    def find_in_out_rel_params(self) -> tuple[int, int, int, int]:
+    def find_in_out_rel_params(self) -> Tuple[int, int, int, int, int]:
         # TODO! doc
         if self.in_out_rel_params:
             return self.in_out_rel_params
@@ -426,7 +426,7 @@ class SlidingWindowParamsSolver:
             # FIXME: max equivalent sols
             params = sampler.get_new_solution([], max_equivalent_sols=self.max_equivalent_sols)
             if params is None:
-                break
+                return []
 
             checks_passed = True
             hypothesis = _SliHypothesis(params, id=step)
@@ -464,20 +464,6 @@ class SlidingWindowParamsSolver:
                 return [hypothesis.params]
 
             step += 1
-
-        # FIXME: rewrite
-        logger.debug(f"Hypotheses at the end of solver execution: #{', #'.join(str(hyp.id) for hyp in hypotheses)}")
-
-        # TODO: sort by param complexity
-        out_params = [hypothesis.params for hypothesis in hypotheses]
-        assert not out_params or all(
-            params.streaming_context_size == out_params[0].streaming_context_size
-            and params.output_delays == out_params[0].output_delays
-            and params.min_input_size == out_params[0].min_input_size
-            for params in out_params
-        ), "Internal error: hypotheses have different streaming parameters"
-
-        return out_params
 
 
 # TODO: allow transforms with multiple sequential inputs

@@ -72,10 +72,10 @@ class SlidingWindowParamsSampler:
         out_needed = 1 + self.t_o * 2
         num_wins_needed = z3_ceil_div(z3_max(0, out_needed - self.k_o), self.s_o) + 1
         non_padded_min_input_size = (num_wins_needed - 1) * self.s_i + self.k_i
-        mis = z3_max(1, non_padded_min_input_size - self.p_l - self.p_r)
+        native_min_input_size = z3_max(1, non_padded_min_input_size - self.p_l - self.p_r)
         # TODO? model ictx + s_i >= min_input_size
         # TODO? use leq because actual mis might be virtually greater (e.g. reflect padding)
-        self.optimizer.add(mis == self.mis)
+        self.optimizer.add(native_min_input_size <= self.mis)
 
         ## Streaming parameters
         self.isbc, self.osbc = in_size_bias_canonical, out_size_bias_canonical
@@ -169,6 +169,7 @@ class SlidingWindowParamsSampler:
         padded_in_len = self.p_l + in_len + self.p_r
         rem = Int(f"rem_{constraint_idx}")
         self.optimizer.add(
+            ## Input -> number of wins
             # Two cases: either we have enough input to get one window, either we don't
             Implies(padded_in_len < self.k_i, nw == 0),
             Implies(padded_in_len >= self.k_i, nw >= 1),
@@ -181,10 +182,22 @@ class SlidingWindowParamsSampler:
                     rem < self.s_i,
                 ),
             ),
-            # Output length relation
+            ## Num wins -> output size
+            # No windows means no output
             Implies(nw == 0, out_len == 0),
-            Implies(And(nw > 0, out_len == 0), (nw - 1) * self.s_o + self.k_o <= 2 * self.t_o),
-            Implies(And(nw > 0, out_len > 0), out_len == (nw - 1) * self.s_o + self.k_o - 2 * self.t_o),
+            # If we have at least one window, there are two edge cases where might still not get an output
+            Implies(
+                And(nw > 0, out_len == 0),
+                Or(
+                    # With enough output trimming
+                    (nw - 1) * self.s_o + self.k_o <= 2 * self.t_o,
+                    # With a minimum input size that is set larger than the native transform input size
+                    # (e.g. reflect padding does this)
+                    in_len < self.mis,
+                ),
+            ),
+            # If we do have an output, we necessarily have at least one window and the following out size relation
+            Implies(out_len > 0, And(nw > 0, out_len == (nw - 1) * self.s_o + self.k_o - 2 * self.t_o)),
         )
 
         return nw
@@ -392,6 +405,7 @@ class SlidingWindowParamsSampler:
                     model[self.k_o].as_long(),
                     self.s_o,
                     model[self.t_o].as_long(),
+                    self.mis,
                 )
 
                 # Enforce new solutions only
@@ -406,7 +420,7 @@ class SlidingWindowParamsSampler:
                 self.prev_sol_constraints.append(new_sol_constraint)
 
                 # Inform our sampler of the result
-                cost = sum(model_values)
+                cost = sum(model_values[:-1])
                 logger.debug(f"Sampled with max cost={max_cost_value}, got solution with cost={cost}")
                 self.max_cost_sampler.update(cost)
 

@@ -20,6 +20,7 @@ class SlidingWindowParams:
         kernel_size_out: int = 1,
         stride_out: int = 1,
         out_trim: int = 0,
+        min_input_size: int | None = None,
     ):
         """
         :param kernel_size_in: The kernel size of the input. For dilated (à trous) convolutions, this is the span of
@@ -36,6 +37,9 @@ class SlidingWindowParams:
         for example.
         NOTE: So far I haven't met a model that had different left/right values, output padding or trimming
         larger than the kernel size.
+        :param min_input_size: If provided, allows setting a higher bound on the minimum input size necessary to have
+        any output element. This is useful for transforms that have a hard minimum input size requirement, such as
+        relect padding.
         """
         self.kernel_size_in = int(kernel_size_in)
         self.kernel_size_out = int(kernel_size_out)
@@ -60,6 +64,14 @@ class SlidingWindowParams:
         if self.out_trim < 0 or self.out_trim >= self.kernel_size_out:
             raise ValueError("out_trim must be at least 0 and at most kernel_size_out - 1.")
 
+        native_min_input_size = self.native_min_input_size
+        if min_input_size is not None and min_input_size < native_min_input_size:
+            raise ValueError(
+                f"min_input_size must be at least {native_min_input_size}, the minimum input size "
+                f"implied by the other parameters."
+            )
+        self.min_input_size = max(min_input_size or 1, native_min_input_size)
+
     @property
     def canonicalized_in_out_size_params(self) -> Tuple[int, int, int, int, int]:
         # FIXME!
@@ -79,7 +91,7 @@ class SlidingWindowParams:
 
     # TODO: test this function with a bunch of edge cases
     @property
-    def min_input_size(self) -> int:
+    def native_min_input_size(self) -> int:
         """
         Returns the minimum input size necessary to have any output element (i.e. length>0). The returned value is
         always at least one.
