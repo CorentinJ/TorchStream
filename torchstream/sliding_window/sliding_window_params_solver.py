@@ -461,7 +461,6 @@ class SlidingWindowParamsSolver:
                     break
 
             if checks_passed:
-                # TODO!! try to setup tighter constraints for the context based on the empirical check
                 return [hypothesis.params]
 
             step += 1
