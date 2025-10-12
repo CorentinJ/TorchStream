@@ -18,6 +18,7 @@ from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
     get_canonicalized_min_in_size,
+    get_output_delay,
     get_output_delay_bounds,
 )
 from torchstream.sliding_window.sliding_window_params_sampler import (
@@ -27,6 +28,7 @@ from torchstream.sliding_window.sliding_window_stream import (
     SlidingWindowStream,
 )
 from torchstream.stream_equivalence import test_stream_equivalent
+from torchstream.transforms.z3_utils import z3_ceil_div
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +145,7 @@ class SlidingWindowParamsSolver:
 
         # Keep track of the outcome in the history
         out_nan_idx = get_nan_idx(out_seq)
-        out_nan_range = (out_nan_idx[0], out_nan_idx[-1] + 1) if len(out_nan_idx) else None
+        out_nan_range = (int(out_nan_idx[0]), int(out_nan_idx[-1] + 1)) if len(out_nan_idx) else None
         logger.info(f"Forwarded {in_seq.size}->{out_seq.size} with nans {in_nan_range}->{out_nan_range}")
         record = {
             "in_seq_size": in_seq.size,
@@ -321,7 +323,7 @@ class SlidingWindowParamsSolver:
         min_pre_nan_in_size = next(
             i for i in range(1, int(1e9)) if params.get_metrics_for_input(i)[2] >= target_pre_nan_out_size
         )
-        min_pre_nan_in_size = max(min_pre_nan_in_size, params.kernel_size_in)
+        min_pre_nan_in_size = max(min_pre_nan_in_size, params.kernel_size_in, params.min_input_size)
 
         # We'll start by going through the nan trick history. If we already have a nan trick record that validated
         # a phase for these parameters, we can skip testing that phase again
@@ -439,28 +441,56 @@ class SlidingWindowParamsSolver:
                 for record in self.nan_trick_history
             )
             if not checks_passed:
+                # We don't break here - despite failing the kernel checks, we want to get at least one nan trick run
+                # for this hypothesis.
                 logger.info(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED after kernel check{colors.RESET}")
 
-            nan_trick_params_iter = self._iter_nan_trick_params_for_hypothesis(hypothesis.params)
-            while True:
-                try:
-                    nan_trick_params = next(nan_trick_params_iter)
-                except StopIteration:
-                    break
-
+            for nan_trick_params in self._iter_nan_trick_params_for_hypothesis(hypothesis.params):
                 record = self.run_nan_trick(*nan_trick_params)
                 self._sli_search_integrate_nan_trick_record(sampler, record)
 
-                if not self._verify_hypothesis_kernels_against_record(hypothesis, **record):
+                if checks_passed and not self._verify_hypothesis_kernels_against_record(hypothesis, **record):
                     logger.info(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED after kernel check{colors.RESET}")
                     checks_passed = False
-                    break
-                if not sampler.is_compatible(hypothesis.params):
+                if checks_passed and not sampler.is_compatible(hypothesis.params):
                     logger.info(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED by constraints{colors.RESET}")
                     checks_passed = False
+
+                if not checks_passed:
                     break
 
             if checks_passed:
+                params = self.debug_ref_params
+                assert params is not None
+
+                phase_ctxs = []
+                for record in self.nan_trick_history:
+                    in_nan_range, out_nan_range = record["in_nan_range"], record["out_nan_range"]
+                    if not in_nan_range or not out_nan_range:
+                        continue
+
+                    in_nan_size, out_nan_size = in_nan_range[1] - in_nan_range[0], out_nan_range[1] - out_nan_range[0]
+                    post_nan_in_size, post_nan_out_size = (
+                        record["in_seq_size"] - in_nan_range[1],
+                        record["out_seq_size"] - out_nan_range[1],
+                    )
+                    if params.kernel_size_in >= min(in_nan_range[0], in_nan_size, post_nan_in_size) + 2:
+                        continue
+                    if params.kernel_size_out >= min(out_nan_range[0], out_nan_size, post_nan_out_size) + 2:
+                        continue
+
+                    # Obtain where a stream would end if we forwarded the input sequence up to the end of the nans
+                    post_nan_out_size = params.get_metrics_for_input(in_nan_range[1])[2]
+                    out_delay = get_output_delay(params, in_nan_range[1])
+                    stream_out_pos = post_nan_out_size - out_delay
+                    assert stream_out_pos > 0, "Internal error"
+
+                    wins_ctx = z3_ceil_div(out_nan_range[1] - stream_out_pos, params.stride_out)
+                    wins_to_drop = in_nan_range[1] // params.stride_in
+
+                    ctx = params.streaming_context_size
+                    assert (in_nan_range[1] - ctx) // params.stride_in == wins_to_drop - wins_ctx
+
                 return [hypothesis.params]
 
             step += 1
