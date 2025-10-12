@@ -463,7 +463,7 @@ class SlidingWindowParamsSolver:
                 params = self.debug_ref_params
                 assert params is not None
 
-                phase_ctxs = []
+                temp = []
                 for record in self.nan_trick_history:
                     in_nan_range, out_nan_range = record["in_nan_range"], record["out_nan_range"]
                     if not in_nan_range or not out_nan_range:
@@ -490,6 +490,8 @@ class SlidingWindowParamsSolver:
 
                     ctx = params.streaming_context_size
                     assert (in_nan_range[1] - ctx) // params.stride_in == wins_to_drop - wins_ctx
+
+                assert len(temp) >= params.stride_in
 
                 return [hypothesis.params]
 
