@@ -33,7 +33,7 @@ def transform(x):
 in_spec = out_spec = SeqSpec(1, 1, -1)
 
 params = find_sliding_window_params(
-    transform, in_spec, out_spec, debug_ref_params=SlidingWindowParams(min_input_size=31)
+    transform, in_spec, out_spec, debug_ref_params=SlidingWindowParams(min_input_size=30)
 )[0]
 print(params)
 

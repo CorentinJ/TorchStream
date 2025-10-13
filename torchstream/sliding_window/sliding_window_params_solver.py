@@ -18,7 +18,6 @@ from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
     get_canonicalized_min_in_size,
-    get_output_delay,
     get_output_delay_bounds,
 )
 from torchstream.sliding_window.sliding_window_params_sampler import (
@@ -28,7 +27,6 @@ from torchstream.sliding_window.sliding_window_stream import (
     SlidingWindowStream,
 )
 from torchstream.stream_equivalence import test_stream_equivalent
-from torchstream.transforms.z3_utils import z3_ceil_div
 
 logger = logging.getLogger(__name__)
 
@@ -460,42 +458,6 @@ class SlidingWindowParamsSolver:
                     break
 
             if checks_passed:
-                params = self.debug_ref_params
-                assert params is not None
-
-                for record in self.nan_trick_history:
-                    in_nan_range, out_nan_range = record["in_nan_range"], record["out_nan_range"]
-                    if not in_nan_range or not out_nan_range:
-                        continue
-
-                    in_nan_size, out_nan_size = in_nan_range[1] - in_nan_range[0], out_nan_range[1] - out_nan_range[0]
-                    post_nan_in_size, post_nan_out_size = (
-                        record["in_seq_size"] - in_nan_range[1],
-                        record["out_seq_size"] - out_nan_range[1],
-                    )
-                    if params.kernel_size_in >= min(in_nan_range[0], in_nan_size, post_nan_in_size) + 2:
-                        continue
-                    if params.kernel_size_out >= min(out_nan_range[0], out_nan_size, post_nan_out_size) + 2:
-                        continue
-
-                    # Obtain where a stream would end if we forwarded the input sequence up to the end of the nans
-                    post_nan_out_size = params.get_metrics_for_input(in_nan_range[1])[2]
-                    out_delay = get_output_delay(params, in_nan_range[1])
-                    stream_out_pos = post_nan_out_size - out_delay
-                    assert stream_out_pos > 0, "Internal error"
-
-                    max_wins_to_drop = in_nan_range[1] // params.stride_in
-                    wins_ctx = z3_ceil_div(
-                        max(out_nan_range[1], max_wins_to_drop * params.stride_out) - stream_out_pos, params.stride_out
-                    )
-
-                    new_buff_size = (
-                        in_nan_range[1]
-                        - ((in_nan_range[1] - params.streaming_context_size) // params.stride_in) * params.stride_in
-                    )
-
-                    assert (wins_ctx - 1) * params.stride_in < new_buff_size < (wins_ctx + 1) * params.stride_in
-
                 return [hypothesis.params]
 
             step += 1

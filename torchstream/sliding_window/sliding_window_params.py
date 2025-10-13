@@ -304,7 +304,17 @@ def get_output_delay(
     as_phase=False,
 ) -> IntLike: ...
 def get_output_delay(*args, as_phase=False) -> IntLike:
-    # TODO doc
+    """
+    Computes the streaming output delay for the sliding window parameters. Given an input sequence, the output delay 
+    is the number of elements at the end of its output sequence that will no longer be correct if more output is to be 
+    produced with new input elements, i.e. if we're doing streaming.
+    
+    Therefore when streaming, we keep outputs up to out_len - output_delay and discard the rest.
+    
+    The output delay is constant for parameters right padding=0, but with right padding>0 it can take two different 
+    values depending on the phase (i.e. on the input size).
+    
+    """
     (k_i, s_i, p_l, p_r, k_o, s_o, t_o), input_size = _get_sli_args(args[:-1]), args[-1]
 
     if as_phase:

@@ -15,6 +15,7 @@ from torchstream.sliding_window.sliding_window_params import (
     z3_max,
 )
 from torchstream.sliding_window.threshold_harvester import ThresholdHarvester
+from torchstream.transforms.z3_utils import z3_floor_div
 
 logger = logging.getLogger(__name__)
 
@@ -159,8 +160,7 @@ class SlidingWindowParamsSampler:
 
         self._model_nan_ranges(in_len, out_len, in_nan_range, out_nan_range, nw)
         self._model_delay(in_len, out_len, in_nan_range, out_nan_range)
-        # FIXME! Restore?
-        # self._model_context_size(in_len, out_len, in_nan_range, out_nan_range)
+        self._model_context_size(in_len, out_len, in_nan_range, out_nan_range)
         self._model_kernel_out_size(out_len, out_nan_range)
 
     def _model_num_wins(self, in_len: int, out_len: int):
@@ -275,61 +275,37 @@ class SlidingWindowParamsSampler:
             )
 
     def _model_context_size(self, in_len: int, out_len: int, in_nan_range, out_nan_range):
-        in_nan_size = in_nan_range[1] - in_nan_range[0]
-        out_nan_size = out_nan_range[1] - out_nan_range[0]
+        in_nan_size, out_nan_size = in_nan_range[1] - in_nan_range[0], out_nan_range[1] - out_nan_range[0]
+        post_nan_in_size, post_nan_out_size = in_len - in_nan_range[1], out_len - out_nan_range[1]
 
-        # FIXME! doc
-        # Count how many elements lie between the first output NaNs and the expected output size of the pre-nan
-        # input
-        post_nan_in_size = in_len - in_nan_range[1]
-        post_nan_out_size = out_len - out_nan_range[1]
+        # Obtain where a stream would end if we forwarded the input sequence up to the end of the nans
+        post_nan_out_size = max(0, ((in_nan_range[1] + self.isbc) // self.s_i) * self.s_o + self.osbc)
+        out_delay = get_output_delay(
+            self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o, in_nan_range[1]
+        )
+        stream_out_pos = post_nan_out_size - out_delay
 
-        # Starting from the first corrupted output element, how many windows have been produced before getting
-        # an output window that is entirely not corrupted
-        n_out_corr_wins = (out_nan_size + self.s_o - 1) // self.s_o
+        max_wins_to_drop = in_nan_range[1] // self.s_i
+        wins_ctx = z3_ceil_div(z3_max(out_nan_range[1], max_wins_to_drop * self.s_o) - stream_out_pos, self.s_o)
+        buffsize_lower_bound = (wins_ctx - 1) * self.s_i + 1
+        buffsize_upper_bound = (wins_ctx + 1) * self.s_i - 1
 
-        bounds = []
-        for phase in range(1, self.s_i + 1):
-            # This lets us know where the first window without nans in its output range ends in the input, because
-            # we know that the first corrupted input window ended just past where the input nans started
-            # (minding the phase)
-            first_post_nan_in_win_end = in_nan_range[0] + phase + n_out_corr_wins * self.s_i
-            ctx_upper_bound = first_post_nan_in_win_end - in_nan_range[1] - 1
-            ctx_lower_bound = first_post_nan_in_win_end - in_nan_range[1] - self.s_i
-            bounds.append((ctx_lower_bound, ctx_upper_bound))
-
-        # This lets us know where the first window without nans in its output range ends in the input, because
-        # we know that the first corrupted input window ended just past where the input nans started
-        # (minding the phase)
-        # NOTE: knowing the phase would let us tighten these bounds, however as more inputs with different phase
-        # come in, we converge towards the same tight bounds anyway.
-        # FIXME! lower bound seems too loose
-        ctx_lower_bound = (n_out_corr_wins - 2) * self.s_i - in_nan_size + 2
-        ctx_upper_bound = (n_out_corr_wins + 1) * self.s_i - in_nan_size - 1
-
-        logger.debug(f"CTX BOUNDS: ({ctx_lower_bound}, {ctx_upper_bound}) -> {bounds}")
-
-        # Our trick here does not account for delay induced by output trimming, so we formulate the context
-        # without it
-        # FIXME: remove max?
-        ictx_no_trimming = z3_max(self.nfctxw * self.s_i + self.id, 0)
+        context_buffsize = in_nan_range[1] - (z3_floor_div(in_nan_range[1] - self.ictx, self.s_i) * self.s_i)
 
         self.optimizer.add(
             Or(
                 # Usual case: the bounds are correct
                 And(
-                    ictx_no_trimming >= ctx_lower_bound,
-                    ictx_no_trimming <= ctx_upper_bound,
+                    context_buffsize >= buffsize_lower_bound,
+                    context_buffsize <= buffsize_upper_bound,
                 ),
                 # Edge cases: we are necessarily underestimating the context
                 And(
-                    ictx_no_trimming > ctx_upper_bound,
+                    context_buffsize > buffsize_upper_bound,
                     Or(
-                        # FIXME! doesn't need to be first or last... let's fix these
-                        And(out_nan_range[0] == 0, self.t_o > 0),
-                        And(out_nan_range[1] == out_len, self.t_o > 0),
                         self.k_i >= min(in_nan_range[0], in_nan_size, post_nan_in_size) + 2,
-                        self.k_o >= min(out_nan_range[0], out_nan_size, post_nan_out_size) + 2,
+                        self.k_o >= out_nan_size + 2,
+                        self.k_o >= min(out_nan_range[0], post_nan_out_size) + 2 - self.t_o,
                     ),
                 ),
             )
