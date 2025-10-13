@@ -463,7 +463,6 @@ class SlidingWindowParamsSolver:
                 params = self.debug_ref_params
                 assert params is not None
 
-                temp = []
                 for record in self.nan_trick_history:
                     in_nan_range, out_nan_range = record["in_nan_range"], record["out_nan_range"]
                     if not in_nan_range or not out_nan_range:
@@ -485,13 +484,17 @@ class SlidingWindowParamsSolver:
                     stream_out_pos = post_nan_out_size - out_delay
                     assert stream_out_pos > 0, "Internal error"
 
-                    wins_ctx = z3_ceil_div(out_nan_range[1] - stream_out_pos, params.stride_out)
-                    wins_to_drop = in_nan_range[1] // params.stride_in
+                    max_wins_to_drop = in_nan_range[1] // params.stride_in
+                    wins_ctx = z3_ceil_div(
+                        max(out_nan_range[1], max_wins_to_drop * params.stride_out) - stream_out_pos, params.stride_out
+                    )
 
-                    ctx = params.streaming_context_size
-                    assert (in_nan_range[1] - ctx) // params.stride_in == wins_to_drop - wins_ctx
+                    new_buff_size = (
+                        in_nan_range[1]
+                        - ((in_nan_range[1] - params.streaming_context_size) // params.stride_in) * params.stride_in
+                    )
 
-                assert len(temp) >= params.stride_in
+                    assert (wins_ctx - 1) * params.stride_in < new_buff_size < (wins_ctx + 1) * params.stride_in
 
                 return [hypothesis.params]
 
