@@ -40,6 +40,8 @@ def test_stream_equivalent(
 
     # Get the sync output
     out_seq_ref = Sequence.apply(sync_fn, in_seq, stream.out_spec)
+    if out_seq_ref.size == 0:
+        raise ValueError(f"Input size of {in_seq.size} is too small for the transform to produce any output")
 
     # FIXME: this is a trivial hack that assumes that the input size is at least the kernel size, ideally we'd only
     # add the kernel size - 1 NaNs to the input.
