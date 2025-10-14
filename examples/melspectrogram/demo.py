@@ -2,9 +2,6 @@ import logging
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
-from torchstream.sliding_window.sliding_window_params_solver import (
-    find_sliding_window_params,
-)
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 from torchstream.stream_equivalence import test_stream_equivalent
 
@@ -32,9 +29,11 @@ def transform(x):
 
 in_spec = out_spec = SeqSpec(1, 1, -1)
 
-params = find_sliding_window_params(
-    transform, in_spec, out_spec, debug_ref_params=SlidingWindowParams(min_input_size=30)
-)[0]
+real_params = SlidingWindowParams(min_input_size=30)
+# params = find_sliding_window_params(
+#     transform, in_spec, out_spec, debug_ref_params=real_params
+# )[0]
+params = real_params
 print(params)
 
 test_stream_equivalent(

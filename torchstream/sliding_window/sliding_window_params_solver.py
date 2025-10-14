@@ -296,7 +296,7 @@ class SlidingWindowParamsSolver:
         out_nan_range: Tuple[int, int] | None,
     ):
         # All of our observations rely on the nan trick.
-        if in_nan_range is None:
+        if in_nan_range is None or out_seq_size == 0:
             return True
 
         # Reject if the nan trick's output is not compatible with the hypothesis

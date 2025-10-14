@@ -96,10 +96,10 @@ class SlidingWindowParams:
         Returns the minimum input size necessary to have any output element (i.e. length>0). The returned value is
         always at least one.
         """
-        # FIXME!! Allow providing a hard minimum input size in the constructor cli
         out_needed = 1 + self.out_trim * 2
         num_wins_needed = int(math.ceil(max(0, out_needed - self.kernel_size_out) / self.stride_out)) + 1
-        return self.get_min_input_size_for_num_wins(num_wins_needed)
+        non_padded_min_input_size = (num_wins_needed - 1) * self.stride_in + self.kernel_size_in
+        return max(1, non_padded_min_input_size - self.left_pad - self.right_pad)
 
     # TODO: get_min_input_size_for_out_size
     def get_min_input_size_for_num_wins(self, num_wins: int) -> int:
@@ -107,7 +107,7 @@ class SlidingWindowParams:
         Returns the minimum input size necessary to have a given number of output windows.
         """
         non_padded_min_input_size = (num_wins - 1) * self.stride_in + self.kernel_size_in
-        return max(1, non_padded_min_input_size - self.left_pad - self.right_pad)
+        return max(self.min_input_size, non_padded_min_input_size - self.left_pad - self.right_pad)
 
     # TODO! refactor, terrible name & mechanics
     def get_metrics_for_input(self, in_len: int) -> Tuple[Tuple[int, int], int, int]:
@@ -126,10 +126,11 @@ class SlidingWindowParams:
             - out_len: The length of the output tensor.
         """
         # Number of windows
-        if in_len <= 0:
+        if in_len < self.min_input_size:
             num_wins = 0
         else:
-            num_wins = max(0, (self.left_pad + in_len + self.right_pad - self.kernel_size_in) // self.stride_in + 1)
+            num_wins = (self.left_pad + in_len + self.right_pad - self.kernel_size_in) // self.stride_in + 1
+            assert num_wins > 0
 
         # Padding
         if num_wins == 0:
@@ -150,7 +151,8 @@ class SlidingWindowParams:
         if num_wins == 0:
             out_len = 0
         else:
-            out_len = max(0, (num_wins - 1) * self.stride_out + self.kernel_size_out - 2 * self.out_trim)
+            out_len = (num_wins - 1) * self.stride_out + self.kernel_size_out - 2 * self.out_trim
+            assert out_len > 0
 
         return padding, num_wins, out_len
 
@@ -230,12 +232,16 @@ class SlidingWindowParams:
         return hash(self.as_tuple())
 
     def __repr__(self):
+        mis_str = (
+            "" if self.min_input_size == self.native_min_input_size else f"    min_input_size={self.min_input_size},\n"
+        )
         return (
             "SlidingWindowParams(\n"
-            + f"    kernel_size_in={self.kernel_size_in}, stride_in={self.stride_in},\n"
-            + f"    left_pad={self.left_pad}, right_pad={self.right_pad},\n"
-            + f"    kernel_size_out={self.kernel_size_out}, stride_out={self.stride_out},\n"
-            + f"    out_trim={self.out_trim},\n"
+            + f"    kernel_size_in={self.kernel_size_in}, stride_in={self.stride_in}, "
+            + f"left_pad={self.left_pad}, right_pad={self.right_pad},\n"
+            + f"    kernel_size_out={self.kernel_size_out}, stride_out={self.stride_out}, "
+            + f"out_trim={self.out_trim},\n"
+            + mis_str
             + ")"
         )
 
@@ -305,15 +311,15 @@ def get_output_delay(
 ) -> IntLike: ...
 def get_output_delay(*args, as_phase=False) -> IntLike:
     """
-    Computes the streaming output delay for the sliding window parameters. Given an input sequence, the output delay 
-    is the number of elements at the end of its output sequence that will no longer be correct if more output is to be 
+    Computes the streaming output delay for the sliding window parameters. Given an input sequence, the output delay
+    is the number of elements at the end of its output sequence that will no longer be correct if more output is to be
     produced with new input elements, i.e. if we're doing streaming.
-    
+
     Therefore when streaming, we keep outputs up to out_len - output_delay and discard the rest.
-    
-    The output delay is constant for parameters right padding=0, but with right padding>0 it can take two different 
+
+    The output delay is constant for parameters right padding=0, but with right padding>0 it can take two different
     values depending on the phase (i.e. on the input size).
-    
+
     """
     (k_i, s_i, p_l, p_r, k_o, s_o, t_o), input_size = _get_sli_args(args[:-1]), args[-1]
 
