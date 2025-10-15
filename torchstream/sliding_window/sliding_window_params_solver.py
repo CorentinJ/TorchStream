@@ -252,9 +252,7 @@ class SlidingWindowParamsSolver:
                 else:
                     lower_bound = max(
                         (record["in_seq_size"] for record in self.nan_trick_history if record["out_seq_size"] == 0),
-                        # FIXME!!
-                        # default=canon_min_in_size,
-                        default=1,
+                        default=canon_min_in_size,
                     )
                     upper_bound = min(
                         (record["in_seq_size"] for record in self.nan_trick_history if record["out_seq_size"] > 0),
