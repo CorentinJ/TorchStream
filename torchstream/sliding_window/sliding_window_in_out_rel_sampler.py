@@ -25,7 +25,8 @@ class SlidingWindowInOutRelSampler:
             self.isbc >= 0,
             self.isbc < self.s_i,
             # osbc is the only parameter that can be negative -> no constraint for it
-            self.mis >= get_canonicalized_min_in_size(self.s_i, self.s_o, self.isbc, self.osbc),
+            # self.mis >= get_canonicalized_min_in_size(self.s_i, self.s_o, self.isbc, self.osbc),
+            self.mis >= 1,
         )
 
     # FIXME: name
