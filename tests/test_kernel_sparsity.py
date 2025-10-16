@@ -58,8 +58,6 @@ def test_determine_kernel_sparsity_moving_average(sli_params: SlidingWindowParam
             sli_params,
             kernel_in_prior,
             kernel_out_prior,
-            # kernel_in_truth,
-            # kernel_out_truth,
             in_len,
             in_nan_range,
             out_nan_idx,
