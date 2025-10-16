@@ -1,5 +1,6 @@
 import logging
 from functools import partial
+from itertools import zip_longest
 from typing import Callable, Iterable, List, Tuple
 
 import numpy as np
@@ -315,46 +316,40 @@ class SlidingWindowParamsSolver:
         # kernel size and ensuring that the pre-nan out size is larger than the output kernel size will let us
         # know with certainty whether the parameters' delays are matching the transform.
         min_nan_in_size = params.kernel_size_in
-        # TODO! more constraints, based on the sampler's edge cases
+        # TODO!! more constraints, based on the sampler's edge cases
         target_pre_nan_out_size = max(params.kernel_size_out, get_output_delay_bounds(params)[1])
-        # TODO: get_min_input_size_for_out_size
-        min_pre_nan_in_size = next(
-            i for i in range(1, int(1e9)) if params.get_metrics_for_input(i)[2] >= target_pre_nan_out_size
+        min_non_nan_in_size = max(
+            params.get_min_input_size_for_out_size(target_pre_nan_out_size), params.kernel_size_in
         )
-        min_pre_nan_in_size = max(min_pre_nan_in_size, params.kernel_size_in, params.min_input_size)
 
         # We'll start by going through the nan trick history. If we already have a nan trick record that validated
         # a phase for these parameters, we can skip testing that phase again
-        phases_to_test = set(range(params.stride_in))
-        for phase in list(phases_to_test):
-            for record in self.nan_trick_history:
-                if not record["in_nan_range"] or not record["out_nan_range"]:
-                    continue
-                rec_pre_nan_in_size = record["in_nan_range"][0]
-                rec_phase = (params.left_pad + rec_pre_nan_in_size - params.kernel_size_in) % params.stride_in
-                if (
-                    rec_phase == phase
-                    and record["in_nan_range"][1] - record["in_nan_range"][0] >= min_nan_in_size
-                    and record["in_nan_range"][0] >= min_pre_nan_in_size
-                ):
-                    phases_to_test.remove(phase)
-                    break
-
-        if phases_to_test:
-            logger.debug(f"Yielding inputs for phases {sorted(phases_to_test)} (stride={params.stride_in})")
+        nan_start_phases, nan_end_phases = set(range(params.stride_in)), set(range(params.stride_in))
+        for record in self.nan_trick_history:
+            if (
+                record["in_nan_range"]
+                and record["out_nan_range"]
+                # TODO: constraints on out size or no?
+                and record["in_nan_range"][0] >= min_non_nan_in_size
+                and record["in_nan_range"][1] - record["in_nan_range"][0] >= min_nan_in_size
+                and record["in_seq_size"] - record["in_nan_range"][1] >= min_non_nan_in_size
+            ):
+                nan_start_phases.discard(record["in_nan_range"][0] % params.stride_in)
+                nan_end_phases.discard(record["in_nan_range"][1] % params.stride_in)
 
         # TODO
         size_factor = 3
-        for phase in phases_to_test:
-            pre_nan_in_size = min_pre_nan_in_size * size_factor
-            # Align the pre-nan input on the given phase
-            pre_nan_in_size = pre_nan_in_size + (
-                (-pre_nan_in_size + phase - params.left_pad + params.kernel_size_in) % params.stride_in
-            )
-            post_nan_in_size = pre_nan_in_size + size_factor * min_nan_in_size
+        for nan_start_phase, nan_end_phase in zip_longest(nan_start_phases, nan_end_phases, fillvalue=0):
+            # Align the nan start on the given phase while ensuring the pre-nan in size is large enough
+            pre_nan_in_size = min_non_nan_in_size * size_factor
+            pre_nan_in_size = pre_nan_in_size + ((nan_start_phase - pre_nan_in_size) % params.stride_in)
 
-            # FIXME!
-            full_in_size = post_nan_in_size + pre_nan_in_size
+            # Then the nan end, ensuring the nan range is large enough
+            post_nan_in_size = pre_nan_in_size + min_nan_in_size * size_factor
+            post_nan_in_size = post_nan_in_size + ((nan_end_phase - post_nan_in_size) % params.stride_in)
+
+            # The post-nan segment must also be large enough, but doesn't need to be phase aligned
+            full_in_size = post_nan_in_size + min_non_nan_in_size * size_factor
 
             yield (full_in_size, (pre_nan_in_size, post_nan_in_size))
 
@@ -458,18 +453,25 @@ class SlidingWindowParamsSolver:
                     break
 
             if checks_passed:
-                # Obtain the context size empirically from all the nan trick records
-                phases = set()
+                min_nan_in_size = params.kernel_size_in
+                target_pre_nan_out_size = max(params.kernel_size_out, get_output_delay_bounds(params)[1])
+                min_non_nan_in_size = max(
+                    params.get_min_input_size_for_out_size(target_pre_nan_out_size), params.kernel_size_in
+                )
+
+                nan_start_phases, nan_end_phases = set(range(params.stride_in)), set(range(params.stride_in))
                 for record in self.nan_trick_history:
-                    if not record["in_nan_range"] or not record["out_nan_range"]:
-                        continue
-                    rec_pre_nan_in_size = record["in_nan_range"][0]
-                    rec_phase = (params.left_pad + rec_pre_nan_in_size - params.kernel_size_in) % params.stride_in
                     if (
-                        record["in_nan_range"][1] - record["in_nan_range"][0] >= min_nan_in_size
-                        and record["in_nan_range"][0] >= min_pre_nan_in_size
+                        record["in_nan_range"]
+                        and record["out_nan_range"]
+                        and record["in_nan_range"][0] >= min_non_nan_in_size
+                        and record["in_nan_range"][1] - record["in_nan_range"][0] >= min_nan_in_size
+                        and record["in_seq_size"] - record["in_nan_range"][1] >= min_non_nan_in_size
                     ):
-                        phases.add(rec_phase)
+                        nan_start_phases.discard(record["in_nan_range"][0] % params.stride_in)
+                        nan_end_phases.discard(record["in_nan_range"][1] % params.stride_in)
+
+                assert not nan_start_phases and not nan_end_phases
 
                 # Move this to a test?
                 alternative = sampler.get_new_solution(
