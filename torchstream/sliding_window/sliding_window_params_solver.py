@@ -424,7 +424,7 @@ class SlidingWindowParamsSolver:
         while True:
             # Sample new sliding window parameters
             # FIXME: max equivalent sols
-            params = sampler.get_new_solution([], max_equivalent_sols=self.max_equivalent_sols)
+            params = sampler.get_new_solution()
             if params is None:
                 return []
 

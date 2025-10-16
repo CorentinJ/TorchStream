@@ -1,7 +1,7 @@
 from typing import Tuple
 
 import numpy as np
-from z3 import And, Not, Or, Solver, unsat
+from z3 import And, Bool, Not, Or, Solver, unsat
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 
@@ -54,14 +54,14 @@ def determine_kernel_sparsity(
     # Apply the kernel priors
     for idx, val in enumerate(kernel_in_prior):
         if val == 0:
-            solver.add(kernel_in[idx] == False)
+            solver.add(Not(kernel_in[idx]))
         elif val == 2:
-            solver.add(kernel_in[idx] == True)
+            solver.add(kernel_in[idx])
     for idx, val in enumerate(kernel_out_prior):
         if val == 0:
-            solver.add(kernel_out[idx] == False)
+            solver.add(Not(kernel_out[idx]))
         elif val == 2:
-            solver.add(kernel_out[idx] == True)
+            solver.add(kernel_out[idx])
 
     for win_idx, ((in_start, in_stop), (out_start, out_stop)) in enumerate(params.iter_kernel_map(num_wins)):
         # The kernel can only output nans (=be corrupted) if it has any overlap with the input nans
@@ -72,7 +72,7 @@ def determine_kernel_sparsity(
             )
             corrupted_wins[win_idx] = Or(*[kernel_in[i] for i in range(*kernel_in_nan_range)])
         else:
-            solver.add(corrupted_wins[win_idx] == False)
+            solver.add(Not(corrupted_wins[win_idx]))
 
     for out_idx, inv_map in enumerate(params.get_inverse_kernel_map(in_len)):
         any_corrupted_constraint = Or(
@@ -91,15 +91,15 @@ def determine_kernel_sparsity(
     kernel_out_values = kernel_out_prior.copy()
     for i in range(params.kernel_size_in):
         if kernel_in_prior[i] == 1:
-            if solver.check(kernel_in[i] == True) == unsat:
+            if solver.check(kernel_in[i]) == unsat:
                 kernel_in_values[i] = 0
-            elif solver.check(kernel_in[i] == False) == unsat:
+            elif solver.check(Not(kernel_in[i])) == unsat:
                 kernel_in_values[i] = 2
     for i in range(params.kernel_size_out):
         if kernel_out_prior[i] == 1:
-            if solver.check(kernel_out[i] == True) == unsat:
+            if solver.check(kernel_out[i]) == unsat:
                 kernel_out_values[i] = 0
-            elif solver.check(kernel_out[i] == False) == unsat:
+            elif solver.check(Not(kernel_out[i])) == unsat:
                 kernel_out_values[i] = 2
 
     return kernel_in_values, kernel_out_values
