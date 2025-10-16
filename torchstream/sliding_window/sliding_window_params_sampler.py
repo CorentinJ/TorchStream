@@ -1,6 +1,5 @@
 import logging
-from collections import Counter
-from typing import List, Tuple
+from typing import Tuple
 
 from z3 import And, Bool, Implies, Int, Ints, Or, Solver, sat
 
@@ -328,41 +327,34 @@ class SlidingWindowParamsSampler:
         )
 
     def get_new_solution(
-        self, valid_sols: List[SlidingWindowParams] | None = None, max_equivalent_sols: int | None = None
+        self,
+        same_family_as: SlidingWindowParams | None = None,
+        different_family_than: SlidingWindowParams | None = None,
     ) -> SlidingWindowParams | None:
-        valid_sols = valid_sols or []
-
         # TODO! doc
 
-        _MAX_COST_REL_LIMIT = 2.0
         _MAX_COST_FLAT_LIMIT = 10_000
-
-        max_cost_limit = (
-            int(_MAX_COST_REL_LIMIT * max(sum(sol.as_tuple()) for sol in valid_sols))
-            if valid_sols
-            else _MAX_COST_FLAT_LIMIT
-        )
-
-        def _get_family_params(params: SlidingWindowParams):
-            return (params.output_delays, params.streaming_context_size)
-
-        family_count = Counter(_get_family_params(sol) for sol in valid_sols)
 
         while True:
             max_cost_value = self.max_cost_sampler.next_p()
-            max_cost_reached = max_cost_value >= max_cost_limit
-            max_cost_value = min(max_cost_value, max_cost_limit)
+            max_cost_reached = max_cost_value >= _MAX_COST_FLAT_LIMIT
+            max_cost_value = min(max_cost_value, _MAX_COST_FLAT_LIMIT)
             guide_constraints = [self.solution_cost <= max_cost_value]
 
-            for (delays, ctx), count in family_count.items():
-                # Enforce new solutions for families that meet the maximum count
-                if max_equivalent_sols and count >= max_equivalent_sols:
-                    guide_constraints.append(
-                        Or(
-                            self.ictx != ctx,
-                            Or(*(od != delay for od, delay in zip(self.ods, delays))),
-                        )
+            if same_family_as:
+                guide_constraints.append(
+                    And(
+                        *(od == delay for od, delay in zip(self.ods, same_family_as.output_delays)),
+                        self.ictx == same_family_as.streaming_context_size,
                     )
+                )
+            if different_family_than:
+                guide_constraints.append(
+                    Or(
+                        *(od != delay for od, delay in zip(self.ods, different_family_than.output_delays)),
+                        self.ictx != different_family_than.streaming_context_size,
+                    )
+                )
 
             import time
 
