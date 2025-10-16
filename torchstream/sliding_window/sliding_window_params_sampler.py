@@ -328,6 +328,7 @@ class SlidingWindowParamsSampler:
 
     def get_new_solution(
         self,
+        *cstrs,
         same_family_as: SlidingWindowParams | None = None,
         different_family_than: SlidingWindowParams | None = None,
     ) -> SlidingWindowParams | None:
@@ -340,6 +341,8 @@ class SlidingWindowParamsSampler:
             max_cost_reached = max_cost_value >= _MAX_COST_FLAT_LIMIT
             max_cost_value = min(max_cost_value, _MAX_COST_FLAT_LIMIT)
             guide_constraints = [self.solution_cost <= max_cost_value]
+
+            guide_constraints.extend(cstrs)
 
             if same_family_as:
                 guide_constraints.append(

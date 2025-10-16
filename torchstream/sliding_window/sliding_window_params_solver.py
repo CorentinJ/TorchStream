@@ -458,6 +458,27 @@ class SlidingWindowParamsSolver:
                     break
 
             if checks_passed:
+                # Obtain the context size empirically from all the nan trick records
+                phases = set()
+                for record in self.nan_trick_history:
+                    if not record["in_nan_range"] or not record["out_nan_range"]:
+                        continue
+                    rec_pre_nan_in_size = record["in_nan_range"][0]
+                    rec_phase = (params.left_pad + rec_pre_nan_in_size - params.kernel_size_in) % params.stride_in
+                    if (
+                        record["in_nan_range"][1] - record["in_nan_range"][0] >= min_nan_in_size
+                        and record["in_nan_range"][0] >= min_pre_nan_in_size
+                    ):
+                        phases.add(rec_phase)
+
+                # Move this to a test?
+                alternative = sampler.get_new_solution(
+                    sampler.k_i < 3 * hypothesis.params.kernel_size_in,
+                    sampler.k_o < 3 * hypothesis.params.kernel_size_out,
+                    different_family_than=hypothesis.params,
+                )
+                assert alternative is None
+
                 return [hypothesis.params]
 
             step += 1

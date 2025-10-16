@@ -70,12 +70,12 @@ class SeqSpec:
 
     def new_zeros(self, seq_size: int) -> SeqArray:
         """
-        Returns a array of the given size, filled with zeros.
+        Returns an array of the given size, filled with zeros.
         """
         return self._arr_if.new_zeros(self.get_shape_for_size(seq_size))
 
     def new_randn(self, seq_size: int) -> SeqArray:
         """
-        Sample a array of the given size from a normal distribution (discretized for integer types).
+        Sample an array of the given size from a normal distribution (discretized for integer types).
         """
         return self._arr_if.new_randn(self.get_shape_for_size(seq_size))
