@@ -101,13 +101,20 @@ class SlidingWindowParams:
         non_padded_min_input_size = (num_wins_needed - 1) * self.stride_in + self.kernel_size_in
         return max(1, non_padded_min_input_size - self.left_pad - self.right_pad)
 
-    # TODO: get_min_input_size_for_out_size
     def get_min_input_size_for_num_wins(self, num_wins: int) -> int:
         """
         Returns the minimum input size necessary to have a given number of output windows.
         """
         non_padded_min_input_size = (num_wins - 1) * self.stride_in + self.kernel_size_in
         return max(self.min_input_size, non_padded_min_input_size - self.left_pad - self.right_pad)
+
+    def get_min_input_size_for_out_size(self, out_size: int) -> int:
+        """
+        Returns the minimum input size necessary to have a given output size.
+        """
+        pre_trim_out_size = out_size + 2 * self.out_trim
+        num_wins_needed = int(math.ceil(max(0, pre_trim_out_size - self.kernel_size_out) / self.stride_out)) + 1
+        return self.get_min_input_size_for_num_wins(num_wins_needed)
 
     # TODO! refactor, terrible name & mechanics
     def get_metrics_for_input(self, in_len: int) -> Tuple[Tuple[int, int], int, int]:
