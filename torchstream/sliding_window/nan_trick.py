@@ -1,4 +1,6 @@
 import logging
+import math
+from functools import partial
 from typing import Callable, Optional, Tuple
 
 import numpy as np
@@ -25,6 +27,7 @@ def get_nan_idx(x: SeqArrayLike | Sequence, axis=None) -> np.ndarray:
     # TODO! doc
     # TODO: numpy() function
     # TODO: is_nan -> any reduction instead
+    # Use flatnonzero maybe?
     x = x.mean(axis=tuple(i for i in range(x.ndim) if i != axis))
 
     return np.where(np.isnan(x))[0]
@@ -32,6 +35,7 @@ def get_nan_idx(x: SeqArrayLike | Sequence, axis=None) -> np.ndarray:
 
 def run_nan_trick(
     trsfm: Callable,
+    # TODO! seq/array distinction is annoying here
     in_seq: Sequence,
     in_nan_range: Tuple[int, int] | None,
     out_spec: Optional[SeqSpec] = None,
@@ -61,42 +65,70 @@ def run_nan_trick(
     return out_seq, out_nan_idx
 
 
-def get_context_size_empirically(params: SlidingWindowParams):
+def get_context_size_empirically(
+    params: SlidingWindowParams,
+    trsfm: Callable | None = None,
+    input_provider: Callable[[int], Sequence] | SeqSpec | None = None,
+    out_spec: SeqSpec | None = None,
+) -> int:
+    if trsfm:
+        assert input_provider is not None, "Both trsfm and input_provider must be provided"
+        if isinstance(input_provider, SeqSpec):
+            seq_spec = input_provider
+            input_provider = partial(Sequence.zeros, seq_spec)
+    else:
+        assert input_provider is None and out_spec is None
+
+    # Heuristic for the input size, asserts will catch if it's not enough
+    base_in_size = (params.streaming_context_size + params.get_min_input_size_for_out_size(10)) * 3
+
     phase_ctxs = []
     for phase_offset in range(params.stride_in):
-        # FIXME!
-        in_size = 100 + phase_offset
+        # We'll mimick the streaming. We begin by saying that the stream has already performed a step with the given
+        # input size, and see where the output position of the stream is.
+        in_size = base_in_size + phase_offset
         *_, out_size = params.get_metrics_for_input(in_size)
         out_delay = get_output_delay(params, in_size)
         stream_out_pos = out_size - out_delay
         assert stream_out_pos > 0, "Input size is not sufficient"
 
-        for wins_to_keep in range(0, in_size):
-            base_wins_to_drop = in_size // params.stride_in
-            if stream_out_pos < (base_wins_to_drop - wins_to_keep) * params.stride_out:
-                continue
-
-            wins_to_drop = base_wins_to_drop - (wins_to_keep + 1)
-            assert wins_to_drop > 0, "Input size is not sufficient"
-            tsfm_out_pos = wins_to_drop * params.stride_out
-            out_trim_start = stream_out_pos - tsfm_out_pos
-
+        # Then we perform a second step with the same input size (it's a detail: as long as it produces enough
+        # outputs to measure the context we're good).
+        # We operate as if the first input window is from the previous step, and we ensure it sees NaNs. This way
+        # we can see how far the nans from "the previous step" propagate in the output of the current step.
+        if trsfm is None:
             out_nan_map = get_nan_map(params, in_size, in_nan_range=(0, params.stride_in))
-            assert len(out_nan_map[out_trim_start:]), "Input size is not sufficient"
-            ctx_is_enough = out_nan_map[out_trim_start:].sum() == 0
+            out_nan_idx = np.where(out_nan_map == 2)[0]
+        else:
+            out_seq, out_nan_idx = run_nan_trick(
+                trsfm,
+                in_seq=input_provider(in_size),
+                in_nan_range=(0, params.stride_in),
+                out_spec=out_spec,
+            )
+            assert out_seq.size == out_size, "Transform doesn't match the given sliding window params"
+        last_nan_idx = out_nan_idx[-1] if len(out_nan_idx) else -1
 
-            if ctx_is_enough:
-                ctx = max(0, (wins_to_keep - 1) * params.stride_in + (in_size % params.stride_in) + 1)
-                assert (in_size - ctx) // params.stride_in == base_wins_to_drop - wins_to_keep
-                phase_ctxs.append(ctx)
-                break
+        # Do the maths to figure out the context size for this phase
+        wins_to_drop = min(
+            int(math.ceil((stream_out_pos - last_nan_idx) / params.stride_out)),
+            stream_out_pos // params.stride_out,
+        )
+        base_wins_to_drop = in_size // params.stride_in
+        wins_to_keep = base_wins_to_drop - wins_to_drop
 
+        ctx = max(0, (wins_to_keep - 1) * params.stride_in + (in_size % params.stride_in) + 1)
+        assert (in_size - ctx) // params.stride_in == base_wins_to_drop - wins_to_keep
+        phase_ctxs.append(ctx)
+
+    # The final context is the max of all phase dependant contexts
     ctx = max(phase_ctxs)
-
-    for phase_offset, phase_ctx in enumerate(phase_ctxs):
-        in_size = 100 + phase_offset
-        assert (in_size - ctx) // params.stride_in == (in_size - phase_ctx) // params.stride_in
-
     assert min(phase_ctxs) + params.stride_in > ctx
+
+    # This last step verifies that taking the max of the phase contexts is equivalent to taking the phase
+    # dependant context for each phase
+    for phase_offset, phase_ctx in enumerate(phase_ctxs):
+        in_size = base_in_size + phase_offset
+        assert (in_size - ctx) // params.stride_in == (in_size - phase_ctx) // params.stride_in
 
     return ctx
