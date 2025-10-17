@@ -80,6 +80,9 @@ TRANSPOSED_CONV_1D_PARAMS = _sli_params_to_test_args(
     )
 )
 
+# TODO: reduce these:
+#  - Avoid cases equiv to conv or tconv
+#  - Keep only unique values
 MOVING_AVERAGE_PARAMS = _sli_params_to_test_args(
     (
         dict(

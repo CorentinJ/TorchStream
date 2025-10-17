@@ -453,34 +453,6 @@ class SlidingWindowParamsSolver:
                     break
 
             if checks_passed:
-                min_nan_in_size = params.kernel_size_in
-                target_pre_nan_out_size = max(params.kernel_size_out, get_output_delay_bounds(params)[1])
-                min_non_nan_in_size = max(
-                    params.get_min_input_size_for_out_size(target_pre_nan_out_size), params.kernel_size_in
-                )
-
-                nan_start_phases, nan_end_phases = set(range(params.stride_in)), set(range(params.stride_in))
-                for record in self.nan_trick_history:
-                    if (
-                        record["in_nan_range"]
-                        and record["out_nan_range"]
-                        and record["in_nan_range"][0] >= min_non_nan_in_size
-                        and record["in_nan_range"][1] - record["in_nan_range"][0] >= min_nan_in_size
-                        and record["in_seq_size"] - record["in_nan_range"][1] >= min_non_nan_in_size
-                    ):
-                        nan_start_phases.discard(record["in_nan_range"][0] % params.stride_in)
-                        nan_end_phases.discard(record["in_nan_range"][1] % params.stride_in)
-
-                assert not nan_start_phases and not nan_end_phases
-
-                # Move this to a test?
-                alternative = sampler.get_new_solution(
-                    sampler.k_i < 3 * hypothesis.params.kernel_size_in,
-                    sampler.k_o < 3 * hypothesis.params.kernel_size_out,
-                    different_family_than=hypothesis.params,
-                )
-                assert alternative is None
-
                 return [hypothesis.params]
 
             step += 1
