@@ -20,14 +20,15 @@ transform = torchaudio.transforms.Spectrogram(
     #   Additionally set pad_mode="constant" to lower the minimum input size virtually inflated by reflect padding
     pad_mode="reflect",
     #   Modify hop_length to change the stride and have overlapping windows
-    hop_length=30,
+    # hop_length=30,
 )
 in_spec = SeqSpec(-1)
 out_spec = SeqSpec(n_fft // 2 + 1, -1)
 
-
-params = find_sliding_window_params(transform, in_spec, out_spec)[0]
-print(params)
+# Specify max_equivalent_sols>1 to get multiple equivalent solutions
+sols = find_sliding_window_params(transform, in_spec, out_spec)
+print(sols)
+params = sols[0]
 
 test_stream_equivalent(
     transform,
