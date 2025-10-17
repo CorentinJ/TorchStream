@@ -52,7 +52,7 @@ def _compare_params_str(params: tuple, real_params: tuple | None, names: Iterabl
 
 def _compare_sli_params_str(params: SlidingWindowParams, real_params: SlidingWindowParams | None = None) -> str:
     if real_params:
-        ref_params = real_params.as_tuple()
+        ref_params = real_params.as_tuple(with_min_in_size=False)
         ref_shape = real_params.canonicalized_in_out_size_params
         ref_delays = real_params.output_delays
         ref_ctx = (real_params.streaming_context_size,)
@@ -60,7 +60,7 @@ def _compare_sli_params_str(params: SlidingWindowParams, real_params: SlidingWin
         ref_params, ref_shape, ref_delays, ref_ctx = None, None, None, None
 
     return (
-        f"\n\tparameters ({_compare_params_str(params.as_tuple(), ref_params, 'ki,si,lp,rp,ko,so,ot'.split(','))})"
+        f"\n\tparameters ({_compare_params_str(params.as_tuple(with_min_in_size=False), ref_params, 'ki,si,lp,rp,ko,so,ot'.split(','))})"
         f"\n\twith shape ({_compare_params_str(params.canonicalized_in_out_size_params, ref_shape, 's_i,s_o,isbc,osbc,mis'.split(','))})"
         f"\n\twith delays ({_compare_params_str(params.output_delays, ref_delays)})"
         f"\n\twith context size {_compare_params_str((params.streaming_context_size,), ref_ctx)}"
@@ -86,9 +86,9 @@ class SlidingWindowParamsSolver:
         init_seq_size: int = 30,
         max_in_seq_size: int = 10_000,
         atol: float = 1e-5,
-        max_equivalent_sols: int | None = 1,
-        debug_ref_params: SlidingWindowParams | None = None,
+        max_equivalent_sols: int = 1,
         zero_size_exception_types: Tuple[type[Exception], ...] = (RuntimeError,),
+        debug_ref_params: SlidingWindowParams | None = None,
     ):
         if isinstance(input_provider, SeqSpec):
             in_spec = input_provider
@@ -317,6 +317,7 @@ class SlidingWindowParamsSolver:
         # know with certainty whether the parameters' delays are matching the transform.
         min_nan_in_size = params.kernel_size_in
         # TODO!! more constraints, based on the sampler's edge cases
+        # TODO! could we base constraints on the strides rather than the kernel sizes
         target_pre_nan_out_size = max(params.kernel_size_out, get_output_delay_bounds(params)[1])
         min_non_nan_in_size = max(
             params.get_min_input_size_for_out_size(target_pre_nan_out_size), params.kernel_size_in
@@ -416,20 +417,19 @@ class SlidingWindowParamsSolver:
             self._sli_search_integrate_nan_trick_record(sampler, record)
 
         step = 1
-        while True:
+        out_sols = []
+        while len(out_sols) < self.max_equivalent_sols:
             # Sample new sliding window parameters
-            # FIXME: max equivalent sols
-            params = sampler.get_new_solution()
+            params = sampler.get_new_solution(same_family_as=(out_sols[0] if out_sols else None))
             if params is None:
-                return []
+                break
 
-            checks_passed = True
             hypothesis = _SliHypothesis(params, id=step)
             logger.info(
                 f"[Sli params] Step {step}: {_compare_sli_params_str(hypothesis.params, self.debug_ref_params)}"
             )
 
-            checks_passed &= all(
+            checks_passed = all(
                 self._verify_hypothesis_kernels_against_record(hypothesis, **record)
                 for record in self.nan_trick_history
             )
@@ -453,9 +453,11 @@ class SlidingWindowParamsSolver:
                     break
 
             if checks_passed:
-                return [hypothesis.params]
+                out_sols.append(hypothesis.params)
 
             step += 1
+
+        return out_sols
 
 
 # TODO: allow transforms with multiple sequential inputs
@@ -468,7 +470,7 @@ def find_sliding_window_params(
     init_seq_size: int = 30,
     max_in_seq_size: int = 10_000,
     atol: float = 1e-5,
-    max_equivalent_sols: int | None = 1,
+    max_equivalent_sols: int = 1,
     zero_size_exception_types: Tuple[type[Exception], ...] = (RuntimeError,),
     debug_ref_params: SlidingWindowParams | None = None,
 ) -> List[SlidingWindowParams]:

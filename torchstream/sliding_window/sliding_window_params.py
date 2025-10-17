@@ -219,7 +219,7 @@ class SlidingWindowParams:
 
         return out_map
 
-    def as_tuple(self) -> Tuple[int, int, int, int, int, int, int]:
+    def as_tuple(self, with_min_in_size: bool = True) -> Tuple[int, ...]:
         return (
             self.kernel_size_in,
             self.stride_in,
@@ -228,7 +228,7 @@ class SlidingWindowParams:
             self.kernel_size_out,
             self.stride_out,
             self.out_trim,
-        )
+        ) + ((self.min_input_size,) if with_min_in_size else ())
 
     def __eq__(self, other):
         if not isinstance(other, SlidingWindowParams):
