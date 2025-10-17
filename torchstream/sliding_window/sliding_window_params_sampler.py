@@ -73,8 +73,6 @@ class SlidingWindowParamsSampler:
         num_wins_needed = z3_ceil_div(z3_max(0, out_needed - self.k_o), self.s_o) + 1
         non_padded_min_input_size = (num_wins_needed - 1) * self.s_i + self.k_i
         native_min_input_size = z3_max(1, non_padded_min_input_size - self.p_l - self.p_r)
-        # TODO? model ictx + s_i >= min_input_size
-        # TODO? use leq because actual mis might be virtually greater (e.g. reflect padding)
         self.optimizer.add(native_min_input_size <= self.mis)
 
         ## Streaming parameters
@@ -87,6 +85,7 @@ class SlidingWindowParamsSampler:
             self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
         )
         self.ods = get_all_output_delays(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
+        # TODO? model ictx + s_i >= native_min_input_size
         self.ictx = Int("ictx")
         self.optimizer.add(
             self.ictx
@@ -106,9 +105,21 @@ class SlidingWindowParamsSampler:
             self.min_od + self.s_o >= self.max_od,
         )
 
-        # Blocker for guiding the solver towards simpler solutions first.
-        self.solution_cost = self.k_i + self.s_i + self.p_l + self.p_r + self.k_o + self.s_o + self.t_o
-        self.max_cost_sampler = ThresholdHarvester(lower_bound=4)
+        # Blockers for guiding the solver towards simpler solutions first. We've got a no free lunch situation:
+        #   - A transform can be expressed with multiple sliding window parameters from the same family, and while
+        #   ideally we'd return the parameters that correspond to the ground truth, our procedure here is not able
+        #   to discriminate for that.
+        #   - The output delay and input context size are fixed for a given transform, but intermediate solutions with
+        #   higher values for these will slow down the search, so guiding the search by minimizing them is good for
+        #   performance.
+        #   - Solutions will very large kernel sizes will be costly to verify with the kernel sparsity solver
+        # Ideally we'd figure out a solver that embeds kernel sparsity directly - or if that is too costly we'd do it
+        # in a separate class and focus on streaming parameters here.
+        # NOTE: using optimizer.minimize() does not seem to be an option due to the logic type used
+        self.simplicity_cost = self.k_i + self.k_o + (self.p_l + self.p_r) / 2 + self.t_o
+        self.max_simplicity_cost_sampler = ThresholdHarvester(lower_bound=2)
+        self.performance_cost = self.max_od + self.ictx
+        self.max_performance_cost_sampler = ThresholdHarvester()
 
         # Constraints added to keep only new solutions
         self.prev_sol_constraints = []
@@ -333,14 +344,18 @@ class SlidingWindowParamsSampler:
         different_family_than: SlidingWindowParams | None = None,
     ) -> SlidingWindowParams | None:
         # TODO! doc
+        
+        # FIXME? Constraints are modifying the sampling direction with stateful cost limits samplers. Shouldn't be a 
+        # problem in practice but it's poor design.
 
+        # TODO
         _MAX_COST_FLAT_LIMIT = 10_000
 
         while True:
-            max_cost_value = self.max_cost_sampler.next_p()
+            max_cost_value = self.max_performance_cost_sampler.next_p()
             max_cost_reached = max_cost_value >= _MAX_COST_FLAT_LIMIT
             max_cost_value = min(max_cost_value, _MAX_COST_FLAT_LIMIT)
-            guide_constraints = [self.solution_cost <= max_cost_value]
+            guide_constraints = [self.performance_cost <= max_cost_value]
 
             guide_constraints.extend(cstrs)
 
@@ -359,16 +374,19 @@ class SlidingWindowParamsSampler:
                     )
                 )
 
-            import time
-
-            start = time.perf_counter()
             check = self.optimizer.check(guide_constraints)
-            # print(f"CHECK: {time.perf_counter() - start:.03f}s - {len(self.sli_optimizer.assertions())} assertions")
-            # print("\x1b[31m", self.sli_optimizer.statistics(), "\x1b[39m", sep="")
-
             if check == sat:
+                # Swap out the solution for one with minimal simplicity
+                while True:
+                    max_simplicity_cost = self.max_simplicity_cost_sampler.next_p()
+                    if self.optimizer.check(guide_constraints + [self.simplicity_cost <= max_simplicity_cost]) == sat:
+                        self.max_simplicity_cost_sampler.update(max_simplicity_cost)
+                        break
+                    else:
+                        self.max_simplicity_cost_sampler.update(None)
+
                 model = self.optimizer.model()
-                model_values = (
+                params = SlidingWindowParams(
                     model[self.k_i].as_long(),
                     self.s_i,
                     model[self.p_l].as_long(),
@@ -391,15 +409,15 @@ class SlidingWindowParamsSampler:
                 self.prev_sol_constraints.append(new_sol_constraint)
 
                 # Inform our sampler of the result
-                cost = sum(model_values[:-1])
+                cost = params.output_delay_bounds[1] + params.streaming_context_size
                 logger.debug(f"Sampled with max cost={max_cost_value}, got solution with cost={cost}")
-                self.max_cost_sampler.update(cost)
+                self.max_performance_cost_sampler.update(cost)
 
-                return SlidingWindowParams(*model_values)
+                return params
 
             else:
                 logger.debug(f"Sampled with max cost={max_cost_value}, got nothing")
-                self.max_cost_sampler.update(None)
+                self.max_performance_cost_sampler.update(None)
 
                 if max_cost_reached:
                     return None

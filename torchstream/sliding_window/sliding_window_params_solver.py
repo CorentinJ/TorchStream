@@ -406,6 +406,8 @@ class SlidingWindowParamsSolver:
         )
         self._debug_check_ref_params(sampler, "adding nan trick record")
 
+    # TODO (major): split further into two steps: one for streaming params (out delay + ctx) using stride based
+    # constraints, and a last step for kernel sizes by embedding the kernel sparsity solver
     def find_sliding_window_params(self):
         # Start by determining the input/output size relationship, it will heavily simplify the param search to
         # know it in advance
