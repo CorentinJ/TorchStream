@@ -585,7 +585,6 @@ version = "0.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
-    { name = "pandas" },
     { name = "pytest" },
     { name = "pytest-profiling" },
     { name = "torch" },
@@ -594,13 +593,13 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "pandas" },
     { name = "torchaudio" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "numpy", specifier = ">=1.23.0" },
-    { name = "pandas", specifier = ">=2.0.3" },
     { name = "pytest", specifier = ">=8.3.4" },
     { name = "pytest-profiling", specifier = ">=1.8.1" },
     { name = "torch", specifier = ">=1.11.0" },
@@ -608,7 +607,10 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "torchaudio", specifier = ">=2.5.1" }]
+dev = [
+    { name = "pandas", specifier = ">=2.0.3" },
+    { name = "torchaudio", specifier = ">=2.5.1" },
+]
 
 [[package]]
 name = "triton"

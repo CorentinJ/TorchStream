@@ -27,6 +27,7 @@ class SlidingWindowParamsSampler:
         in_size_bias_canonical: int,
         out_size_bias_canonical: int,
         minimum_input_size: int,
+        solution_perf_cost_limit: int = 100_000,
     ):
         # TODO: doc
 
@@ -118,8 +119,9 @@ class SlidingWindowParamsSampler:
         # NOTE: using optimizer.minimize() does not seem to be an option due to the logic type used
         self.simplicity_cost = self.k_i + self.k_o + (self.p_l + self.p_r) / 2 + self.t_o
         self.max_simplicity_cost_sampler = ThresholdHarvester(lower_bound=2)
-        self.performance_cost = self.max_od + self.ictx
+        self.performance_cost = self.max_od + self.ictx * self.s_o
         self.max_performance_cost_sampler = ThresholdHarvester()
+        self.solution_perf_cost_limit = solution_perf_cost_limit
 
         # Constraints added to keep only new solutions
         self.prev_sol_constraints = []
@@ -344,17 +346,14 @@ class SlidingWindowParamsSampler:
         different_family_than: SlidingWindowParams | None = None,
     ) -> SlidingWindowParams | None:
         # TODO! doc
-        
-        # FIXME? Constraints are modifying the sampling direction with stateful cost limits samplers. Shouldn't be a 
-        # problem in practice but it's poor design.
 
-        # TODO
-        _MAX_COST_FLAT_LIMIT = 10_000
+        # FIXME? Constraints are modifying the sampling direction with stateful cost limits samplers. Shouldn't be a
+        # problem in practice but it's poor design.
 
         while True:
             max_cost_value = self.max_performance_cost_sampler.next_p()
-            max_cost_reached = max_cost_value >= _MAX_COST_FLAT_LIMIT
-            max_cost_value = min(max_cost_value, _MAX_COST_FLAT_LIMIT)
+            cost_limit_reached = max_cost_value >= self.solution_perf_cost_limit
+            max_cost_value = min(max_cost_value, self.solution_perf_cost_limit)
             guide_constraints = [self.performance_cost <= max_cost_value]
 
             guide_constraints.extend(cstrs)
@@ -409,17 +408,17 @@ class SlidingWindowParamsSampler:
                 self.prev_sol_constraints.append(new_sol_constraint)
 
                 # Inform our sampler of the result
-                cost = params.output_delay_bounds[1] + params.streaming_context_size
-                logger.debug(f"Sampled with max cost={max_cost_value}, got solution with cost={cost}")
-                self.max_performance_cost_sampler.update(cost)
+                perf_cost = params.output_delay_bounds[1] + params.streaming_context_size * self.s_o
+                logger.debug(f"Sampled with max cost={max_cost_value}, got solution with cost={perf_cost}")
+                self.max_performance_cost_sampler.update(perf_cost)
 
                 return params
 
             else:
-                logger.debug(f"Sampled with max cost={max_cost_value}, got nothing")
                 self.max_performance_cost_sampler.update(None)
 
-                if max_cost_reached:
+                if cost_limit_reached:
+                    logger.debug(f"Sampled with max cost={max_cost_value}, got nothing")
                     return None
 
     def get_violations(self, solution: SlidingWindowParams, include_new_sol_assertions: bool = False):
