@@ -108,7 +108,7 @@ class SlidingWindowParamsSolver:
 
         self.debug_ref_params = debug_ref_params
         if debug_ref_params:
-            logger.debug(f"Debug reference parameters: {_compare_sli_params_str(debug_ref_params)}")
+            logger.info(f"Debug reference parameters: {_compare_sli_params_str(debug_ref_params)}")
 
     def run_nan_trick(self, in_seq_size: int, in_nan_range: Tuple[int, int] | None) -> dict:
         """
@@ -361,9 +361,11 @@ class SlidingWindowParamsSolver:
         """
         Debugging method for checking why a good reference hypothesis gets rejected.
         """
+        # FIXME! review
+
         if self.debug_ref_params and (violations := sampler.get_violations(self.debug_ref_params)):
             violations_str = "\n\n-------------------\n\t".join(str(v) for v in violations)
-            logger.debug(
+            logger.info(
                 f"{colors.RED}Reference hypothesis {_compare_sli_params_str(self.debug_ref_params)} "
                 f"\nbecame incompatible with "
                 f"the sampler after {event}"
@@ -391,7 +393,7 @@ class SlidingWindowParamsSolver:
                 )
 
             if allow_rejection:
-                logger.debug(f"--> {colors.BLUE}Rejection is allowed{colors.RESET}")
+                logger.info(f"--> {colors.BLUE}Rejection is allowed{colors.RESET}")
                 self.debug_ref_params = None
             else:
                 raise RuntimeError()

@@ -60,7 +60,7 @@ def run_nan_trick(
     out_seq = Sequence.apply(trsfm, in_seq, out_spec, zero_size_exception_types=zero_size_exception_types)
 
     out_nan_idx = get_nan_idx(out_seq)
-    logger.debug(f"Got a {tuple(out_seq.shape)} shaped output with nans at {out_nan_idx}")
+    logger.info(f"Got a {tuple(out_seq.shape)} shaped output with nans at {out_nan_idx}")
 
     return out_seq, out_nan_idx
 
