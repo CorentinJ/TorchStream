@@ -31,6 +31,7 @@ build-backend = "setuptools.build_meta"
 dev = [
     "torchaudio>=2.5.1",
     "pandas>=2.0.3",
+    "webrtcvad>=2.0.10",
 ]
 
 [tool.ruff]

@@ -21,12 +21,8 @@ from torchstream.sliding_window.sliding_window_params import (
     get_canonicalized_min_in_size,
     get_output_delay_bounds,
 )
-from torchstream.sliding_window.sliding_window_params_sampler import (
-    SlidingWindowParamsSampler,
-)
-from torchstream.sliding_window.sliding_window_stream import (
-    SlidingWindowStream,
-)
+from torchstream.sliding_window.sliding_window_params_sampler import SlidingWindowParamsSampler
+from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 from torchstream.stream_equivalence import test_stream_equivalent
 
 logger = logging.getLogger(__name__)
@@ -50,6 +46,7 @@ def _compare_params_str(params: tuple, real_params: tuple | None, names: Iterabl
         return colors.BLUE + ", ".join(f"{name}{p}" for p, name in zip(params, names)) + colors.RESET
 
 
+# TODO: I need this fancy function elsewhere, it's very useful
 def _compare_sli_params_str(params: SlidingWindowParams, real_params: SlidingWindowParams | None = None) -> str:
     if real_params:
         ref_params = real_params.as_tuple(with_min_in_size=False)

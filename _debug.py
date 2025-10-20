@@ -1,12 +1,14 @@
-from z3 import *
+from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+from torchstream.sliding_window.sliding_window_params_solver import _compare_sli_params_str
 
-x = BitVecVal(0b11010111, 8)
-d = BitVec("d", 8)
-b = Extract(0, 0, d)
+a = SlidingWindowParams(3, 3, 1)
+b = SlidingWindowParams(4, 3, 2)
 
-s = Solver()
-s.add(d == x)
-s.check()
-m = s.model()
 
-print(format(m.evaluate(b).as_long(), "0{}b".format(1)))
+print(_compare_sli_params_str(a, b))
+
+for sol in [a, b]:
+    for k in a.get_inverse_kernel_map(30):
+        print(k)
+    print("----")
+    print()
