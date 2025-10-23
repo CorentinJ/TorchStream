@@ -3,13 +3,12 @@ from functools import partial
 from itertools import zip_longest
 from typing import Callable, Iterable, List, Tuple
 
-import numpy as np
 import torch
 from colorama import Fore as colors
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
-from torchstream.sliding_window.kernel_sparsity import get_init_kernel_array
+from torchstream.sliding_window.kernel_sparsity import KernelSparsitySampler
 from torchstream.sliding_window.nan_trick import get_nan_idx
 from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
     SlidingWindowInOutRelSampler,
@@ -68,10 +67,7 @@ class _SliHypothesis:
     def __init__(self, params: SlidingWindowParams, id: int):
         self.params = params
         self.id = id
-        self.kernels = (
-            get_init_kernel_array(self.params.kernel_size_in),
-            get_init_kernel_array(self.params.kernel_size_out),
-        )
+        self.kernel_sparsity_sampler = KernelSparsitySampler(params)
 
 
 class SlidingWindowParamsSolver:
@@ -284,30 +280,6 @@ class SlidingWindowParamsSolver:
 
         return self.in_out_rel_params
 
-    def _verify_hypothesis_kernels_against_record(
-        self,
-        hypothesis: _SliHypothesis,
-        in_seq_size: int,
-        in_nan_range: Tuple[int, int] | None,
-        out_seq_size: int,
-        out_nan_idx: np.ndarray,
-        out_nan_range: Tuple[int, int] | None,
-    ):
-        # All of our observations rely on the nan trick.
-        if in_nan_range is None or out_seq_size == 0:
-            return True
-
-        # Reject if the nan trick's output is not compatible with the hypothesis
-        new_kernels = determine_kernel_sparsity(
-            hypothesis.params, *hypothesis.kernels, in_seq_size, in_nan_range, out_nan_idx
-        )
-        if new_kernels[0] is None:
-            return False
-        # Update the hypothesis in place
-        hypothesis.kernels = new_kernels
-
-        return True
-
     def _iter_nan_trick_params_for_hypothesis(self, params: SlidingWindowParams):
         # As specified in the sampler, for any given set of parameters, picking a nan range larger than the input
         # kernel size and ensuring that the pre-nan out size is larger than the output kernel size will let us
@@ -398,12 +370,31 @@ class SlidingWindowParamsSolver:
             else:
                 raise RuntimeError()
 
-    def _sli_search_integrate_nan_trick_record(self, sampler: SlidingWindowParamsSampler, record: dict):
-        # Update our sampler with new constraints
+    def _sli_search_integrate_nan_trick_record(
+        self, sampler: SlidingWindowParamsSampler, hypotheses: List[_SliHypothesis], record: dict
+    ) -> List[_SliHypothesis]:
+        out_hyps = []
+
         sampler.add_in_out_range_map(
             record["in_seq_size"], record["out_seq_size"], record["in_nan_range"], record["out_nan_range"]
         )
-        self._debug_check_ref_params(sampler, "adding nan trick record")
+        for hypothesis in hypotheses:
+            self._debug_check_ref_params(sampler, "adding nan trick record", hypothesis.params)
+            if not sampler.is_compatible(hypothesis.params):
+                logger.info(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED by constraints{colors.RESET}")
+                continue
+
+            if record["in_nan_range"] and record["out_seq_size"]:
+                hypothesis.kernel_sparsity_sampler.add_in_out_map(
+                    record["in_seq_size"], record["in_nan_range"], record["out_nan_idx"]
+                )
+                if not hypothesis.kernel_sparsity_sampler.has_solution():
+                    logger.info(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED after kernel check{colors.RESET}")
+                    continue
+
+            out_hyps.append(hypothesis)
+
+        return out_hyps
 
     # TODO (major): split further into two steps: one for streaming params (out delay + ctx) using stride based
     # constraints, and a last step for kernel sizes by embedding the kernel sparsity solver
@@ -415,13 +406,13 @@ class SlidingWindowParamsSolver:
 
         # The NaN tricks we ran for the in/out size relation are relevant, we'll integrate them into the sampler
         for record in self.nan_trick_history:
-            self._sli_search_integrate_nan_trick_record(sampler, record)
+            self._sli_search_integrate_nan_trick_record(sampler, [], record)
 
         step = 1
         out_sols = []
         while len(out_sols) < self.max_equivalent_sols:
             # Sample new sliding window parameters
-            params = sampler.get_new_solution(same_family_as=(out_sols[0] if out_sols else None))
+            params = sampler.get_new_solution(same_family_as=(out_sols[0].params if out_sols else None))
             if params is None:
                 break
 
@@ -430,35 +421,30 @@ class SlidingWindowParamsSolver:
                 f"[Sli params] Step {step}: {_compare_sli_params_str(hypothesis.params, self.debug_ref_params)}"
             )
 
-            checks_passed = all(
-                self._verify_hypothesis_kernels_against_record(hypothesis, **record)
-                for record in self.nan_trick_history
-            )
+            for record in self.nan_trick_history:
+                if record["in_nan_range"] and record["out_seq_size"]:
+                    hypothesis.kernel_sparsity_sampler.add_in_out_map(
+                        record["in_seq_size"], record["in_nan_range"], record["out_nan_idx"]
+                    )
+            checks_passed = hypothesis.kernel_sparsity_sampler.has_solution()
             if not checks_passed:
                 # We don't break here - despite failing the kernel checks, we want to get at least one nan trick run
                 # for this hypothesis.
                 logger.info(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED after kernel check{colors.RESET}")
+            else:
+                out_sols.append(hypothesis)
 
             for nan_trick_params in self._iter_nan_trick_params_for_hypothesis(hypothesis.params):
                 record = self.run_nan_trick(*nan_trick_params)
-                self._sli_search_integrate_nan_trick_record(sampler, record)
-
-                if checks_passed and not self._verify_hypothesis_kernels_against_record(hypothesis, **record):
-                    logger.info(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED after kernel check{colors.RESET}")
-                    checks_passed = False
-                if checks_passed and not sampler.is_compatible(hypothesis.params):
-                    logger.info(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED by constraints{colors.RESET}")
-                    checks_passed = False
+                out_sols = self._sli_search_integrate_nan_trick_record(sampler, out_sols, record)
+                checks_passed &= hypothesis in out_sols
 
                 if not checks_passed:
                     break
 
-            if checks_passed:
-                out_sols.append(hypothesis.params)
-
             step += 1
 
-        return out_sols
+        return [hyp.params for hyp in out_sols]
 
 
 # TODO: allow transforms with multiple sequential inputs
