@@ -1,9 +1,12 @@
+import logging
 from typing import Tuple
 
 import numpy as np
 from z3 import And, Bool, Not, Or, Solver, unsat
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+
+logger = logging.getLogger(__name__)
 
 
 def get_init_kernel_array(kernel_size: int, full: bool = False) -> np.ndarray:
@@ -30,79 +33,138 @@ def get_init_kernel_array(kernel_size: int, full: bool = False) -> np.ndarray:
     return kernel
 
 
-def determine_kernel_sparsity(
+def get_nan_map(
     params: SlidingWindowParams,
-    kernel_in_prior: np.ndarray,
-    kernel_out_prior: np.ndarray,
     in_len: int,
-    in_nan_range: Tuple[int, int],
-    out_nan_idx: np.ndarray,
-) -> Tuple[np.ndarray | None, np.ndarray | None]:
+    in_nan_range: Tuple[int, int] | None,
+    kernel_in: np.ndarray | None = None,
+    kernel_out: np.ndarray | None = None,
+):
     # TODO! doc
-    if kernel_in_prior.shape != (params.kernel_size_in,):
-        raise ValueError(f"kernel_in_prior must have shape ({params.kernel_size_in},), got {kernel_in_prior.shape}")
-    if kernel_out_prior.shape != (params.kernel_size_out,):
-        raise ValueError(f"kernel_out_prior must have shape ({params.kernel_size_out},), got {kernel_out_prior.shape}")
+    assert in_nan_range is None or (0 <= in_nan_range[0] < in_nan_range[1] <= in_len)
 
-    _, num_wins, _ = params.get_metrics_for_input(in_len)
+    if kernel_in is None:
+        kernel_in = get_init_kernel_array(params.kernel_size_in, full=True)
+    if kernel_out is None:
+        kernel_out = get_init_kernel_array(params.kernel_size_out, full=True)
 
-    solver = Solver()
-    corrupted_wins = [Bool("corrupted_win_" + str(i)) for i in range(num_wins)]
-    kernel_in = [Bool("kernel_in_" + str(i)) for i in range(params.kernel_size_in)]
-    kernel_out = [Bool("kernel_out_" + str(i)) for i in range(params.kernel_size_out)]
+    if kernel_in.shape != (params.kernel_size_in,):
+        raise ValueError(f"kernel_in_prior must have shape ({params.kernel_size_in},), got {kernel_in.shape}")
+    if kernel_out.shape != (params.kernel_size_out,):
+        raise ValueError(f"kernel_out_prior must have shape ({params.kernel_size_out},), got {kernel_out.shape}")
 
-    # Apply the kernel priors
-    for idx, val in enumerate(kernel_in_prior):
-        if val == 0:
-            solver.add(Not(kernel_in[idx]))
-        elif val == 2:
-            solver.add(kernel_in[idx])
-    for idx, val in enumerate(kernel_out_prior):
-        if val == 0:
-            solver.add(Not(kernel_out[idx]))
-        elif val == 2:
-            solver.add(kernel_out[idx])
+    _, num_wins, out_len = params.get_metrics_for_input(in_len)
+    nan_map = np.zeros(out_len, dtype=np.int64)
+    if not in_nan_range:
+        return nan_map
 
-    for win_idx, ((in_start, in_stop), (out_start, out_stop)) in enumerate(params.iter_kernel_map(num_wins)):
-        # The kernel can only output nans (=be corrupted) if it has any overlap with the input nans
-        if in_nan_range[0] < in_stop and in_start < in_nan_range[1]:
-            kernel_in_nan_range = (
-                max(in_nan_range[0], in_start) - in_start,
-                min(in_nan_range[1], in_stop) - in_start,
-            )
-            corrupted_wins[win_idx] = Or(*[kernel_in[i] for i in range(*kernel_in_nan_range)])
-        else:
-            solver.add(Not(corrupted_wins[win_idx]))
-
-    for out_idx, inv_map in enumerate(params.get_inverse_kernel_map(in_len)):
-        any_corrupted_constraint = Or(
-            *[
-                And(corrupted_wins[win_idx], kernel_out[kernel_out_idx])
-                for win_idx, in_start, _, kernel_out_idx in inv_map
-            ]
+    for (in_start, in_stop), (out_start, out_stop) in params.iter_kernel_map(num_wins):
+        window_value = max(
+            kernel_in[i] if in_nan_range[0] <= in_start + i < in_nan_range[1] else 0
+            for i in range(params.kernel_size_in)
         )
-        solver.add(any_corrupted_constraint if out_idx in out_nan_idx else Not(any_corrupted_constraint))
+        for i in range(params.kernel_size_out):
+            if 0 <= out_start + i < out_len:
+                nan_map[out_start + i] = max(nan_map[out_start + i], min(kernel_out[i], window_value))
 
-    # If the solver can't find any solution, then the parameters do not allow to explain the observed nans
-    if solver.check() == unsat:
-        return None, None
+    return nan_map
 
-    kernel_in_values = kernel_in_prior.copy()
-    kernel_out_values = kernel_out_prior.copy()
-    for i in range(params.kernel_size_in):
-        if kernel_in_prior[i] == 1:
-            if solver.check(kernel_in[i]) == unsat:
-                kernel_in_values[i] = 0
-            elif solver.check(Not(kernel_in[i])) == unsat:
-                kernel_in_values[i] = 2
-    for i in range(params.kernel_size_out):
-        if kernel_out_prior[i] == 1:
-            if solver.check(kernel_out[i]) == unsat:
-                kernel_out_values[i] = 0
-            elif solver.check(Not(kernel_out[i])) == unsat:
-                kernel_out_values[i] = 2
 
-    return kernel_in_values, kernel_out_values
+class KernelSparsitySampler:
+    def __init__(
+        self,
+        params: SlidingWindowParams,
+        kernel_in_prior: np.ndarray | None = None,
+        kernel_out_prior: np.ndarray | None = None,
+    ):
+        # TODO! doc
+        if kernel_in_prior is None:
+            kernel_in_prior = get_init_kernel_array(params.kernel_size_in)
+        if kernel_out_prior is None:
+            kernel_out_prior = get_init_kernel_array(params.kernel_size_out)
+
+        if kernel_in_prior.shape != (params.kernel_size_in,):
+            raise ValueError(f"kernel_in_prior must have shape ({params.kernel_size_in},), got {kernel_in_prior.shape}")
+        if kernel_out_prior.shape != (params.kernel_size_out,):
+            raise ValueError(
+                f"kernel_out_prior must have shape ({params.kernel_size_out},), got {kernel_out_prior.shape}"
+            )
+
+        self.params = params
+
+        # Define a solver with the sparsity values of the kernel elements as boolean variables
+        self.solver = Solver()
+        self._kernel_in = [Bool("kernel_in_" + str(i)) for i in range(self.params.kernel_size_in)]
+        self._kernel_out = [Bool("kernel_out_" + str(i)) for i in range(self.params.kernel_size_out)]
+
+        # Apply the kernel priors, we won't use them again later
+        for idx, val in enumerate(kernel_in_prior):
+            if val == 0:
+                self.solver.add(Not(self._kernel_in[idx]))
+            elif val == 2:
+                self.solver.add(self._kernel_in[idx])
+        for idx, val in enumerate(kernel_out_prior):
+            if val == 0:
+                self.solver.add(Not(self._kernel_out[idx]))
+            elif val == 2:
+                self.solver.add(self._kernel_out[idx])
+
+    def add_in_out_map(self, in_len: int, in_nan_range: Tuple[int, int], out_nan_idx: np.ndarray):
+        # Encode each window being corrupted as a boolean variable
+        _, num_wins, _ = self.params.get_metrics_for_input(in_len)
+        var_id = len(self.solver.assertions())
+        corrupted_wins = [Bool(f"corrupted_win_{var_id}_{i}") for i in range(num_wins)]
+
+        for win_idx, ((in_start, in_stop), (out_start, out_stop)) in enumerate(self.params.iter_kernel_map(num_wins)):
+            # The kernel can only output nans (=be corrupted) if it has any overlap with the input nans
+            if in_nan_range[0] < in_stop and in_start < in_nan_range[1]:
+                kernel_in_nan_range = (
+                    max(in_nan_range[0], in_start) - in_start,
+                    min(in_nan_range[1], in_stop) - in_start,
+                )
+                corrupted_wins[win_idx] = Or(*[self._kernel_in[i] for i in range(*kernel_in_nan_range)])
+            else:
+                self.solver.add(Not(corrupted_wins[win_idx]))
+
+        for out_idx, inv_map in enumerate(self.params.get_inverse_kernel_map(in_len)):
+            any_corrupted_constraint = Or(
+                *[
+                    And(corrupted_wins[win_idx], self._kernel_out[kernel_out_idx])
+                    for win_idx, in_start, _, kernel_out_idx in inv_map
+                ]
+            )
+            self.solver.add(any_corrupted_constraint if out_idx in out_nan_idx else Not(any_corrupted_constraint))
+
+    def has_solution(self) -> bool:
+        # If the solver can't find any solution, then the parameters do not allow to explain the observed nans
+        return self.solver.check() != unsat
+
+    def determine(self) -> Tuple[np.ndarray | None, np.ndarray | None]:
+        # TODO: doc
+        if not self.has_solution():
+            return None, None
+
+        kernel_in_values = get_init_kernel_array(self.params.kernel_size_in)
+        kernel_out_values = get_init_kernel_array(self.params.kernel_size_out)
+
+        assertions = self.solver.assertions()
+        for kernel_var, kernel_value_array in (
+            (self._kernel_in, kernel_in_values),
+            (self._kernel_out, kernel_out_values),
+        ):
+            for i in range(len(kernel_var)):
+                assertion_to_add = None
+                if self.solver.check(kernel_var[i]) == unsat:
+                    kernel_value_array[i] = 0
+                    assertion_to_add = Not(kernel_var[i])
+                elif self.solver.check(Not(kernel_var[i])) == unsat:
+                    kernel_value_array[i] = 2
+                    assertion_to_add = kernel_var[i]
+
+                if assertion_to_add is not None and assertion_to_add not in assertions:
+                    self.solver.add(assertion_to_add)
+
+        return kernel_in_values, kernel_out_values
 
 
 ### Bitvec version below - twice as slow :(   ####
@@ -192,40 +254,3 @@ def determine_kernel_sparsity(
 #                 kernel_out_values[i] = 2
 
 #     return kernel_in_values, kernel_out_values
-
-
-def get_nan_map(
-    params: SlidingWindowParams,
-    in_len: int,
-    in_nan_range: Tuple[int, int] | None,
-    kernel_in_prior: np.ndarray | None = None,
-    kernel_out_prior: np.ndarray | None = None,
-):
-    # TODO! doc
-    assert in_nan_range is None or (0 <= in_nan_range[0] < in_nan_range[1] <= in_len)
-
-    if kernel_in_prior is None:
-        kernel_in_prior = get_init_kernel_array(params.kernel_size_in, full=True)
-    if kernel_out_prior is None:
-        kernel_out_prior = get_init_kernel_array(params.kernel_size_out, full=True)
-
-    if kernel_in_prior.shape != (params.kernel_size_in,):
-        raise ValueError(f"kernel_in_prior must have shape ({params.kernel_size_in},), got {kernel_in_prior.shape}")
-    if kernel_out_prior.shape != (params.kernel_size_out,):
-        raise ValueError(f"kernel_out_prior must have shape ({params.kernel_size_out},), got {kernel_out_prior.shape}")
-
-    _, num_wins, out_len = params.get_metrics_for_input(in_len)
-    nan_map = np.zeros(out_len, dtype=np.int64)
-    if not in_nan_range:
-        return nan_map
-
-    for (in_start, in_stop), (out_start, out_stop) in params.iter_kernel_map(num_wins):
-        window_value = max(
-            kernel_in_prior[i] if in_nan_range[0] <= in_start + i < in_nan_range[1] else 0
-            for i in range(params.kernel_size_in)
-        )
-        for i in range(params.kernel_size_out):
-            if 0 <= out_start + i < out_len:
-                nan_map[out_start + i] = max(nan_map[out_start + i], min(kernel_out_prior[i], window_value))
-
-    return nan_map

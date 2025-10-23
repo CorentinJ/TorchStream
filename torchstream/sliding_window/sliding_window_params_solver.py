@@ -9,7 +9,7 @@ from colorama import Fore as colors
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
-from torchstream.sliding_window.kernel_sparsity import determine_kernel_sparsity, get_init_kernel_array
+from torchstream.sliding_window.kernel_sparsity import get_init_kernel_array
 from torchstream.sliding_window.nan_trick import get_nan_idx
 from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
     SlidingWindowInOutRelSampler,
