@@ -12,9 +12,20 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
-def my_transform(y):
-    with patch("librosa.util.utils.valid_audio", return_value=True):
-        return librosa.core.resample(y, orig_sr=32000, target_sr=16000)
+RESAMPLING_ALGOS = [
+    dict(name="kaiser_best", zero_size_exception_types=(ValueError,)),
+]
 
 
-find_sliding_window_params(my_transform, SeqSpec((-1), dtype=np.float32))
+for res_dict in RESAMPLING_ALGOS:
+
+    def my_transform(y):
+        with patch("librosa.util.utils.valid_audio", return_value=True):
+            return librosa.core.resample(y, orig_sr=32000, target_sr=16000, res_type=res_dict["name"])
+
+    sols = find_sliding_window_params(
+        my_transform,
+        SeqSpec((-1), dtype=np.float32),
+        zero_size_exception_types=res_dict["zero_size_exception_types"],
+    )
+    print(sols)

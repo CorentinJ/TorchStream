@@ -25,7 +25,9 @@ transform = torchaudio.transforms.Spectrogram(
 in_spec = SeqSpec(-1)
 out_spec = SeqSpec(n_fft // 2 + 1, -1)
 
-# Specify max_equivalent_sols>1 to get multiple equivalent solutions
+# The first solution might be different to the ground truth parameters but functionally equivalent (with an output
+# kernel>1 for instance). Specify max_equivalent_sols>1 to get multiple equivalent solutions, you'll get the same as
+# ground truth among them.
 sols = find_sliding_window_params(transform, in_spec, out_spec)
 print(sols)
 params = sols[0]
