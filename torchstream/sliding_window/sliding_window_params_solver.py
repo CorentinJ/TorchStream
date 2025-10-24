@@ -8,13 +8,13 @@ from colorama import Fore as colors
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
-from torchstream.sliding_window.kernel_sparsity import KernelSparsitySampler
-from torchstream.sliding_window.nan_trick import get_nan_idx
-from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
-    SlidingWindowInOutRelSampler,
+from torchstream.sliding_window.in_out_rel.in_out_rel_sampler import (
+    InOutRelSampler,
     compute_in_to_out_sizes,
     input_size_by_max_infogain,
 )
+from torchstream.sliding_window.kernel_sparsity import KernelSparsitySampler
+from torchstream.sliding_window.nan_trick import get_nan_idx
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
     get_canonicalized_min_in_size,
@@ -195,7 +195,7 @@ class SlidingWindowParamsSolver:
         # Ensure we have at least one example input before starting
         self.run_initial_input()
 
-        sampler = SlidingWindowInOutRelSampler()
+        sampler = InOutRelSampler()
         for record in self.nan_trick_history:
             sampler.add_in_out_size(record["in_seq_size"], record["out_seq_size"])
 
