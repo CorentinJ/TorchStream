@@ -10,8 +10,6 @@ license-files = ["LICENSE"]
 requires-python = ">=3.8"
 dependencies = [
     "numpy>=1.23.0",
-    "pytest-profiling>=1.8.1",
-    "pytest>=8.3.4",
     "torch>=1.11.0",
     "z3-solver>=4.14.0.0",
 ]
@@ -28,12 +26,19 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [dependency-groups]
-dev = [
+demos = [
+    "diffusers>=0.35.2",
+    "torchsde>=0.2.6",
     "torchaudio>=2.5.1",
-    "pandas>=2.0.3",
+    "transformers>=4.46.3",
     "webrtcvad>=2.0.10",
     "librosa>=0.11.0",
     "resampy>=0.4.3",
+    "accelerate>=1.0.1",
+]
+dev = [
+    "pytest>=8.3.4",
+    "pytest-profiling>=1.8.1",
 ]
 
 [tool.ruff]
