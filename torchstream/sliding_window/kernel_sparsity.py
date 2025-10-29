@@ -126,14 +126,15 @@ class KernelSparsitySampler:
             else:
                 self.solver.add(Not(corrupted_wins[win_idx]))
 
-        for out_idx, inv_map in enumerate(self.params.get_inverse_kernel_map(in_len)):
-            any_corrupted_constraint = Or(
-                *[
-                    And(corrupted_wins[win_idx], self._kernel_out[kernel_out_idx])
-                    for win_idx, in_start, _, kernel_out_idx in inv_map
-                ]
-            )
-            self.solver.add(any_corrupted_constraint if out_idx in out_nan_idx else Not(any_corrupted_constraint))
+        for out_start, out_end, overlapping_wins in self.params.get_inverse_kernel_map(in_len):
+            for out_idx in range(out_start, out_end):
+                any_corrupted_constraint = Or(
+                    *[
+                        And(corrupted_wins[win_idx], self._kernel_out[kernel_out_start + out_idx - out_start])
+                        for win_idx, kernel_out_start, kernel_out_stop in overlapping_wins
+                    ]
+                )
+                self.solver.add(any_corrupted_constraint if out_idx in out_nan_idx else Not(any_corrupted_constraint))
 
     def has_solution(self) -> bool:
         # If the solver can't find any solution, then the parameters do not allow to explain the observed nans

@@ -318,6 +318,7 @@ class Sequence:
         trsfm: Callable,
         in_seq: "Sequence",
         out_spec: SeqSpec | None = None,
+        # TODO! support catching exception by their signature rather than type alone
         zero_size_exception_types: Tuple[type[Exception], ...] = (RuntimeError,),
     ) -> "Sequence":
         out_spec = out_spec or in_seq

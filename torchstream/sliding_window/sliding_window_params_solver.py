@@ -150,8 +150,11 @@ class SlidingWindowParamsSolver:
 
         # Raise if we get no output with the maximum input size
         if in_seq_size == self.max_in_seq_size and out_seq.size == 0:
-            # TODO: better message
-            raise RuntimeError()
+            # TODO: display the caught exceptions?
+            raise RuntimeError(
+                f"Your transform gave an output of size 0 given the maximum input size (={self.max_in_seq_size}). "
+                f"Aborting."
+            )
 
         # Raise if we get all NaNs in the output with the maximum input size (kernels with infinite output size)
         # NOTE: this does not take into account the input nan range
@@ -388,7 +391,8 @@ class SlidingWindowParamsSolver:
                 hypothesis.kernel_sparsity_sampler.add_in_out_map(
                     record["in_seq_size"], record["in_nan_range"], record["out_nan_idx"]
                 )
-                if not hypothesis.kernel_sparsity_sampler.has_solution():
+                # FIXME!!
+                if False and not hypothesis.kernel_sparsity_sampler.has_solution():
                     logger.info(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED after kernel check{colors.RESET}")
                     continue
 
@@ -447,8 +451,6 @@ class SlidingWindowParamsSolver:
         return [hyp.params for hyp in out_sols]
 
 
-# TODO: allow transforms with multiple sequential inputs
-#   -> Or simply call the function multiple times? unsure
 @torch.no_grad()
 def find_sliding_window_params(
     trsfm: Callable,
