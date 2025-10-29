@@ -2,7 +2,7 @@ import logging
 from typing import Tuple
 
 import numpy as np
-from z3 import UGT, And, BitVec, BitVecVal, Extract, Not, Or, Solver, unsat
+from z3 import UGT, BitVec, BitVecVal, Extract, Or, Solver, unsat
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 
@@ -115,9 +115,12 @@ class KernelSparsitySampler:
 
     def add_in_out_map(self, in_len: int, in_nan_range: Tuple[int, int], out_nan_idx: np.ndarray):
         # Encode each window being corrupted as a boolean variable
-        _, num_wins, _ = self.params.get_metrics_for_input(in_len)
+        _, num_wins, out_len = self.params.get_metrics_for_input(in_len)
         var_id = len(self.solver.assertions())
         corrupted_wins = BitVec(f"cw_{var_id}", num_wins)
+
+        out_nan_mask = sum(1 << idx for idx in out_nan_idx if 0 <= idx < out_len)
+        out_nan_vec = BitVecVal(out_nan_mask, out_len)
 
         for win_idx, ((in_start, in_stop), (out_start, out_stop)) in enumerate(self.params.iter_kernel_map(num_wins)):
             win_mask = 1 << win_idx
@@ -140,18 +143,30 @@ class KernelSparsitySampler:
                 self.solver.add(corrupted_wins & win_mask == 0)
 
         for out_start, out_end, overlapping_wins in self.params.get_inverse_kernel_map(in_len):
-            for out_idx in range(out_start, out_end):
-                # TODO: optimize
-                any_corrupted_constraint = Or(
-                    *[
-                        And(
-                            (corrupted_wins & (1 << win_idx)) != 0,
-                            (self._kernel_out & (1 << (kernel_out_start + out_idx - out_start))) != 0,
-                        )
-                        for win_idx, kernel_out_start, kernel_out_stop in overlapping_wins
-                    ]
+            out_nan_slice = Extract(out_end - 1, out_start, out_nan_vec)
+
+            nan_kernel_slices = [
+                Or(
+                    # TODO: maybe let's not use bitvecs for the corrupted_wins?
+                    corrupted_wins & (1 << win_idx) != 0,
+                    Extract(kernel_out_stop - 1, kernel_out_start, self._kernel_out),
+                    BitVecVal(0, kernel_out_stop - kernel_out_start)
                 )
-                self.solver.add(any_corrupted_constraint if out_idx in out_nan_idx else Not(any_corrupted_constraint))
+                for win_idx, kernel_out_start, kernel_out_stop in overlapping_wins
+            ]
+
+            #     # TODO: optimize
+            # for out_idx in range(out_start, out_end):
+            #     any_corrupted_constraint = Or(
+            #         *[
+            #             And(
+            #                 (corrupted_wins & (1 << win_idx)) != 0,
+            #                 (self._kernel_out & (1 << (kernel_out_start + out_idx - out_start))) != 0,
+            #             )
+            #             for win_idx, kernel_out_start, kernel_out_stop in overlapping_wins
+            #         ]
+            #     )
+            #     self.solver.add(any_corrupted_constraint if out_idx in out_nan_idx else Not(any_corrupted_constraint))
 
     def has_solution(self) -> bool:
         # If the solver can't find any solution, then the parameters do not allow to explain the observed nans

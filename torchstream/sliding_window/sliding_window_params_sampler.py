@@ -27,7 +27,7 @@ class SlidingWindowParamsSampler:
         in_size_bias_canonical: int,
         out_size_bias_canonical: int,
         minimum_input_size: int,
-        solution_perf_cost_limit: int = 100_000,
+        solution_perf_cost_limit: int = 1_000_000,
     ):
         # TODO: doc
 
@@ -409,7 +409,7 @@ class SlidingWindowParamsSampler:
 
                 # Inform our sampler of the result
                 perf_cost = params.output_delay_bounds[1] + params.streaming_context_size * self.s_o
-                logger.info(f"Sampled with max cost={max_cost_value}, got solution with cost={perf_cost}")
+                logger.info(f"Sampled with max cost={max_cost_value:,}, got solution with cost={perf_cost:,}")
                 self.max_performance_cost_sampler.update(perf_cost)
 
                 return params
@@ -418,7 +418,7 @@ class SlidingWindowParamsSampler:
                 self.max_performance_cost_sampler.update(None)
 
                 if cost_limit_reached:
-                    logger.info(f"Sampled with max cost={max_cost_value}, got nothing")
+                    logger.info(f"Sampled with max cost={max_cost_value:,}, got nothing")
                     return None
 
     def get_violations(self, solution: SlidingWindowParams, include_new_sol_assertions: bool = False):

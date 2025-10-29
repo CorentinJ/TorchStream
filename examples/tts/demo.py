@@ -1,8 +1,13 @@
-import soundfile as sf
+import logging
+
 import torch
 from kokoro import KPipeline
 
-from torchstream.call_intercept import intercept
+from torchstream.sequence.seq_spec import SeqSpec
+from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 # Change the tensor repr to show the shape and device, which saves a lot of time for debugging
 old_repr = torch.Tensor.__repr__
@@ -42,6 +47,28 @@ def mod_decoder_forward(self, asr, F0_curve, N, s):
     return x
 
 
-with intercept("kokoro.istftnet.Decoder.forward") as calls:
-    *_, audio = next(pipeline(text, voice="af_heart"))
-    sf.write("demo_audio.wav", audio, 24000)
+# orig = pipeline.model.decoder.forward
+
+
+def trsfm(x: torch.Tensor):
+    asr = x.expand((-1, 512, -1))
+    F0_curve = x.repeat_interleave(2, dim=-1)[0]
+    N = F0_curve
+    s = x.new_zeros(1, 128)
+
+    return pipeline.model.decoder.forward(asr, F0_curve, N, s)
+
+
+find_sliding_window_params(
+    trsfm,
+    SeqSpec(1, 1, -1, device=pipeline.model.device),
+    SeqSpec(1, 1, -1, device=pipeline.model.device),
+    zero_size_exception_types=(),
+)
+
+
+# *_, audio = next(pipeline(text, voice="af_heart"))
+# sf.write("demo_audio.wav", audio, 24000)
+
+# TODO
+# with intercept("kokoro.istftnet.Decoder.forward") as calls:

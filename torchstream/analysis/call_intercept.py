@@ -3,7 +3,7 @@ from typing import Callable
 
 
 class _Intercept:
-    # TODO: 
+    # TODO:
     #   - arg to intercept only once
     #   - boolean for storing the call
     #   - return value for the call?
@@ -50,7 +50,7 @@ class _Intercept:
             return self._handler(orig_fn, args, kwargs)
 
         setattr(obj, attr_name, wrapper)
-        return self.calls
+        return self
 
     def __exit__(self, exc_type, exc, tb):
         if self._owner is not None and self._attr_name is not None:
@@ -59,3 +59,7 @@ class _Intercept:
 
 
 intercept = _Intercept
+
+
+def intercept_function_for_analysis(target: str):
+    pass
