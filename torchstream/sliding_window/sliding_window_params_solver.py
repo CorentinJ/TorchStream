@@ -391,8 +391,7 @@ class SlidingWindowParamsSolver:
                 hypothesis.kernel_sparsity_sampler.add_in_out_map(
                     record["in_seq_size"], record["in_nan_range"], record["out_nan_idx"]
                 )
-                # FIXME!!
-                if False and not hypothesis.kernel_sparsity_sampler.has_solution():
+                if not hypothesis.kernel_sparsity_sampler.has_solution():
                     logger.info(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED after kernel check{colors.RESET}")
                     continue
 
