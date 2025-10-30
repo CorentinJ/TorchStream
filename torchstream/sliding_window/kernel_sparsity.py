@@ -2,7 +2,7 @@ import logging
 from typing import Tuple
 
 import numpy as np
-from z3 import And, Bool, Not, Or, Solver, unsat
+from z3 import And, Bool, Not, Or, unsat
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 
@@ -33,6 +33,7 @@ def get_init_kernel_array(kernel_size: int, full: bool = False) -> np.ndarray:
     return kernel
 
 
+# TODO: merge with _get_window_corruption_map, it's the same logic
 def get_nan_map(
     params: SlidingWindowParams,
     in_len: int,
@@ -95,31 +96,31 @@ class KernelSparsitySampler:
         self._kernel_out = kernel_out_prior.copy()
         self._solvable = True
 
-        # Define a solver with the sparsity values of the kernel elements as boolean variables
-        self.solver = Solver()
-        self._kernel_in_var = [Bool("kernel_in_" + str(i)) for i in range(self.params.kernel_size_in)]
-        self._kernel_out_var = [Bool("kernel_out_" + str(i)) for i in range(self.params.kernel_size_out)]
+        # # Define a solver with the sparsity values of the kernel elements as boolean variables
+        # self.solver = Solver()
+        # self._kernel_in_var = [Bool("kernel_in_" + str(i)) for i in range(self.params.kernel_size_in)]
+        # self._kernel_out_var = [Bool("kernel_out_" + str(i)) for i in range(self.params.kernel_size_out)]
 
-        # Apply the kernel priors
-        # FIXME!
-        for idx, val in enumerate(kernel_in_prior):
-            if val == 0:
-                self.solver.add(Not(self._kernel_in_var[idx]))
-            elif val == 2:
-                self.solver.add(self._kernel_in_var[idx])
-        for idx, val in enumerate(kernel_out_prior):
-            if val == 0:
-                self.solver.add(Not(self._kernel_out_var[idx]))
-            elif val == 2:
-                self.solver.add(self._kernel_out_var[idx])
+        # # Apply the kernel priors
+        # # FIXME!
+        # for idx, val in enumerate(kernel_in_prior):
+        #     if val == 0:
+        #         self.solver.add(Not(self._kernel_in_var[idx]))
+        #     elif val == 2:
+        #         self.solver.add(self._kernel_in_var[idx])
+        # for idx, val in enumerate(kernel_out_prior):
+        #     if val == 0:
+        #         self.solver.add(Not(self._kernel_out_var[idx]))
+        #     elif val == 2:
+        #         self.solver.add(self._kernel_out_var[idx])
 
     def _get_window_corruption_map(
         self, in_len: int, in_nan_range: Tuple[int, int], out_nan_idx: np.ndarray
     ) -> np.ndarray | None:
         """
-        Given an input and output nan map, returns the window corruption array based on the current kernel sparsity
-        assumptions. Returns None if the input and output NaNs observed cannot be reconciled with the current
-        parameters or kernel sparsity assumptions.
+        Given an input and output nan map, returns the window corruption array (with values 0, 1, 2) based on the
+        current kernel sparsity assumptions. Returns None if the input and output NaNs observed cannot be reconciled
+        with the current parameters or kernel sparsity assumptions.
         """
         padding, num_wins, out_len = self.params.get_metrics_for_input(in_len)
 
@@ -170,6 +171,27 @@ class KernelSparsitySampler:
         return corrupted_wins
 
     def add_in_out_map(self, in_len: int, in_nan_range: Tuple[int, int], out_nan_idx: np.ndarray):
+        if not self._solvable:
+            return
+
+        expected_out = get_nan_map(
+            self.params,
+            in_len,
+            in_nan_range,
+            kernel_in=self._kernel_in,
+            kernel_out=self._kernel_out,
+        )
+
+        for idx, value in enumerate(expected_out):
+            if (value == 2 and idx not in out_nan_idx) or (value == 0 and idx in out_nan_idx):
+                self._solvable = False
+                return
+
+        return
+
+        # FIXME!
+        ###########
+
         # We'll save some work for the solver by figuring out which windows are corrupted based on the current kernel
         # assumptions, and only write constraints for those windows.
         corrupted_wins = self._get_window_corruption_map(in_len, in_nan_range, out_nan_idx)
@@ -182,7 +204,9 @@ class KernelSparsitySampler:
 
         # Encode each window being corrupted as a boolean variable
         var_id = len(self.solver.assertions())
-        corrupted_wins = [Bool(f"corrupted_win_{var_id}_{i}") for i in range(num_wins)]
+        corrupted_win_vars = {
+            i: Bool(f"corrupted_win_{var_id}_{i}") for i, value in enumerate(corrupted_wins) if value == 1
+        }
 
         for win_idx, ((in_start, in_stop), (out_start, out_stop)) in enumerate(win_map):
             # The kernel can only output nans (=be corrupted) if it has any overlap with the input nans
@@ -214,7 +238,8 @@ class KernelSparsitySampler:
 
     def has_solution(self) -> bool:
         # If the solver can't find any solution, then the parameters do not allow to explain the observed nans
-        return self._solvable and (self.solver.check() != unsat)
+        # FIXME!!
+        return self._solvable  # and (self.solver.check() != unsat)
 
     def determine(self) -> Tuple[np.ndarray | None, np.ndarray | None]:
         # TODO: doc
