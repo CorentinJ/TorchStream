@@ -163,7 +163,9 @@ class SlidingWindowParams:
 
         return padding, num_wins, out_len
 
-    def iter_kernel_map(self, num_wins: int | None = None) -> Iterator[Tuple[Tuple[int, int], Tuple[int, int]]]:
+    def iter_kernel_map(
+        self, *, in_len: int | None = None, num_wins: int | None = None
+    ) -> Iterator[Tuple[Tuple[int, int], Tuple[int, int]]]:
         """
         Iterates over the regions of input and output mapped by the sliding window transform.
 
@@ -174,9 +176,18 @@ class SlidingWindowParams:
         - Similarly, output windows will have negative bounds if they are to be trimmed on the left, and bounds beyond
         the output size when trimmed on the right.
 
-        :param num_wins: The number of windows to iterate over. If None, it will iterate without limit.
+        :param in_len: Length of the input tensor. Mutex with num_wins.
+        :param num_wins: The number of windows to iterate over. Mutex with in_len, if neither are provided, iterates
+        indefinitely.
         """
-        num_wins = num_wins if num_wins is not None else int(1e10)
+        if in_len is not None:
+            if num_wins is not None:
+                raise ValueError("Only one of in_len and num_wins should be provided.")
+            _, num_wins, _ = self.get_metrics_for_input(in_len)
+        elif num_wins is None:
+            num_wins = int(1e10)
+        else:
+            num_wins = int(num_wins)
 
         for i in range(num_wins):
             yield (
@@ -196,9 +207,9 @@ class SlidingWindowParams:
         """
         Wrapper around get_kernel_map() that bounds the input and output windows between 0 and their respective sizes.
         """
-        _, num_wins, out_len = self.get_metrics_for_input(in_len)
+        _, _, out_len = self.get_metrics_for_input(in_len)
 
-        for (in_start, in_stop), (out_start, out_stop) in self.iter_kernel_map(num_wins):
+        for (in_start, in_stop), (out_start, out_stop) in self.iter_kernel_map(in_len=in_len):
             if bound_input:
                 in_start = min(max(in_start, 0), in_len)
                 in_stop = min(max(in_stop, 0), in_len)
@@ -214,10 +225,10 @@ class SlidingWindowParams:
 
         # Compute the overlapping output windows with the following output format:
         #   [(out_start, out_end, [(win_idx, kernel_out_start, kernel_out_end), ...]), ...]
-        # TODO: this is O(n^2) when it can be done in O(n) 
+        # TODO: this is O(n^2) when it can be done in O(n)
         win_out_map = [
             (win_idx, out_start, out_stop)
-            for win_idx, (_, (out_start, out_stop)) in enumerate(self.iter_kernel_map(num_wins))
+            for win_idx, (_, (out_start, out_stop)) in enumerate(self.iter_kernel_map(num_wins=num_wins))
         ]
         transition_points = sorted(
             set([max(min(pt, out_len), 0) for _, start, stop in win_out_map for pt in (start, stop)])

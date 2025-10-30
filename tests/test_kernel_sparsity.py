@@ -41,6 +41,7 @@ def test_determine_kernel_sparsity_moving_average(sli_params: SlidingWindowParam
     for _ in range(10):
         in_len = sli_params.get_min_input_size_for_out_size(rng.integers(1, 100))
         in_nan_range = tuple(sorted(rng.choice(in_len + 1, size=2, replace=False)))
+        in_nan_range = (int(in_nan_range[0]), int(in_nan_range[1]))
 
         out_nan_map = get_nan_map(
             sli_params,
