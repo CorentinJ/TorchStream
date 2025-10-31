@@ -141,6 +141,9 @@ class NumpyArrayInterface(ArrayInterface[np.ndarray]):
     def copy(self, arr: np.ndarray) -> np.ndarray:
         return np.copy(arr)
 
+    def __repr__(self) -> str:
+        return f"NumpyArrayInterface(dtype={self.dtype})"
+
 
 class TensorInterface(ArrayInterface[torch.Tensor]):
     def __init__(self, dtype_like: torch.dtype | torch.Tensor, device: str | torch.device = None):
@@ -154,6 +157,8 @@ class TensorInterface(ArrayInterface[torch.Tensor]):
         else:
             self.dtype = dtype_like
             self.device = torch.device(device or "cpu")
+            if self.device.index is None and self.device.type == "cuda":
+                self.device = torch.device("cuda:0")
 
     def get(self, arr: torch.Tensor, *idx) -> torch.Tensor:
         return arr.__getitem__(*idx)
@@ -193,3 +198,6 @@ class TensorInterface(ArrayInterface[torch.Tensor]):
 
     def copy(self, arr: torch.Tensor) -> torch.Tensor:
         return arr.clone()
+
+    def __repr__(self) -> str:
+        return f"TensorInterface(dtype={self.dtype}, device={self.device})"

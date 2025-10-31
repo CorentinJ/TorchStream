@@ -42,7 +42,8 @@ class SeqSpec:
             dimensions when the shape is not specified.
         """
         if not self._arr_if.matches(arr):
-            return False, f"library or dtype mismatch (got {type(arr)}, expected {type(self._arr_if)})"
+            device_str = f" {arr.device}" if isinstance(arr, torch.Tensor) else ""
+            return False, f"library or dtype mismatch, got{device_str} {arr.dtype} for {self._arr_if}"
 
         if self.shape:
             if len(arr.shape) != len(self.shape):

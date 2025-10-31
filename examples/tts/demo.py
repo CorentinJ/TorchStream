@@ -1,7 +1,6 @@
 import logging
 
 import torch
-from kokoro import KPipeline
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
@@ -18,14 +17,17 @@ torch.Tensor.__repr__ = lambda t: f"{tuple(t.shape)} {str(t.dtype).replace('torc
 # spacy.load("en_core_web_sm")
 
 
-pipeline = KPipeline(lang_code="en-us", repo_id="hexgrad/Kokoro-82M")
+# pipeline = KPipeline(lang_code="en-us", repo_id="hexgrad/Kokoro-82M")
+# device = pipeline.model.device
 text = """
 [Kokoro](/kˈOkəɹO/) is an open-weight TTS model with 82 million parameters. Despite its lightweight architecture, it delivers comparable quality to larger models while being significantly faster and more cost-efficient. With Apache-licensed weights, [Kokoro](/kˈOkəɹO/) can be deployed anywhere from production environments to personal projects.
 """
 
 # Normal, non-streaming inference
+# import soundfile as sf
 # *_, audio = next(pipeline(text, voice="af_heart"))
 # sf.write("demo_audio.wav", audio, 24000)
+# quit()
 
 
 # Step 1: because kokoro is a third party library, we'll avoid modifying it's source code directly. Instead,
@@ -50,22 +52,51 @@ def mod_decoder_forward(self, asr, F0_curve, N, s):
 # orig = pipeline.model.decoder.forward
 
 
-def trsfm(x: torch.Tensor):
+def trsfm_(x: torch.Tensor):
     asr = x.expand((-1, 512, -1))
     F0_curve = x.repeat_interleave(2, dim=-1)[0]
     N = F0_curve
     s = x.new_zeros(1, 128)
 
-    return pipeline.model.decoder.forward(asr, F0_curve, N, s)
+    # return pipeline.model.decoder.forward(asr, F0_curve, N, s)
+
+    self = pipeline.model.decoder
+
+    F0 = self.F0_conv(F0_curve.unsqueeze(1))
+    N = self.N_conv(N.unsqueeze(1))
+    x = torch.cat([asr, F0, N], axis=1)
+    x = self.encode(x, s)
+    asr_res = self.asr_res(asr)
+    res = True
+    for block in self.decode[:3]:
+        if res:
+            x = torch.cat([x, asr_res, F0, N], axis=1)
+        x = block(x, s)
+        if block.upsample_type != "none":
+            res = False
+    # x = self.generator(x, s, F0_curve)
+
+    return x
+
+
+# First three blocks: ki=18, si=1, lp=9, rp=8, ko=1, so=1, ot=0
+
+from torch import nn
+
+device = "cuda"
+in_dim_size = 1024 + 2 + 64
+# t1 = AdainResBlk1d(in_dim_size, 512, 128, upsample=True).to(device).eval()
+
+trsfm = nn.ConvTranspose1d(in_dim_size, in_dim_size, kernel_size=3, stride=2, padding=1, output_padding=1).to(device)
 
 
 find_sliding_window_params(
     trsfm,
-    SeqSpec(1, 1, -1, device=pipeline.model.device),
-    SeqSpec(1, 1, -1, device=pipeline.model.device),
+    SeqSpec(1, in_dim_size, -1, device=device),
+    SeqSpec(1, in_dim_size, -1, device=device),
+    # SeqSpec(1, 512, -1, device=device),
     zero_size_exception_types=(),
 )
-
 
 # *_, audio = next(pipeline(text, voice="af_heart"))
 # sf.write("demo_audio.wav", audio, 24000)
