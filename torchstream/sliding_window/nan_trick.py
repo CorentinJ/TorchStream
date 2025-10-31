@@ -4,6 +4,7 @@ from functools import partial
 from typing import Callable, Optional, Tuple
 
 import numpy as np
+import torch
 
 from torchstream.sequence.dtype import SeqArrayLike
 from torchstream.sequence.seq_spec import SeqSpec
@@ -20,6 +21,8 @@ def get_nan_idx(x: SeqArrayLike | Sequence, axis=None) -> np.ndarray:
         x = x.data
     elif axis is None:
         axis = -1
+    if torch.is_tensor(x):
+        x = x.cpu().numpy()
 
     if not x.shape[axis]:
         return np.empty(0, dtype=np.int64)

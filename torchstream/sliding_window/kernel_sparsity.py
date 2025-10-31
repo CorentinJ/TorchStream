@@ -5,7 +5,7 @@ import numpy as np
 from z3 import And, Bool, Not, Or, unsat
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
-from torchstream.transforms.sliding_window import run_sliding_window
+from torchstream.sliding_window.transforms import run_sliding_window
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,6 @@ def get_init_kernel_array(kernel_size: int, full: bool = False) -> np.ndarray:
     return kernel
 
 
-# TODO: merge with _get_window_corruption_map, it's the same logic
 def get_nan_map(
     params: SlidingWindowParams,
     in_len: int,
@@ -132,11 +131,13 @@ class KernelSparsitySampler:
         current kernel sparsity assumptions. Returns None if the input and output NaNs observed cannot be reconciled
         with the current parameters or kernel sparsity assumptions.
         """
-        padding, num_wins, out_len = self.params.get_metrics_for_input(in_len)
+        (left_pad, right_pad), num_wins, out_len = self.params.get_metrics_for_input(in_len)
 
         in_vec = np.zeros(in_len, dtype=bool)
         in_vec[in_nan_range[0] : in_nan_range[1]] = 1
-        padded_in_vec = np.pad(in_vec, padding)
+        padded_in_vec = np.pad(in_vec, (left_pad, max(0, right_pad)))
+        if right_pad < 0:
+            padded_in_vec = padded_in_vec[:right_pad]
         k_i, s_i = self.params.kernel_size_in, self.params.stride_in
         corrupted_wins = np.array(
             [np.max(self._kernel_in * padded_in_vec[i * s_i : i * s_i + k_i]) for i in range(num_wins)]

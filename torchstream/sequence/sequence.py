@@ -253,10 +253,9 @@ class Sequence:
         assert not self._input_closed, f"Trying to feed data into {self.name}, but input is closed"
 
         x = x.data if isinstance(x, Sequence) else x
-        is_matching = self.spec.matches(x)
+        is_matching, reason = self.spec.matches(x)
         if not is_matching:
-            # TODO!
-            raise ValueError(f"Cannot feed {type(x)} to {self.name}: reason")
+            raise ValueError(f"Cannot feed {type(x)} to {self.name}: {reason}")
 
         if self._buff is None:
             self._buff = self._arr_if.copy(x)

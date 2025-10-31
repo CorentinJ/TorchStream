@@ -32,7 +32,7 @@ class SeqSpec:
         self._arr_if = ArrayInterface(dtype, device)
 
     # TODO: needs heavy testing
-    def matches(self, arr: SeqArrayLike) -> bool:
+    def matches(self, arr: SeqArrayLike) -> Tuple[bool, str]:
         """
         Returns whether a given array is compatible with the sequence specification. Compatible in this context means
         that, at least, the array:
@@ -42,20 +42,22 @@ class SeqSpec:
             dimensions when the shape is not specified.
         """
         if not self._arr_if.matches(arr):
-            return False
-
-        # f"dtype mismatch (got {arr.dtype}, expected {self.dtype})"
+            return False, f"library or dtype mismatch (got {type(arr)}, expected {type(self._arr_if)})"
 
         if self.shape:
             if len(arr.shape) != len(self.shape):
-                return False  # , f"shape ndim mismatch (got {arr.shape}, expected {self.shape})"
+                return False, f"shape ndim mismatch (got {arr.shape}, expected {self.shape})"
             for i, (dim_size, expected_dim_size) in enumerate(zip(arr.shape, self.shape)):
                 if expected_dim_size is not None and i != self.seq_dim and dim_size != expected_dim_size:
-                    return False  # , f"shape mismatch on dimension {i} (got {arr.shape}, expected {self.shape})"
+                    return (
+                        False,
+                        f"shape mismatch on dimension {i} (got {tuple(arr.shape)}, "
+                        f"expected a shape like {tuple(self.shape)})",
+                    )
         else:
             pass  # TODO!
 
-        return True
+        return True, ""
 
     def get_shape_for_size(self, size: int) -> Tuple[int, ...]:
         shape = list(self.shape)
