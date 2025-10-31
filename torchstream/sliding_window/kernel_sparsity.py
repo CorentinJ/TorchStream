@@ -5,7 +5,7 @@ import numpy as np
 from z3 import And, Bool, Not, Or, unsat
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
-from torchstream.transforms.sliding_window import overlap_reduce, view_as_windows
+from torchstream.transforms.sliding_window import run_sliding_window
 
 logger = logging.getLogger(__name__)
 
@@ -55,20 +55,25 @@ def get_nan_map(
     if kernel_out.shape != (params.kernel_size_out,):
         raise ValueError(f"kernel_out_prior must have shape ({params.kernel_size_out},), got {kernel_out.shape}")
 
-    padding, num_wins, out_len = params.get_metrics_for_input(in_len)
-
     in_vec = np.zeros(in_len, dtype=int)
     if in_nan_range is not None:
         in_vec[in_nan_range[0] : in_nan_range[1]] = 1
+    padding, _, out_len = params.get_metrics_for_input(in_len)
     padded_in_vec = np.pad(in_vec, padding)
-    in_wins = view_as_windows(padded_in_vec, params.kernel_size_in, params.stride_in)
-    assert in_wins.shape == (num_wins, params.kernel_size_in)
 
-    corrupted_wins = (in_wins * kernel_in).max(axis=1, keepdims=True)
+    out_vec = run_sliding_window(
+        padded_in_vec,
+        stride_in=params.stride_in,
+        kernel_in=kernel_in,
+        kernel_in_fn=np.multiply,
+        kernel_in_reduce=np.max,
+        stride_out=params.stride_out,
+        kernel_out=kernel_out,
+        kernel_out_fn=np.minimum,
+        overlap_fn=np.maximum,
+    )
 
-    out_wins = np.minimum(corrupted_wins, kernel_out[None, :])
-
-    out_vec = overlap_reduce(out_wins, params.stride_out, reduction=np.maximum)
+    out_vec = out_vec[params.out_trim : -params.out_trim] if params.out_trim > 0 else out_vec
     assert out_vec.shape == (out_len,)
 
     return out_vec
