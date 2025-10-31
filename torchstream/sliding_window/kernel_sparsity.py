@@ -5,6 +5,7 @@ import numpy as np
 from z3 import And, Bool, Not, Or, unsat
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+from torchstream.transforms.sliding_window import overlap_reduce, view_as_windows
 
 logger = logging.getLogger(__name__)
 
@@ -54,21 +55,23 @@ def get_nan_map(
     if kernel_out.shape != (params.kernel_size_out,):
         raise ValueError(f"kernel_out_prior must have shape ({params.kernel_size_out},), got {kernel_out.shape}")
 
-    _, num_wins, out_len = params.get_metrics_for_input(in_len)
-    nan_map = np.zeros(out_len, dtype=np.int64)
-    if not in_nan_range:
-        return nan_map
+    padding, num_wins, out_len = params.get_metrics_for_input(in_len)
 
-    for (in_start, in_stop), (out_start, out_stop) in params.iter_kernel_map(num_wins=num_wins):
-        window_value = max(
-            kernel_in[i] if in_nan_range[0] <= in_start + i < in_nan_range[1] else 0
-            for i in range(params.kernel_size_in)
-        )
-        for i in range(params.kernel_size_out):
-            if 0 <= out_start + i < out_len:
-                nan_map[out_start + i] = max(nan_map[out_start + i], min(kernel_out[i], window_value))
+    in_vec = np.zeros(in_len, dtype=int)
+    if in_nan_range is not None:
+        in_vec[in_nan_range[0] : in_nan_range[1]] = 1
+    padded_in_vec = np.pad(in_vec, padding)
+    in_wins = view_as_windows(padded_in_vec, params.kernel_size_in, params.stride_in)
+    assert in_wins.shape == (num_wins, params.kernel_size_in)
 
-    return nan_map
+    corrupted_wins = (in_wins * kernel_in).max(axis=1, keepdims=True)
+
+    out_wins = np.minimum(corrupted_wins, kernel_out[None, :])
+
+    out_vec = overlap_reduce(out_wins, params.stride_out, reduction=np.maximum)
+    assert out_vec.shape == (out_len,)
+
+    return out_vec
 
 
 class KernelSparsitySampler:
@@ -127,7 +130,6 @@ class KernelSparsitySampler:
         in_vec = np.zeros(in_len, dtype=bool)
         in_vec[in_nan_range[0] : in_nan_range[1]] = 1
         padded_in_vec = np.pad(in_vec, padding)
-        # TODO? rewrite with scipy.ndimage.generic_filter? Probably not useful perf wise
         k_i, s_i = self.params.kernel_size_in, self.params.stride_in
         corrupted_wins = np.array(
             [np.max(self._kernel_in * padded_in_vec[i * s_i : i * s_i + k_i]) for i in range(num_wins)]
