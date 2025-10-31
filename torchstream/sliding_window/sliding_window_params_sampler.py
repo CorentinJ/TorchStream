@@ -27,7 +27,7 @@ class SlidingWindowParamsSampler:
         in_size_bias_canonical: int,
         out_size_bias_canonical: int,
         minimum_input_size: int,
-        solution_perf_cost_limit: int = 1_000_000,
+        solution_perf_cost_limit: int = 10_000,
     ):
         # TODO: doc
 
@@ -119,7 +119,7 @@ class SlidingWindowParamsSampler:
         # NOTE: using optimizer.minimize() does not seem to be an option due to the logic type used
         self.simplicity_cost = self.k_i + self.k_o + (self.p_l + self.p_r) / 2 + self.t_o
         self.max_simplicity_cost_sampler = ThresholdHarvester(lower_bound=2)
-        self.performance_cost = self.max_od + self.ictx * self.s_o
+        self.performance_cost = self.max_od / self.s_o + self.ictx
         self.max_performance_cost_sampler = ThresholdHarvester()
         self.solution_perf_cost_limit = solution_perf_cost_limit
 
@@ -408,7 +408,7 @@ class SlidingWindowParamsSampler:
                 self.prev_sol_constraints.append(new_sol_constraint)
 
                 # Inform our sampler of the result
-                perf_cost = params.output_delay_bounds[1] + params.streaming_context_size * self.s_o
+                perf_cost = params.output_delay_bounds[1] // self.s_o + params.streaming_context_size
                 logger.info(f"Sampled with max cost={max_cost_value:,}, got solution with cost={perf_cost:,}")
                 self.max_performance_cost_sampler.update(perf_cost)
 
