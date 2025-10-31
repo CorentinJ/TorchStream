@@ -58,8 +58,10 @@ def get_nan_map(
     in_vec = np.zeros(in_len, dtype=int)
     if in_nan_range is not None:
         in_vec[in_nan_range[0] : in_nan_range[1]] = 1
-    padding, _, out_len = params.get_metrics_for_input(in_len)
-    padded_in_vec = np.pad(in_vec, padding)
+    (left_pad, right_pad), _, out_len = params.get_metrics_for_input(in_len)
+    padded_in_vec = np.pad(in_vec, (left_pad, max(0, right_pad)))
+    if right_pad < 0:
+        padded_in_vec = padded_in_vec[:right_pad]
 
     out_vec = run_sliding_window(
         padded_in_vec,
@@ -189,10 +191,12 @@ class KernelSparsitySampler:
             kernel_out=self._kernel_out,
         )
 
-        for idx, value in enumerate(expected_out):
-            if (value == 2 and idx not in out_nan_idx) or (value == 0 and idx in out_nan_idx):
-                self._solvable = False
-                return
+        actual_out = np.zeros_like(expected_out, dtype=bool)
+        actual_out[out_nan_idx] = True
+
+        if np.logical_and(expected_out == 2, ~actual_out).any() or np.logical_and(expected_out == 0, actual_out).any():
+            self._solvable = False
+            return
 
         return
 
