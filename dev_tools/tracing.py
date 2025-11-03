@@ -53,17 +53,18 @@ class log_tracing_profile(AbstractContextManager):
 
 
 def _group_spans_by_hierarchy(spans: typing.Sequence[ReadableSpan]) -> Dict[str, List[ReadableSpan]]:
-    tree = {}
+    spans_by_id = {s.context.span_id: s for s in spans}
 
-    @lru_cache(maxsize=None)
+    @lru_cache(maxsize=1024)
     def span_id_to_name(span_id: str) -> str:
-        span = next((s for s in spans if s.context.span_id == span_id), None)
+        span = spans_by_id[span_id]
         span_name = span.name.replace("/", "_")
         if span.parent is None:
             return span_name
         # TODO: use tuples instead of str concat, we're not displaying these anyway
         return span_id_to_name(span.parent.span_id) + "/" + span_name
 
+    tree = {}
     for span in spans:
         tree.setdefault(span_id_to_name(span.context.span_id), []).append(span)
 
@@ -90,11 +91,11 @@ class LogsProfilerSpanExporter(SpanExporter):
             line.append(" " + "   " * (depth - 1) + span_name.split("/")[-1])
             line.append(f"  ({len(name2spans[span_name])}x)")
             durations_ms = [(s.end_time - s.start_time) / 1e6 for s in name2spans[span_name]]
-            line.extend(("  ", "total: ", f"{np.sum(durations_ms):.0f}ms"))
             if len(durations_ms) > 1:
                 line.extend(("  mean: ", f"{np.mean(durations_ms):.0f}ms"))
                 line.extend(("  std: ", f"{np.std(durations_ms):.0f}ms"))
-            else:
+            line.extend(("  ", "total: ", f"{np.sum(durations_ms):.0f}ms"))
+            if len(durations_ms) == 1:
                 line.extend([""] * 4)
 
             children_names = [

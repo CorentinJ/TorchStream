@@ -5,8 +5,6 @@ import numpy as np
 from opentelemetry import trace
 from z3 import And, Bool, Int, Ints, Not, Or, Solver, sat
 
-from torchstream.sliding_window.sliding_window_params import get_canonicalized_min_in_size
-
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
@@ -27,7 +25,7 @@ class SlidingWindowInOutRelSampler:
             self.isbc >= 0,
             self.isbc < self.s_i,
             # osbc is the only parameter that can be negative -> no constraint for it
-            self.mis >= get_canonicalized_min_in_size(self.s_i, self.s_o, self.isbc, self.osbc),
+            self.mis >= 0, #get_canonicalized_min_in_size(self.s_i, self.s_o, self.isbc, self.osbc),
         )
 
     # FIXME: name

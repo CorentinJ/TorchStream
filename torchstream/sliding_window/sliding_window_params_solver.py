@@ -203,6 +203,8 @@ class SlidingWindowParamsSolver:
         self.run_initial_input()
 
         sampler = SlidingWindowInOutRelSampler()
+        # FIXME!
+        sampler.optimizer.add(sampler.mis == self.debug_ref_params.min_input_size)
         for record in self.nan_trick_history:
             sampler.add_in_out_size(record["in_seq_size"], record["out_seq_size"])
 
