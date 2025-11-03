@@ -3,12 +3,14 @@ import numbers
 from typing import Callable, Optional, Tuple, overload
 
 import torch
+from opentelemetry import trace
 
 from torchstream.sequence.array_interface import ArrayInterface
 from torchstream.sequence.dtype import SeqArrayLike
 from torchstream.sequence.seq_spec import SeqSpec
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 class Sequence:
@@ -325,7 +327,8 @@ class Sequence:
 
         with torch.inference_mode():
             try:
-                out_arr = trsfm(in_seq.data)
+                with tracer.start_as_current_span(trsfm.__name__ if hasattr(trsfm, "__name__") else "transform"):
+                    out_arr = trsfm(in_seq.data)
             except zero_size_exception_types as e:
                 logger.info(
                     f"Forwarding an input of size {in_seq.size} gave a {e.__class__.__name__}, "

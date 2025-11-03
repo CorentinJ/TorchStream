@@ -2,12 +2,14 @@ import logging
 from typing import Tuple
 
 import numpy as np
+from opentelemetry import trace
 from z3 import And, Bool, Not, Or, unsat
 
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.transforms import run_sliding_window
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 def get_init_kernel_array(kernel_size: int, full: bool = False) -> np.ndarray:
@@ -34,6 +36,7 @@ def get_init_kernel_array(kernel_size: int, full: bool = False) -> np.ndarray:
     return kernel
 
 
+@tracer.start_as_current_span("get_nan_map")
 def get_nan_map(
     params: SlidingWindowParams,
     in_len: int,
@@ -123,6 +126,7 @@ class KernelSparsitySampler:
         #     elif val == 2:
         #         self.solver.add(self._kernel_out_var[idx])
 
+    @tracer.start_as_current_span("kernel_sampler.get_window_corruption_map")
     def _get_window_corruption_map(
         self, in_len: int, in_nan_range: Tuple[int, int], out_nan_idx: np.ndarray
     ) -> np.ndarray | None:
@@ -180,6 +184,7 @@ class KernelSparsitySampler:
 
         return corrupted_wins
 
+    @tracer.start_as_current_span("kernel_sampler.add_in_out_map")
     def add_in_out_map(self, in_len: int, in_nan_range: Tuple[int, int], out_nan_idx: np.ndarray):
         if not self._solvable:
             return
@@ -253,6 +258,7 @@ class KernelSparsitySampler:
         # FIXME!!
         return self._solvable  # and (self.solver.check() != unsat)
 
+    @tracer.start_as_current_span("kernel_sampler.determine")
     def determine(self) -> Tuple[np.ndarray | None, np.ndarray | None]:
         # TODO: doc
         if not self.has_solution():

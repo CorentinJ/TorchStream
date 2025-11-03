@@ -1,6 +1,7 @@
 import logging
 from typing import Tuple
 
+from opentelemetry import trace
 from z3 import And, Bool, Implies, Int, Ints, Or, Solver, sat
 
 from torchstream.sliding_window.sliding_window_params import (
@@ -17,6 +18,7 @@ from torchstream.sliding_window.threshold_harvester import ThresholdHarvester
 from torchstream.transforms.z3_utils import z3_floor_div
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 class SlidingWindowParamsSampler:
@@ -127,6 +129,7 @@ class SlidingWindowParamsSampler:
         self.prev_sol_constraints = []
 
     # FIXME: name
+    @tracer.start_as_current_span("sli_params_sampler.add_in_out_range_map")
     def add_in_out_range_map(
         self,
         in_len: int,
@@ -339,6 +342,7 @@ class SlidingWindowParamsSampler:
             )
         )
 
+    @tracer.start_as_current_span("sli_params_sampler.get_new_solution")
     def get_new_solution(
         self,
         *cstrs,
@@ -373,7 +377,8 @@ class SlidingWindowParamsSampler:
                     )
                 )
 
-            check = self.optimizer.check(guide_constraints)
+            with tracer.start_as_current_span("sli_params_sampler.solver_check"):
+                check = self.optimizer.check(guide_constraints)
             if check == sat:
                 # Swap out the solution for one with minimal simplicity
                 while True:
@@ -452,5 +457,6 @@ class SlidingWindowParamsSampler:
         ]
         return violations
 
+    @tracer.start_as_current_span("sli_params_sampler.is_compatible")
     def is_compatible(self, solution: SlidingWindowParams) -> bool:
         return not self.get_violations(solution)

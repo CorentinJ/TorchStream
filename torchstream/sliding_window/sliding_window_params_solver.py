@@ -5,6 +5,7 @@ from typing import Callable, Iterable, List, Tuple
 
 import torch
 from colorama import Fore as colors
+from opentelemetry import trace
 
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
@@ -25,6 +26,7 @@ from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 from torchstream.stream_equivalence import test_stream_equivalent
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 def _compare_params_str(params: tuple, real_params: tuple | None, names: Iterable[str] | None = None) -> str:
@@ -170,6 +172,7 @@ class SlidingWindowParamsSolver:
 
         return record
 
+    @tracer.start_as_current_span("find_initial_input")
     def run_initial_input(self) -> dict:
         # TODO! doc
         # In the first part of the process, we'll forward inputs to the transform and stop as soon as we get a
@@ -190,6 +193,7 @@ class SlidingWindowParamsSolver:
 
         return self.nan_trick_history[0]
 
+    @tracer.start_as_current_span("find_in_out_rel_params")
     def find_in_out_rel_params(self) -> Tuple[int, int, int, int, int]:
         # TODO! doc
         if self.in_out_rel_params:

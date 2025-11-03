@@ -2,11 +2,13 @@ import logging
 from typing import List
 
 import numpy as np
+from opentelemetry import trace
 from z3 import And, Bool, Int, Ints, Not, Or, Solver, sat
 
 from torchstream.sliding_window.sliding_window_params import get_canonicalized_min_in_size
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 class SlidingWindowInOutRelSampler:
@@ -29,6 +31,7 @@ class SlidingWindowInOutRelSampler:
         )
 
     # FIXME: name
+    @tracer.start_as_current_span("in_out_rel_sampler.add_in_out_size")
     def add_in_out_size(self, in_len: int, out_len: int):
         """
         TODO: doc
@@ -52,6 +55,7 @@ class SlidingWindowInOutRelSampler:
             # input size e.g. for params (ki=2, si=1, ko=7, so=2) and input size 1
             self.optimizer.add(self.mis > in_len)
 
+    @tracer.start_as_current_span("in_out_rel_sampler.get_new_solutions")
     def get_new_solutions(self, known_sols: List, max_sols=2):
         # TODO: doc
         out_sols = list(known_sols)
@@ -73,7 +77,9 @@ class SlidingWindowInOutRelSampler:
 
         # Search for newer solutions
         while len(out_sols) < max_sols:
-            if self.optimizer.check() == sat:
+            with tracer.start_as_current_span("in_out_rel_sampler.check_optimizer"):
+                check_result = self.optimizer.check()
+            if check_result == sat:
                 model = self.optimizer.model()
                 model_values = (
                     model[self.s_i].as_long(),
@@ -130,6 +136,7 @@ def compute_in_to_out_sizes(
     return out_sizes
 
 
+@tracer.start_as_current_span("input_size_by_max_infogain")
 def input_size_by_max_infogain(in_to_out_sizes: np.ndarray, method="entropy") -> int:
     # TODO: doc
     if in_to_out_sizes.shape[0] <= 2 or method == "n_unique":
