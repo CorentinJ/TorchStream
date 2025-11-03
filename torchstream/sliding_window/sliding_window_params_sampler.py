@@ -15,7 +15,7 @@ from torchstream.sliding_window.sliding_window_params import (
     z3_max,
 )
 from torchstream.sliding_window.threshold_harvester import ThresholdHarvester
-from torchstream.transforms.z3_utils import z3_floor_div
+from torchstream.sliding_window.z3_utils import z3_floor_div
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)

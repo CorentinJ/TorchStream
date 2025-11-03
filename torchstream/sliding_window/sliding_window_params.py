@@ -3,7 +3,7 @@ from typing import Iterator, Tuple, overload
 
 from z3 import If, Int
 
-from torchstream.transforms.z3_utils import IntLike, z3_ceil_div, z3_divmod, z3_floor_div, z3_max, z3_min
+from torchstream.sliding_window.z3_utils import IntLike, z3_ceil_div, z3_divmod, z3_floor_div, z3_max, z3_min
 
 
 class SlidingWindowParams:

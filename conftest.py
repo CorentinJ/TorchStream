@@ -5,6 +5,12 @@ import sys
 import time
 from pathlib import Path
 
+from opentelemetry import trace
+
+from dev_tools.tracing import log_tracing_profile
+
+tracer = trace.get_tracer(__name__)
+
 # Add a logging filter that injects repo-relative paths for clickable links
 _REPO_ROOT = Path(__file__).resolve().parent
 
@@ -24,6 +30,60 @@ def _record_factory(*args, **kwargs):
 
 
 logging.setLogRecordFactory(_record_factory)
+
+_tracing_session_ctx = log_tracing_profile("pytest-session")
+
+
+def pytest_sessionstart(session):
+    _tracing_session_ctx.__enter__()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    _tracing_session_ctx.__exit__(None, None, None)
+
+
+def pytest_runtest_setup(item):
+    span_name = f"test:{item.originalname}"
+    ctx = tracer.start_as_current_span(span_name)
+    span = ctx.__enter__()
+    item._otel_test_span_ctx = ctx
+    item._otel_test_span = span
+    try:
+        span.set_attribute("pytest.nodeid", item.nodeid)
+        span.set_attribute("pytest.filepath", str(item.fspath))
+    except Exception:
+        pass
+
+
+def pytest_runtest_makereport(item, call):
+    span = getattr(item, "_otel_test_span", None)
+    if span is None or call.when != "call":
+        return
+    try:
+        if call.excinfo is not None:
+            # record exception on the span
+            span.record_exception(call.excinfo.value)
+            span.set_attribute("pytest.outcome", "failed")
+        else:
+            span.set_attribute("pytest.outcome", "passed")
+    except Exception:
+        pass
+
+
+def pytest_runtest_teardown(item, nextitem):
+    ctx = getattr(item, "_otel_test_span_ctx", None)
+    if ctx is None:
+        return
+    try:
+        ctx.__exit__(None, None, None)
+    except Exception:
+        pass
+    finally:
+        for attr in ("_otel_test_span_ctx", "_otel_test_span"):
+            try:
+                delattr(item, attr)
+            except Exception:
+                pass
 
 
 def _beep_ok():

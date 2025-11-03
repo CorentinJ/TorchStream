@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 tracer = trace.get_tracer(__name__)
 
 
-class log_tracing_statistics(AbstractContextManager):
+class log_tracing_profile(AbstractContextManager):
     def __init__(self, name: str = "ctx-manager"):
         self.name = name
         self._root_span_cm = None

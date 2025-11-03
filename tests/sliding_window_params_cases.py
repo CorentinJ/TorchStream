@@ -107,6 +107,7 @@ EDGE_CASES_PARAMS = _sli_params_to_test_args(
     [
         dict(),
         dict(kernel_size_out=5, stride_out=5, out_trim=4),
+        dict(kernel_size_out=5, stride_out=3, out_trim=2),
         dict(kernel_size_in=2, stride_in=2, left_pad=1, right_pad=1, kernel_size_out=2, stride_out=2, out_trim=1),
         dict(kernel_size_out=7, out_trim=5),
         dict(kernel_size_out=10, stride_out=3, out_trim=8),

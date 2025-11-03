@@ -5,7 +5,7 @@ import librosa
 import librosa.core
 import numpy as np
 
-from examples.tracing import log_tracing_statistics
+from dev_tools.tracing import log_tracing_profile
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
 
@@ -24,7 +24,7 @@ for res_dict in RESAMPLING_ALGOS:
         with patch("librosa.util.utils.valid_audio", return_value=True):
             return librosa.core.resample(y, orig_sr=32000, target_sr=16000, res_type=res_dict["name"])
 
-    with log_tracing_statistics("solver"):
+    with log_tracing_profile("solver"):
         sols = find_sliding_window_params(
             resample_fn,
             SeqSpec((-1), dtype=np.float32),

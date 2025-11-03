@@ -239,6 +239,10 @@ import logging
 import torch
 from torch import nn
 
+from dev_tools.tracing import log_tracing_profile
+from torchstream.sequence.seq_spec import SeqSpec
+from torchstream.sliding_window.sliding_window_params_solver import SlidingWindowParamsSolver
+
 logger = logging.getLogger(__name__)
 
 for stride in [2, 5, 10]:
@@ -277,3 +281,14 @@ for stride in [2, 5, 10]:
                     o2_sli = torch.nn.functional.pad(o2_sli, (0, -right_trim))
                 assert o1.shape == o2_sli.shape
                 assert torch.allclose(o1, o2_sli)
+
+                print("\n\n------")
+                print(stride, kernel_size, padding, output_padding)
+                # 5 3 2 0
+
+                solver = SlidingWindowParamsSolver(
+                    conv_transpose,
+                    SeqSpec(1, 1, -1),
+                )
+                with log_tracing_profile():
+                    solver.find_in_out_rel_params()
