@@ -15,8 +15,6 @@ class SlidingWindowInOutRelSampler:
         self.s_i, self.s_o = Ints("s_i s_o")
         # Input and output size biases in computation, canonicalized to ensure uniqueness of the relation
         self.isbc, self.osbc = Ints("isbc osbc")
-        # Minimum input size. This model allows it to be greater than the canonical minimum input size.
-        self.mis = Int("mis")
 
         self.optimizer = Solver()
         self.optimizer.add(
@@ -25,7 +23,6 @@ class SlidingWindowInOutRelSampler:
             self.isbc >= 0,
             self.isbc < self.s_i,
             # osbc is the only parameter that can be negative -> no constraint for it
-            self.mis >= 0, #get_canonicalized_min_in_size(self.s_i, self.s_o, self.isbc, self.osbc),
         )
 
     # FIXME: name
@@ -36,22 +33,18 @@ class SlidingWindowInOutRelSampler:
         """
         if in_len < 1:
             raise ValueError("The input length must be a strictly positive integer")
-        if out_len < 0:
-            raise ValueError("The output length must be a non-negative integer")
+        if out_len < 1:
+            raise ValueError(
+                "The output length must be a strictly positive integer, this sampler does not model the "
+                "minimum input size"
+            )
 
-        # z3 encoding of out_len = max(0, ((in_len + isbc) // s_i) * s_o + osbc)
+        # z3 encoding of out_len = ((in_len + isbc) // s_i) * s_o + osbc
         quotient = Int(f"quotient_{in_len}_{out_len}")
-        self.optimizer.add(quotient >= 0, quotient <= in_len + self.isbc)
-        self.optimizer.add(self.s_i * quotient <= in_len + self.isbc)
-        self.optimizer.add(in_len + self.isbc < self.s_i * (quotient + 1))
-
-        out_len_var = self.s_o * quotient + self.osbc
-        if out_len > 0:
-            self.optimizer.add(self.mis <= in_len, out_len_var == out_len)
-        else:
-            # Note: we can't infer out_len_var <= 0 because it might be >0 for some input size smaller than the minimum
-            # input size e.g. for params (ki=2, si=1, ko=7, so=2) and input size 1
-            self.optimizer.add(self.mis > in_len)
+        # TODO! confirm > vs >=
+        self.optimizer.add(quotient > 0, quotient <= in_len + self.isbc)
+        self.optimizer.add(self.s_i * quotient <= in_len + self.isbc, in_len + self.isbc < self.s_i * (quotient + 1))
+        self.optimizer.add(self.s_o * quotient + self.osbc == out_len)
 
     @tracer.start_as_current_span("in_out_rel_sampler.get_new_solutions")
     def get_new_solutions(self, known_sols: List, max_sols=2):
@@ -68,7 +61,6 @@ class SlidingWindowInOutRelSampler:
                         self.s_o == sol[1],
                         self.isbc == sol[2],
                         self.osbc == sol[3],
-                        self.mis == sol[4],
                     )
                 )
             )
@@ -84,7 +76,6 @@ class SlidingWindowInOutRelSampler:
                     model[self.s_o].as_long(),
                     model[self.isbc].as_long(),
                     model[self.osbc].as_long(),
-                    model[self.mis].as_long(),
                 )
                 out_sols.append(model_values)
 
@@ -94,7 +85,6 @@ class SlidingWindowInOutRelSampler:
                     self.s_o != model[self.s_o],
                     self.isbc != model[self.isbc],
                     self.osbc != model[self.osbc],
-                    self.mis != model[self.mis],
                 )
                 self.optimizer.add(new_sol_constraint)
             else:
@@ -103,7 +93,7 @@ class SlidingWindowInOutRelSampler:
 
         return out_sols
 
-    def get_violations(self, s_i, s_o, isbc, osbc, mis):
+    def get_violations(self, s_i, s_o, isbc, osbc):
         unsat_solver = Solver()
 
         trackers = []
@@ -112,7 +102,7 @@ class SlidingWindowInOutRelSampler:
             unsat_solver.assert_and_track(assertion, bool_tracker)
             trackers.append((bool_tracker, assertion))
 
-        unsat_solver.add(And(self.s_i == s_i, self.s_o == s_o, self.isbc == isbc, self.osbc == osbc, self.mis == mis))
+        unsat_solver.add(And(self.s_i == s_i, self.s_o == s_o, self.isbc == isbc, self.osbc == osbc))
 
         unsat_solver.check()
         violations = [
@@ -126,10 +116,10 @@ def compute_in_to_out_sizes(
     max_input_size=10_000,
 ) -> np.ndarray:
     # TODO: doc
-    si, so, isbc, osbc, mis = [np.array(param_group)[..., None] for param_group in zip(*shape_params)]
+    si, so, isbc, osbc = [np.array(param_group)[..., None] for param_group in zip(*shape_params)]
 
     out_sizes = np.stack([np.arange(0, max_input_size)] * len(shape_params))
-    out_sizes = np.where(out_sizes >= mis, np.maximum(((out_sizes + isbc) // si) * so + osbc, 0), 0)
+    out_sizes = np.maximum(((out_sizes + isbc) // si) * so + osbc, 0)
 
     return out_sizes
 

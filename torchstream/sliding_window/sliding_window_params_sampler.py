@@ -7,7 +7,7 @@ from z3 import And, Bool, Implies, Int, Ints, Or, Solver, sat
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
     get_all_output_delays,
-    get_canonicalized_in_out_size_params,
+    get_canonicalized_in_out_shape_params,
     get_output_delay,
     get_output_delay_bounds,
     get_streaming_context_size,
@@ -80,7 +80,7 @@ class SlidingWindowParamsSampler:
 
         ## Streaming parameters
         self.isbc, self.osbc = in_size_bias_canonical, out_size_bias_canonical
-        *_, isbc, osbc = get_canonicalized_in_out_size_params(
+        *_, isbc, osbc = get_canonicalized_in_out_shape_params(
             self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
         )
         # FIXME: keep either?

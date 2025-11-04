@@ -19,11 +19,11 @@ from torchstream.sliding_window.sliding_window_params_solver import (
 )
 
 
-def _find_in_out_rel(transform, seq_spec, expected_sol):
+def _find_in_out_size(transform, seq_spec, expected_sol):
     solver = SlidingWindowParamsSolver(transform, seq_spec, debug_ref_params=expected_sol)
-    in_out_rel_params = solver.find_in_out_rel_params()
+    in_out_size_params = solver.find_in_out_size_params()
     if expected_sol:
-        assert in_out_rel_params == expected_sol.canonicalized_in_out_size_params
+        assert in_out_size_params == expected_sol.canonicalized_in_out_shape_params + (expected_sol.min_input_size,)
 
 
 @pytest.mark.parametrize("sli_params,dilation", CONV_1D_PARAMS[0], ids=CONV_1D_PARAMS[1])
@@ -46,7 +46,7 @@ def test_conv_1d(sli_params: SlidingWindowParams, dilation: int):
         x = conv(x)
         return x
 
-    _find_in_out_rel(transform, SeqSpec(1, 1, -1), sli_params)
+    _find_in_out_size(transform, SeqSpec(1, 1, -1), sli_params)
 
 
 @pytest.mark.parametrize("sli_params,dilation", TRANSPOSED_CONV_1D_PARAMS[0], ids=TRANSPOSED_CONV_1D_PARAMS[1])
@@ -70,7 +70,7 @@ def test_conv_transpose_1d(sli_params: SlidingWindowParams, dilation: int):
         # TODO: handle output padding?
     )
 
-    _find_in_out_rel(conv, SeqSpec(1, 1, -1), sli_params)
+    _find_in_out_size(conv, SeqSpec(1, 1, -1), sli_params)
 
 
 # NOTE: our solver has the following modeling limitation: on any layer with an input stride > 1, the current combined
@@ -136,14 +136,14 @@ def test_conv_mix(conv_params):
             for params in conv_params
         ]
     )
-    _find_in_out_rel(network, SeqSpec(1, 1, -1), expected_sol)
+    _find_in_out_size(network, SeqSpec(1, 1, -1), expected_sol)
 
 
 @pytest.mark.parametrize("sli_params,dilation", MOVING_AVERAGE_PARAMS[0], ids=MOVING_AVERAGE_PARAMS[1])
 def test_moving_average(sli_params: SlidingWindowParams, dilation: int):
     tsfm = DummySlidingWindowTransform(sli_params)
 
-    _find_in_out_rel(tsfm, SeqSpec(-1, dtype=float), sli_params)
+    _find_in_out_size(tsfm, SeqSpec(-1, dtype=float), sli_params)
 
 
 @pytest.mark.parametrize("sli_params,dilation", EDGE_CASES_PARAMS[0], ids=EDGE_CASES_PARAMS[1])
@@ -151,4 +151,4 @@ def test_edge_cases(sli_params: SlidingWindowParams, dilation: int):
     set_seed(0x5EED)
 
     transform = DummySlidingWindowTransform(sli_params)
-    _find_in_out_rel(transform, SeqSpec(-1, dtype=float), sli_params)
+    _find_in_out_size(transform, SeqSpec(-1, dtype=float), sli_params)

@@ -16,6 +16,7 @@ logging.basicConfig(level=logging.INFO)
 tracer = trace.get_tracer(__name__)
 
 
+# Generates span IDs independently of the random seed, which is fixed for several tests
 class SecureIdGenerator(IdGenerator):
     def generate_span_id(self):
         return randbits(64)

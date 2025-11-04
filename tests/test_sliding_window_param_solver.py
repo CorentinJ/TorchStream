@@ -24,7 +24,8 @@ from torchstream.stream_equivalence import test_stream_equivalent
 
 def _get_streaming_params(sol: SlidingWindowParams):
     return {
-        "shape": sol.canonicalized_in_out_size_params,
+        "shape": sol.canonicalized_in_out_shape_params,
+        "min_input_size": sol.min_input_size,
         "out_delays": sol.output_delays,
         "context_size": sol.streaming_context_size,
     }

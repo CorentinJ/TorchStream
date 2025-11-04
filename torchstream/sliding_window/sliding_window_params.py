@@ -73,9 +73,8 @@ class SlidingWindowParams:
         self.min_input_size = max(min_input_size or 1, native_min_input_size)
 
     @property
-    def canonicalized_in_out_size_params(self) -> Tuple[int, int, int, int, int]:
-        # FIXME!
-        return get_canonicalized_in_out_size_params(self) + (self.min_input_size,)
+    def canonicalized_in_out_shape_params(self) -> Tuple[int, int, int, int]:
+        return get_canonicalized_in_out_shape_params(self)
 
     @property
     def output_delay_bounds(self) -> Tuple[int, int]:
@@ -302,14 +301,14 @@ def _get_sli_args(args):
 
 
 @overload
-def get_canonicalized_in_out_size_params(
+def get_canonicalized_in_out_shape_params(
     sli_params: SlidingWindowParams,
 ) -> Tuple[int, int, int, int]: ...
 @overload
-def get_canonicalized_in_out_size_params(
+def get_canonicalized_in_out_shape_params(
     k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_o: IntLike
 ) -> Tuple[IntLike, IntLike, IntLike, IntLike]: ...
-def get_canonicalized_in_out_size_params(*args) -> Tuple[IntLike, IntLike, IntLike, IntLike]:
+def get_canonicalized_in_out_shape_params(*args) -> Tuple[IntLike, IntLike, IntLike, IntLike]:
     k_i, s_i, p_l, p_r, k_o, s_o, t_o = _get_sli_args(args)
 
     in_size_bias = p_l + p_r - k_i

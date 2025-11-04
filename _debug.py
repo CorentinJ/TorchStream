@@ -291,4 +291,4 @@ for stride in [2, 5, 10]:
                     SeqSpec(1, 1, -1),
                 )
                 with log_tracing_profile():
-                    solver.find_in_out_rel_params()
+                    solver.find_in_out_size_params()
