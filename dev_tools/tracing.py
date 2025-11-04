@@ -2,16 +2,26 @@ import logging
 import typing
 from contextlib import AbstractContextManager
 from functools import lru_cache
+from secrets import randbits
 from typing import Dict, List, Tuple
 
 import numpy as np
 from opentelemetry import trace
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
+from opentelemetry.sdk.trace.id_generator import IdGenerator
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 tracer = trace.get_tracer(__name__)
+
+
+class SecureIdGenerator(IdGenerator):
+    def generate_span_id(self):
+        return randbits(64)
+
+    def generate_trace_id(self):
+        return randbits(128)
 
 
 class log_tracing_profile(AbstractContextManager):
@@ -29,11 +39,10 @@ class log_tracing_profile(AbstractContextManager):
     def __enter__(self):
         # Retrieve/create tracer provider
         provider = trace.get_tracer_provider()
-        if not hasattr(provider, "add_span_processor"):
-            provider = TracerProvider()
+        if not hasattr(provider, "add_span_processor") or not isinstance(provider.id_generator, SecureIdGenerator):
+            provider = TracerProvider(id_generator=SecureIdGenerator())
             trace.set_tracer_provider(provider)
 
-        # FIXME accumulation of processors
         provider.add_span_processor(self._span_processor)
 
         self._root_span_cm = tracer.start_as_current_span(self.name)
@@ -54,6 +63,7 @@ class log_tracing_profile(AbstractContextManager):
 
 def _group_spans_by_hierarchy(spans: typing.Sequence[ReadableSpan]) -> Dict[str, List[ReadableSpan]]:
     spans_by_id = {s.context.span_id: s for s in spans}
+    assert len(spans_by_id) == len(spans), "Duplicate span IDs detected"
 
     @lru_cache(maxsize=1024)
     def span_id_to_name(span_id: str) -> str:
