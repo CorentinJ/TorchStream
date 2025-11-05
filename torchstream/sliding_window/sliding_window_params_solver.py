@@ -16,7 +16,9 @@ from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
 )
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
+    get_canonicalized_min_in_size,
     get_output_delay_bounds,
+    in_out_rel_repr,
 )
 from torchstream.sliding_window.sliding_window_params_sampler import SlidingWindowParamsSampler
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
@@ -216,7 +218,24 @@ class SlidingWindowParamsSolver:
         while True:
             shape_params, next_in_size = sampler.solve(self.min_in_size_bounds[0], self.max_in_seq_size)
             if shape_params:
+                # Params uniquely determined, let's update our state and our lower bound for the input size based
+                # on them
                 self.in_out_rel_params = shape_params
+                self.min_in_size_bounds[0] = max(
+                    self.min_in_size_bounds[0], get_canonicalized_min_in_size(*shape_params)
+                )
+
+                min_in_size_str = (
+                    f"in [{self.min_in_size_bounds[0]}, {self.min_in_size_bounds[1]}]"
+                    if self.min_in_size_bounds[0] < self.min_in_size_bounds[1]
+                    else f"= {self.min_in_size_bounds[0]}"
+                )
+                logger.info(
+                    f"In/out size relationship determined in {step} steps:\n"
+                    f"\t{in_out_rel_repr(*shape_params)}\n"
+                    f"\twith minimum input size {min_in_size_str}"
+                )
+
                 return self.in_out_rel_params
 
             # If we have no solution, the transform is not a sliding window.

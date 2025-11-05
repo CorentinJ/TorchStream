@@ -2,7 +2,7 @@ import logging
 from typing import Tuple
 
 from opentelemetry import trace
-from z3 import And, Bool, Implies, Int, Ints, Or, Solver, sat
+from z3 import And, Bool, Int, Ints, Or, Solver, sat
 
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
@@ -28,7 +28,6 @@ class SlidingWindowParamsSampler:
         stride_out: int,
         in_size_bias_canonical: int,
         out_size_bias_canonical: int,
-        minimum_input_size: int,
         solution_perf_cost_limit: int = 10_000,
     ):
         # TODO: doc
@@ -149,8 +148,10 @@ class SlidingWindowParamsSampler:
             out_nan_range = (int(out_nan_range[0]), int(out_nan_range[1]))
             if not (0 <= out_nan_range[0] < out_nan_range[1] <= out_len):
                 raise ValueError("Output range must be non-empty and contained within (0, out_len), or be None")
-        if in_len < self.mis and out_len > 0:
-            raise ValueError("The input length is smaller than the minimum input size but the output length is > 0")
+
+        # We don't model the minimum input size here, we just ignore such observations
+        if out_len == 0:
+            return
 
         # Model the input to output size relation with the number of windows
         nw = self._model_num_wins(in_len, out_len)
@@ -180,36 +181,19 @@ class SlidingWindowParamsSampler:
         nw = Int(f"nw_{constraint_idx}")
         padded_in_len = self.p_l + in_len + self.p_r
         rem = Int(f"rem_{constraint_idx}")
+        # NOTE: keep in mind we only model out_len > 0 here
         self.optimizer.add(
-            ## Input -> number of wins
-            # Two cases: either we have enough input to get one window, either we don't
-            Implies(padded_in_len < self.k_i, nw == 0),
-            Implies(padded_in_len >= self.k_i, nw >= 1),
-            Implies(
-                nw >= 1,
-                And(
-                    # Division-free expression of: c = (padded_in_len - k_i) // s_i + 1,
-                    padded_in_len - self.k_i == (nw - 1) * self.s_i + rem,
-                    0 <= rem,
-                    rem < self.s_i,
-                ),
+            padded_in_len >= self.k_i,
+            nw >= 1,
+            # Input -> number of wins
+            And(
+                # Division-free expression of: c = (padded_in_len - k_i) // s_i + 1,
+                padded_in_len - self.k_i == (nw - 1) * self.s_i + rem,
+                0 <= rem,
+                rem < self.s_i,
             ),
-            ## Num wins -> output size
-            # No windows means no output
-            Implies(nw == 0, out_len == 0),
-            # If we have at least one window, there are two edge cases where might still not get an output
-            Implies(
-                And(nw > 0, out_len == 0),
-                Or(
-                    # With enough output trimming
-                    (nw - 1) * self.s_o + self.k_o <= 2 * self.t_o,
-                    # With a minimum input size that is set larger than the native transform input size
-                    # (e.g. reflect padding does this)
-                    in_len < self.mis,
-                ),
-            ),
-            # If we do have an output, we necessarily have at least one window and the following out size relation
-            Implies(out_len > 0, And(nw > 0, out_len == (nw - 1) * self.s_o + self.k_o - 2 * self.t_o)),
+            # Num wins -> output size
+            out_len == (nw - 1) * self.s_o + self.k_o - 2 * self.t_o,
         )
 
         return nw
@@ -395,7 +379,7 @@ class SlidingWindowParamsSampler:
                     model[self.k_o].as_long(),
                     self.s_o,
                     model[self.t_o].as_long(),
-                    self.mis,
+                    # NOTE: min input size not modeled here
                 )
 
                 # Enforce new solutions only

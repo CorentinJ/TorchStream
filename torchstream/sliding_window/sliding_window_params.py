@@ -446,3 +446,22 @@ def get_streaming_context_size(*args) -> IntLike:
     )
 
     return in_context_size
+
+
+def in_out_rel_repr(s_i: int, s_o: int, isb: int, osb: int) -> str:
+    # I didn't want to use sympy for this...
+    out_str = "x"
+    if isb > 0:
+        out_str = f"(x + {isb})"
+    elif isb < 0:
+        out_str = f"(x - {-isb})"
+    if s_i > 1:
+        out_str = f"({out_str} // {s_i})"
+    if s_o > 1:
+        out_str = f"{out_str} * {s_o}"
+    if osb > 0:
+        out_str = f"{out_str} + {osb}"
+    elif osb < 0:
+        out_str = f"{out_str} - {-osb}"
+
+    return f"y = {out_str}"
