@@ -199,7 +199,7 @@ class SlidingWindowParamsSolver:
         return self.nan_trick_history[0]
 
     @tracer.start_as_current_span("find_in_out_rel_params")
-    def find_in_out_size_params(self) -> Tuple[int, int, int, int, int]:
+    def find_in_out_size_params(self) -> Tuple[int, int, int, int]:
         # TODO! doc
         if self.in_out_rel_params:
             return self.in_out_rel_params
@@ -210,15 +210,14 @@ class SlidingWindowParamsSolver:
         # Integrate the history from the initial input runs in the solver
         sampler = SlidingWindowInOutRelSampler()
         for record in self.nan_trick_history:
-            if record["out_seq_size"] > 0:
-                sampler.add_in_out_size(record["in_seq_size"], record["out_seq_size"])
+            sampler.add_in_out_size(record["in_seq_size"], record["out_seq_size"])
 
         step = 1
-        real_shape_params = self.debug_ref_params.canonicalized_in_out_shape_params if self.debug_ref_params else None
         while True:
-            shape_params, next_in_size = sampler.solve()
+            shape_params, next_in_size = sampler.solve(self.min_in_size_bounds[0], self.max_in_seq_size)
             if shape_params:
-                break
+                self.in_out_rel_params = shape_params
+                return self.in_out_rel_params
 
             # If we have no solution, the transform is not a sliding window.
             if not next_in_size:
@@ -243,86 +242,6 @@ class SlidingWindowParamsSolver:
 
             logger.info(f"[In/out rel] Step {step}")
             step += 1
-
-        # FIXME!
-        self.in_out_rel_params = shape_params + (self.debug_ref_params.min_input_size,)
-
-        # while not self.in_out_rel_params:
-        #     # Sample new shape parameters
-        #     # TODO: bench values other than 2 for max sols
-        #     shape_params_hyps = sampler.get_new_solutions(shape_params_hyps, max_sols=5)
-        #     log_str = f"[In/out rel] Step {step} params:\n  "
-        #     log_str += "\n  ".join(
-        #         _compare_params_str(params, real_shape_params, "s_i,s_o,isbc,osbc".split(","))
-        #         for params in shape_params_hyps
-        #     )
-        #     logger.info(log_str)
-
-        #     # Our sampler explores the entire space, so if we have no solution, the transform is not a sliding window.
-        #     # If we have only one solution, it is the correct one and does not require further testing.
-        #     if not len(shape_params_hyps):
-        #         raise RuntimeError(
-        #             "Could not determine input/output size relationship for your transform. This means that your "
-        #             "transform does not behave like a sliding window. "
-        #             # TODO: this is rarely going to be the case for the users that get this message... Adapt
-        #             "\nIf your transform is a model that is indeed a succession of sliding window "
-        #             "operations, you must avoid upsampling operations (e.g. conv transposed) followed by a "
-        #             "downsampling operation (e.g. conv, pool) with respective strides that cannot be expressed as "
-        #             "a 1/x or x/1 ratio of integers."
-        #             "\nEither way, or if you believe this is a bug, opening an issue on the TorchStream repo would be "
-        #             "greatly appreciated: https://github.com/CorentinJ/TorchStream/issues"
-        #         )
-        #     if len(shape_params_hyps) == 1:
-        #         self.in_out_rel_params = shape_params_hyps[0]
-        #         break
-
-        #     # Obtain the input size -> output size map for all hypotheses
-        #     in_to_out_sizes = compute_in_to_out_sizes(shape_params_hyps, max_input_size=self.max_in_seq_size)
-
-        #     # Pick an input size to test
-        #     if all(params == shape_params_hyps[0] for params in shape_params_hyps):
-        #         # Heuristic: if all hypotheses have the same (s_i, s_o, isbc, osbc)
-        #         #   - If the canonical min input size hasn't been tested, we'll test it
-        #         #   - Otherwise we'll bisect
-        #         canon_min_in_size = get_canonicalized_min_in_size(*shape_params_hyps[0][:4])
-        #         if not any(record["in_seq_size"] == canon_min_in_size for record in self.nan_trick_history):
-        #             in_size = canon_min_in_size
-        #         else:
-        #             lower_bound = max(
-        #                 (record["in_seq_size"] for record in self.nan_trick_history if record["out_seq_size"] == 0),
-        #                 default=canon_min_in_size,
-        #             )
-        #             upper_bound = min(
-        #                 (record["in_seq_size"] for record in self.nan_trick_history if record["out_seq_size"] > 0),
-        #                 default=self.max_in_seq_size + 1,
-        #             )
-        #             in_size = (lower_bound + upper_bound) // 2
-        #     else:
-        #         # Discriminate between hypotheses by finding an input size that will allow us to reject at least one of
-        #         # them based on the observed output size of the relation.
-        #         in_size = input_size_by_max_infogain(in_to_out_sizes)
-
-        #     # TODO? should we try different nan idx values here already?
-        #     #   -> Yes! That would help with converging towards solutions faster. Determine a heuristic size based
-        #     #      on the input size relations
-        #     nan_idx = (in_size // 2, in_size // 2 + 1)
-        #     record = self.run_nan_trick(in_size, nan_idx)
-        #     sampler.add_in_out_size(in_size, record["out_seq_size"])
-
-        #     # Exclude solutions that do not match the observed output size
-        #     prev_n_hyps = len(shape_params_hyps)
-        #     shape_params_hyps = [
-        #         params
-        #         for idx, params in enumerate(shape_params_hyps)
-        #         if in_to_out_sizes[idx, in_size] == record["out_seq_size"]
-        #     ]
-        #     logger.info(
-        #         f"[In/out rel] Step {step}: rejected {prev_n_hyps - len(shape_params_hyps)}/{prev_n_hyps} hypotheses"
-        #     )
-
-        #     step += 1
-
-        return self.in_out_rel_params
 
     def _iter_nan_trick_params_for_hypothesis(self, params: SlidingWindowParams):
         # As specified in the sampler, for any given set of parameters, picking a nan range larger than the input
@@ -489,6 +408,25 @@ class SlidingWindowParamsSolver:
             step += 1
 
         return [hyp.params for hyp in out_sols]
+
+        #     # Pick an input size to test
+        #     if all(params == shape_params_hyps[0] for params in shape_params_hyps):
+        #         # Heuristic: if all hypotheses have the same (s_i, s_o, isbc, osbc)
+        #         #   - If the canonical min input size hasn't been tested, we'll test it
+        #         #   - Otherwise we'll bisect
+        #         canon_min_in_size = get_canonicalized_min_in_size(*shape_params_hyps[0][:4])
+        #         if not any(record["in_seq_size"] == canon_min_in_size for record in self.nan_trick_history):
+        #             in_size = canon_min_in_size
+        #         else:
+        #             lower_bound = max(
+        #                 (record["in_seq_size"] for record in self.nan_trick_history if record["out_seq_size"] == 0),
+        #                 default=canon_min_in_size,
+        #             )
+        #             upper_bound = min(
+        #                 (record["in_seq_size"] for record in self.nan_trick_history if record["out_seq_size"] > 0),
+        #                 default=self.max_in_seq_size + 1,
+        #             )
+        #             in_size = (lower_bound + upper_bound) // 2
 
 
 @torch.no_grad()

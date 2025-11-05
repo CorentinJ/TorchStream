@@ -116,6 +116,7 @@ def _beep_ok():
 
 
 def _beep_fail():
+    return
     if platform.system() == "Windows":
         try:
             import winsound

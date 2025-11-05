@@ -69,14 +69,11 @@ class SlidingWindowParamsSampler:
             self.t_o < self.k_o,
         )
 
-        ## Minimum input size
-        self.mis = minimum_input_size
-        # TODO: isolate?
-        out_needed = 1 + self.t_o * 2
-        num_wins_needed = z3_ceil_div(z3_max(0, out_needed - self.k_o), self.s_o) + 1
-        non_padded_min_input_size = (num_wins_needed - 1) * self.s_i + self.k_i
-        native_min_input_size = z3_max(1, non_padded_min_input_size - self.p_l - self.p_r)
-        self.optimizer.add(native_min_input_size <= self.mis)
+        # ## Minimum input size
+        # out_needed = 1 + self.t_o * 2
+        # num_wins_needed = z3_ceil_div(z3_max(0, out_needed - self.k_o), self.s_o) + 1
+        # non_padded_min_input_size = (num_wins_needed - 1) * self.s_i + self.k_i
+        # native_min_input_size = z3_max(1, non_padded_min_input_size - self.p_l - self.p_r)
 
         ## Streaming parameters
         self.isbc, self.osbc = in_size_bias_canonical, out_size_bias_canonical

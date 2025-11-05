@@ -21,11 +21,12 @@ class SlidingWindowInOutRelSampler:
         """
         if in_len < 1:
             raise ValueError("The input length must be a strictly positive integer")
-        if out_len < 1:
-            raise ValueError(
-                "The output length must be a strictly positive integer, this sampler does not model the "
-                "minimum input size"
-            )
+        if out_len < 0:
+            raise ValueError("The output length must be a positive integer")
+
+        # We don't model the minimum input size here, we just ignore such observations
+        if out_len == 0:
+            return
 
         # Add the observation in sorted order
         insert_idx = bisect_left(self.obs[:, 0], in_len)
@@ -35,7 +36,7 @@ class SlidingWindowInOutRelSampler:
 
     def _solve_so(self) -> Tuple[int | None, int | None]:
         if len(self.obs) == 0:
-            raise RuntimeError("No observations have been added yet")
+            raise RuntimeError("No observations (with a non-zero output size) have been added yet")
 
         diffs = self.obs[1:] - self.obs[:-1]
 
@@ -82,7 +83,7 @@ class SlidingWindowInOutRelSampler:
         return np.all(expected_out_len == self.obs[:, 1])
 
     def _determine_unique_solution(
-        self, s_i_bounds: Tuple[int, int], s_o: int
+        self, s_i_bounds: Tuple[int, int], s_o: int, min_in_size: int = 1, max_in_size: int = 10_000
     ) -> Tuple[Tuple[int, int, int, int] | None, int | None]:
         # At this point in the process, we only have a small finite number of solutions possible. We can brute force the
         # remaining parameters.
@@ -93,18 +94,20 @@ class SlidingWindowInOutRelSampler:
                 if self._verify_parameters(s_i, s_o, isbc, osbc):
                     possible_params.append((s_i, s_o, isbc, osbc))
 
+        if len(possible_params) == 0:
+            return None, None
+
         if len(possible_params) == 1:
             return possible_params[0], None
 
         # If our solution isn't unique, we'll work with the max infogain. We'll stick to the minimum input size found
         # so far to avoid going below the transform's minimum input size.
-        in_to_out_sizes = compute_in_to_out_sizes(possible_params)
-        min_in_size = int(np.min(self.obs[:, 0]))
+        in_to_out_sizes = compute_in_to_out_sizes(possible_params, max_input_size=max_in_size)
         max_infogain_input_size = input_size_by_max_infogain(in_to_out_sizes[:, min_in_size:]) + min_in_size
         return None, max_infogain_input_size
 
     @tracer.start_as_current_span("in_out_rel_sampler.solve")
-    def solve(self) -> Tuple[Tuple[int, int, int, int] | None, int | None]:
+    def solve(self, min_in_size: int, max_in_size: int) -> Tuple[Tuple[int, int, int, int] | None, int | None]:
         s_o, next_in_size = self._solve_so()
         if next_in_size:
             return None, next_in_size
@@ -113,7 +116,7 @@ class SlidingWindowInOutRelSampler:
         if next_in_size:
             return None, next_in_size
 
-        return self._determine_unique_solution(s_i_bounds, s_o)
+        return self._determine_unique_solution(s_i_bounds, s_o, min_in_size, max_in_size)
 
 
 def compute_in_to_out_sizes(

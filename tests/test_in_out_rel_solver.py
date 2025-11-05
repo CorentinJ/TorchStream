@@ -23,7 +23,7 @@ def _find_in_out_size(transform, seq_spec, expected_sol):
     solver = SlidingWindowParamsSolver(transform, seq_spec, debug_ref_params=expected_sol)
     in_out_size_params = solver.find_in_out_size_params()
     if expected_sol:
-        assert in_out_size_params == expected_sol.canonicalized_in_out_shape_params + (expected_sol.min_input_size,)
+        assert in_out_size_params == expected_sol.canonicalized_in_out_shape_params
 
 
 @pytest.mark.parametrize("sli_params,dilation", CONV_1D_PARAMS[0], ids=CONV_1D_PARAMS[1])
