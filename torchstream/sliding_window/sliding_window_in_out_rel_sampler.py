@@ -1,9 +1,10 @@
 import logging
-from typing import List
+import math
+from bisect import bisect_left
+from typing import List, Tuple
 
 import numpy as np
 from opentelemetry import trace
-from z3 import And, Bool, Int, Ints, Not, Or, Solver, sat
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -11,21 +12,8 @@ tracer = trace.get_tracer(__name__)
 
 class SlidingWindowInOutRelSampler:
     def __init__(self):
-        # Input and output strides of the sliding window.
-        self.s_i, self.s_o = Ints("s_i s_o")
-        # Input and output size biases in computation, canonicalized to ensure uniqueness of the relation
-        self.isbc, self.osbc = Ints("isbc osbc")
+        self.obs = np.ndarray(shape=(0, 2), dtype=int)
 
-        self.optimizer = Solver()
-        self.optimizer.add(
-            self.s_i > 0,
-            self.s_o > 0,
-            self.isbc >= 0,
-            self.isbc < self.s_i,
-            # osbc is the only parameter that can be negative -> no constraint for it
-        )
-
-    # FIXME: name
     @tracer.start_as_current_span("in_out_rel_sampler.add_in_out_size")
     def add_in_out_size(self, in_len: int, out_len: int):
         """
@@ -39,76 +27,93 @@ class SlidingWindowInOutRelSampler:
                 "minimum input size"
             )
 
-        # z3 encoding of out_len = ((in_len + isbc) // s_i) * s_o + osbc
-        quotient = Int(f"quotient_{in_len}_{out_len}")
-        # TODO! confirm > vs >=
-        self.optimizer.add(quotient > 0, quotient <= in_len + self.isbc)
-        self.optimizer.add(self.s_i * quotient <= in_len + self.isbc, in_len + self.isbc < self.s_i * (quotient + 1))
-        self.optimizer.add(self.s_o * quotient + self.osbc == out_len)
+        # Add the observation in sorted order
+        insert_idx = bisect_left(self.obs[:, 0], in_len)
+        if insert_idx < len(self.obs) and tuple(self.obs[insert_idx]) == (in_len, out_len):
+            raise ValueError("This observation has already been added")
+        self.obs = np.insert(self.obs, insert_idx, (in_len, out_len), axis=0)
 
-    @tracer.start_as_current_span("in_out_rel_sampler.get_new_solutions")
-    def get_new_solutions(self, known_sols: List, max_sols=2):
-        # TODO: doc
-        out_sols = list(known_sols)
+    def _solve_so(self) -> Tuple[int | None, int | None]:
+        if len(self.obs) == 0:
+            raise RuntimeError("No observations have been added yet")
 
-        # Exclude previous solutions from the search
-        self.optimizer.push()
-        for sol in out_sols:
-            self.optimizer.add(
-                Not(
-                    And(
-                        self.s_i == sol[0],
-                        self.s_o == sol[1],
-                        self.isbc == sol[2],
-                        self.osbc == sol[3],
-                    )
-                )
-            )
+        diffs = self.obs[1:] - self.obs[:-1]
 
-        # Search for newer solutions
-        while len(out_sols) < max_sols:
-            with tracer.start_as_current_span("in_out_rel_sampler.check_optimizer"):
-                check_result = self.optimizer.check()
-            if check_result == sat:
-                model = self.optimizer.model()
-                model_values = (
-                    model[self.s_i].as_long(),
-                    model[self.s_o].as_long(),
-                    model[self.isbc].as_long(),
-                    model[self.osbc].as_long(),
-                )
-                out_sols.append(model_values)
+        # If we have two consecutive x values with different y, we're done
+        direct_step = diffs[(diffs[:, 0] == 1) & (diffs[:, 1] > 0)]
+        if len(direct_step) > 0:
+            return int(direct_step[0, 1]), None
 
-                # Enforce new solutions only
-                new_sol_constraint = Or(
-                    self.s_i != model[self.s_i],
-                    self.s_o != model[self.s_o],
-                    self.isbc != model[self.isbc],
-                    self.osbc != model[self.osbc],
-                )
-                self.optimizer.add(new_sol_constraint)
-            else:
-                break
-        self.optimizer.pop()
+        # No delta y values yet? Request twice the maximum of all input sizes
+        if np.all(diffs[:, 1] == 0):
+            return None, 2 * int(np.max(self.obs[:, 0]))
 
-        return out_sols
+        # TODO: more data efficient approach here
 
-    def get_violations(self, s_i, s_o, isbc, osbc):
-        unsat_solver = Solver()
+        # No solution yet? Return the mid point between two obs that had the smallest strictly positive output size
+        # difference
+        min_pos_out_diff = np.min(diffs[diffs[:, 1] > 0, 1])
+        min_pos_out_diff_idx = np.where(diffs[:, 1] == min_pos_out_diff)[0][0]
+        in_size_a = self.obs[min_pos_out_diff_idx, 0]
+        in_size_b = self.obs[min_pos_out_diff_idx + 1, 0]
+        return None, int((in_size_a + in_size_b) // 2)
 
-        trackers = []
-        for idx, assertion in enumerate(self.optimizer.assertions()):
-            bool_tracker = Bool(f"assertion_{idx}")
-            unsat_solver.assert_and_track(assertion, bool_tracker)
-            trackers.append((bool_tracker, assertion))
+    def _solve_si_bounds(self, s_o: int) -> Tuple[Tuple[int, int] | None, int | None]:
+        s_i_bounds = [1, float("inf")]
 
-        unsat_solver.add(And(self.s_i == s_i, self.s_o == s_o, self.isbc == isbc, self.osbc == osbc))
+        # Take all observations pairwise to infer s_i bounds
+        for obs1_idx in range(len(self.obs)):
+            for obs2_idx in range(obs1_idx + 1, len(self.obs)):
+                in_diff = self.obs[obs2_idx, 0] - self.obs[obs1_idx, 0]
+                quotient_diff = (self.obs[obs2_idx, 1] - self.obs[obs1_idx, 1]) // s_o
 
-        unsat_solver.check()
-        violations = [
-            expression for (bool_tracker, expression) in trackers if bool_tracker in unsat_solver.unsat_core()
-        ]
-        return violations
+                s_i_bounds[0] = max(s_i_bounds[0], int(math.ceil((in_diff + 2) / (quotient_diff + 2))))
+                if quotient_diff > 1:
+                    s_i_bounds[1] = min(s_i_bounds[1], int(math.ceil((in_diff - 1) / (quotient_diff - 1))))
+
+        # If we have no upper bound we need more data, request double the maximum input size again
+        if s_i_bounds[1] == float("inf"):
+            return None, 2 * int(np.max(self.obs[:, 0]))
+
+        return tuple(s_i_bounds), None
+
+    def _verify_parameters(self, s_i: int, s_o: int, isbc: int, osbc: int) -> bool:
+        expected_out_len = ((self.obs[:, 0] + isbc) // s_i) * s_o + osbc
+        return np.all(expected_out_len == self.obs[:, 1])
+
+    def _determine_unique_solution(
+        self, s_i_bounds: Tuple[int, int], s_o: int
+    ) -> Tuple[Tuple[int, int, int, int] | None, int | None]:
+        # At this point in the process, we only have a small finite number of solutions possible. We can brute force the
+        # remaining parameters.
+        possible_params = []
+        for s_i in range(s_i_bounds[0], s_i_bounds[1] + 1):
+            for isbc in range(s_i):
+                osbc = int(self.obs[0, 1] - ((self.obs[0, 0] + isbc) // s_i) * s_o)
+                if self._verify_parameters(s_i, s_o, isbc, osbc):
+                    possible_params.append((s_i, s_o, isbc, osbc))
+
+        if len(possible_params) == 1:
+            return possible_params[0], None
+
+        # If our solution isn't unique, we'll work with the max infogain. We'll stick to the minimum input size found
+        # so far to avoid going below the transform's minimum input size.
+        in_to_out_sizes = compute_in_to_out_sizes(possible_params)
+        min_in_size = int(np.min(self.obs[:, 0]))
+        max_infogain_input_size = input_size_by_max_infogain(in_to_out_sizes[:, min_in_size:]) + min_in_size
+        return None, max_infogain_input_size
+
+    @tracer.start_as_current_span("in_out_rel_sampler.solve")
+    def solve(self) -> Tuple[Tuple[int, int, int, int] | None, int | None]:
+        s_o, next_in_size = self._solve_so()
+        if next_in_size:
+            return None, next_in_size
+
+        s_i_bounds, next_in_size = self._solve_si_bounds(s_o)
+        if next_in_size:
+            return None, next_in_size
+
+        return self._determine_unique_solution(s_i_bounds, s_o)
 
 
 def compute_in_to_out_sizes(
@@ -163,34 +168,3 @@ def input_size_by_max_infogain(in_to_out_sizes: np.ndarray, method="entropy") ->
         raise ValueError(f"Unknown method '{method}'")
 
     return in_size
-
-    # NOTE: I started writing this more efficient version but then I realized the above clocks at 1ms, and we're not
-    # going to use input sizes that are magnitudes larger than 10^4 anyway.
-
-    # k_min = np.maximum(0, np.ceil(-osbc / so).astype(int))
-    # x_min = k_min * si - isbc
-    # x_start = max(1, np.min(x_min))
-
-    # slopes = so / si
-    # c_mat = np.zeros((len(shape_params), len(shape_params)))
-    # b_mat = np.zeros_like(c_mat, dtype=int)
-    # for i, j in itertools.combinations(range(len(shape_params)), 2):
-    #     if slopes[i] != slopes[j]:
-    #         c_mat[i, j] = (so[i] * isbc[i]) / si[i] + osbc[i] - (so[j] * isbc[j]) / si[j] - osbc[j]
-    #         b_mat[i, j] = np.ceil(
-    #             (np.abs(c_mat[i, j]) + so[i] + so[j] + 1) / np.abs(slopes[i] - slopes[j])
-    #         ).astype(int)
-
-    # import matplotlib.pyplot as plt
-
-    # plt.plot(unique_counts)
-    # plt.vlines(
-    #     [x_start, np.max(x_min), in_size, np.max(b_mat)],
-    #     0,
-    #     len(shape_params),
-    #     colors=["green", "orange", "red", "blue"],
-    # )
-    # logger.info(x_min)
-    # logger.info(b_mat)
-    # logger.info(c_mat)
-    # plt.show()

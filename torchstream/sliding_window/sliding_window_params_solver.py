@@ -13,8 +13,6 @@ from torchstream.sliding_window.kernel_sparsity import KernelSparsitySampler
 from torchstream.sliding_window.nan_trick import get_nan_idx
 from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
     SlidingWindowInOutRelSampler,
-    compute_in_to_out_sizes,
-    input_size_by_max_infogain,
 )
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
@@ -217,21 +215,13 @@ class SlidingWindowParamsSolver:
 
         step = 1
         real_shape_params = self.debug_ref_params.canonicalized_in_out_shape_params if self.debug_ref_params else None
-        shape_params_hyps = []
         while True:
-            # Sample new shape parameters
-            # TODO: bench other max sols values
-            shape_params_hyps = sampler.get_new_solutions(shape_params_hyps, max_sols=5)
-            log_str = f"[In/out rel] Step {step} params:\n  "
-            log_str += "\n  ".join(
-                _compare_params_str(params, real_shape_params, "s_i,s_o,isbc,osbc".split(","))
-                for params in shape_params_hyps
-            )
-            logger.info(log_str)
+            shape_params, next_in_size = sampler.solve()
+            if shape_params:
+                break
 
-            # Our sampler explores the entire space, so if we have no solution, the transform is not a sliding window.
-            # If we have only one solution, it is the correct one and does not require further testing.
-            if not len(shape_params_hyps):
+            # If we have no solution, the transform is not a sliding window.
+            if not next_in_size:
                 raise RuntimeError(
                     "Could not determine input/output size relationship for your transform. This means that your "
                     "transform does not behave like a sliding window. "
@@ -243,42 +233,19 @@ class SlidingWindowParamsSolver:
                     "\nEither way, or if you believe this is a bug, opening an issue on the TorchStream repo would be "
                     "greatly appreciated: https://github.com/CorentinJ/TorchStream/issues"
                 )
-            if len(shape_params_hyps) == 1:
-                break
 
-            # Obtain the input size -> output size map for all hypotheses
-            in_to_out_sizes = compute_in_to_out_sizes(shape_params_hyps, max_input_size=self.max_in_seq_size)
+            # TODO? should we try different nan idx values here already?
+            #   -> Yes! That would help with converging towards solutions faster. Determine a heuristic size based
+            #      on the input size relations
+            nan_idx = (next_in_size // 2, next_in_size // 2 + 1)
+            record = self.run_nan_trick(next_in_size, nan_idx)
+            sampler.add_in_out_size(next_in_size, record["out_seq_size"])
 
-            while True:
-                # Discriminate between hypotheses by finding an input size that will allow us to reject at least one of
-                # them based on the observed output size of the relation.
-                current_min_in_size = self.min_in_size_bounds[0]
-                in_size = input_size_by_max_infogain(in_to_out_sizes[:, current_min_in_size:]) + current_min_in_size
-
-                # TODO? should we try different nan idx values here already?
-                #   -> Yes! That would help with converging towards solutions faster. Determine a heuristic size based
-                #      on the input size relations
-                nan_idx = (in_size // 2, in_size // 2 + 1)
-                record = self.run_nan_trick(in_size, nan_idx)
-                if record["out_seq_size"] > 0:
-                    sampler.add_in_out_size(in_size, record["out_seq_size"])
-                    break
-
-            # Exclude solutions that do not match the observed output size
-            prev_n_hyps = len(shape_params_hyps)
-            shape_params_hyps = [
-                params
-                for idx, params in enumerate(shape_params_hyps)
-                if in_to_out_sizes[idx, in_size] == record["out_seq_size"]
-            ]
-            logger.info(
-                f"[In/out rel] Step {step}: rejected {prev_n_hyps - len(shape_params_hyps)}/{prev_n_hyps} hypotheses"
-            )
-
+            logger.info(f"[In/out rel] Step {step}")
             step += 1
 
         # FIXME!
-        self.in_out_rel_params = shape_params_hyps[0] + (self.debug_ref_params.min_input_size,)
+        self.in_out_rel_params = shape_params + (self.debug_ref_params.min_input_size,)
 
         # while not self.in_out_rel_params:
         #     # Sample new shape parameters
