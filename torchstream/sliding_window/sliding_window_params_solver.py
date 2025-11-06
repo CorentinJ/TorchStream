@@ -155,7 +155,7 @@ class SlidingWindowParamsSolver:
         if out_seq.size > 0:
             self.min_in_size_bounds[1] = min(self.min_in_size_bounds[1], in_seq.size)
         else:
-            self.min_in_size_bounds[0] = max(self.min_in_size_bounds[0], in_seq.size)
+            self.min_in_size_bounds[0] = max(self.min_in_size_bounds[0], in_seq.size + 1)
 
         # Raise if we get no output with the maximum input size
         if in_seq_size == self.max_in_seq_size and out_seq.size == 0:
@@ -184,7 +184,7 @@ class SlidingWindowParamsSolver:
         # TODO! doc
         # In the first part of the process, we'll forward inputs to the transform and stop as soon as we get a
         # output sequence of non-zero size
-        while True:
+        while not any(record["out_seq_size"] for record in self.nan_trick_history):
             # Use sane defaults for the NaN trick
             record = self.run_nan_trick(self.init_seq_size, (self.init_seq_size // 2, self.init_seq_size // 2 + 1))
             if record["out_seq_size"]:
@@ -230,11 +230,7 @@ class SlidingWindowParamsSolver:
                     if self.min_in_size_bounds[0] < self.min_in_size_bounds[1]
                     else f"= {self.min_in_size_bounds[0]}"
                 )
-                logger.info(
-                    f"In/out size relationship determined in {step} steps:\n"
-                    f"\t{in_out_rel_repr(*shape_params)}\n"
-                    f"\twith minimum input size {min_in_size_str}"
-                )
+                logger.info(f"In/out size relationship determined in {step} steps:\n\t{in_out_rel_repr(*shape_params)}")
 
                 return self.in_out_rel_params
 
@@ -261,6 +257,45 @@ class SlidingWindowParamsSolver:
 
             logger.info(f"[In/out rel] Step {step}")
             step += 1
+
+    @tracer.start_as_current_span("find_min_input_size")
+    def find_min_input_size(self) -> int:
+        # TODO! doc
+        # Ensure we have at least one example input before starting
+        self.run_initial_input()
+
+        step = 1
+        while self.min_in_size_bounds[0] < self.min_in_size_bounds[1]:
+            # Heuristic: if the canonical min input size hasn't been tested, we'll test it. Most often that will be
+            # the actual minimum input size. Otherwise we'll bisect
+            canon_min_in_size = None
+            if self.in_out_rel_params is not None:
+                canon_min_in_size = get_canonicalized_min_in_size(*self.in_out_rel_params)
+            if canon_min_in_size is not None and not any(
+                record["in_seq_size"] == canon_min_in_size for record in self.nan_trick_history
+            ):
+                in_size = canon_min_in_size
+            else:
+                lower_bound = max(
+                    (record["in_seq_size"] for record in self.nan_trick_history if record["out_seq_size"] == 0),
+                    default=canon_min_in_size or 1,
+                )
+                upper_bound = min(
+                    (record["in_seq_size"] for record in self.nan_trick_history if record["out_seq_size"] > 0),
+                    default=self.max_in_seq_size + 1,
+                )
+                in_size = (lower_bound + upper_bound) // 2
+
+            # TODO? should we try different nan idx values here already?
+            #   -> Yes! That would help with converging towards solutions faster. Determine a heuristic size based
+            #      on the input size relations
+            nan_idx = (in_size // 2, in_size // 2 + 1)
+            self.run_nan_trick(in_size, nan_idx)
+
+            logger.info(f"[Min input size] Step {step} - range {self.min_in_size_bounds}")
+            step += 1
+
+        return self.min_in_size_bounds[0]
 
     def _iter_nan_trick_params_for_hypothesis(self, params: SlidingWindowParams):
         # As specified in the sampler, for any given set of parameters, picking a nan range larger than the input
@@ -384,7 +419,8 @@ class SlidingWindowParamsSolver:
         # Start by determining the input/output size relationship, it will heavily simplify the param search to
         # know it in advance
         in_out_rel_params = self.find_in_out_size_params()
-        sampler = SlidingWindowParamsSampler(*in_out_rel_params)
+        min_input_size = self.find_min_input_size()
+        sampler = SlidingWindowParamsSampler(*in_out_rel_params, min_input_size)
 
         # The NaN tricks we ran for the in/out size relation are relevant, we'll integrate them into the sampler
         for record in self.nan_trick_history:
@@ -427,25 +463,6 @@ class SlidingWindowParamsSolver:
             step += 1
 
         return [hyp.params for hyp in out_sols]
-
-        #     # Pick an input size to test
-        #     if all(params == shape_params_hyps[0] for params in shape_params_hyps):
-        #         # Heuristic: if all hypotheses have the same (s_i, s_o, isbc, osbc)
-        #         #   - If the canonical min input size hasn't been tested, we'll test it
-        #         #   - Otherwise we'll bisect
-        #         canon_min_in_size = get_canonicalized_min_in_size(*shape_params_hyps[0][:4])
-        #         if not any(record["in_seq_size"] == canon_min_in_size for record in self.nan_trick_history):
-        #             in_size = canon_min_in_size
-        #         else:
-        #             lower_bound = max(
-        #                 (record["in_seq_size"] for record in self.nan_trick_history if record["out_seq_size"] == 0),
-        #                 default=canon_min_in_size,
-        #             )
-        #             upper_bound = min(
-        #                 (record["in_seq_size"] for record in self.nan_trick_history if record["out_seq_size"] > 0),
-        #                 default=self.max_in_seq_size + 1,
-        #             )
-        #             in_size = (lower_bound + upper_bound) // 2
 
 
 @torch.no_grad()
