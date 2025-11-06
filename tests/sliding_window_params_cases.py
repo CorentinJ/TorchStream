@@ -38,7 +38,7 @@ def _sli_params_to_test_args(params_iter) -> Tuple[List[Tuple[SlidingWindowParam
                     f"p=({p.left_pad}, {p.right_pad})" if p.left_pad + p.right_pad > 0 else None,
                     f"ko={p.kernel_size_out}(d{dilation})" if p.kernel_size_out > 1 else None,
                     f"so={p.stride_out}" if p.stride_out > 1 else None,
-                    f"trim={p.out_trim}" if p.out_trim > 0 else None,
+                    f"t=({p.left_out_trim}, {p.right_out_trim})" if p.left_out_trim + p.right_out_trim > 0 else None,
                 ),
             )
         )
@@ -70,12 +70,14 @@ TRANSPOSED_CONV_1D_PARAMS = _sli_params_to_test_args(
         dict(
             kernel_size_out=kernel_size,
             stride_out=stride,
-            out_trim=out_trim,
+            left_out_trim=out_trim[0],
+            right_out_trim=out_trim[1],
             dilation=dilation,
         )
         for kernel_size in [1, 2, 3, 10, 17]
         for stride in [1, 2, 3, 10, 17]
-        for out_trim in [0, 1, 2, 8, 9]
+        # NOTE: right out trim <= left out trim for tconvs
+        for out_trim in [(0, 0), (1, 0), (2, 2), (8, 7), (9, 0)]
         for dilation in [1, 2, 3]
     )
 )
@@ -92,32 +94,69 @@ MOVING_AVERAGE_PARAMS = _sli_params_to_test_args(
             right_pad=padding[1],
             kernel_size_out=kernel_size_out,
             stride_out=stride_out,
-            out_trim=out_trim,
+            left_out_trim=out_trim[0],
+            right_out_trim=out_trim[1],
         )
         for kernel_size_in in [1, 2, 5, 10]
         for stride_in in [1, 2, 3]
         for padding in [(0, 0), (3, 0), (1, 2)]
         for kernel_size_out in [1, 2, 4, 7]
         for stride_out in [1, 2, 7]
-        for out_trim in [0, 1, 3, 6]
+        for out_trim in [(0, 0), (1, 1), (2, 3), (6, 2)]
     )
 )
 
 EDGE_CASES_PARAMS = _sli_params_to_test_args(
     [
         dict(),
-        dict(kernel_size_out=5, stride_out=5, out_trim=4),
-        dict(kernel_size_out=5, stride_out=3, out_trim=2),
-        dict(kernel_size_in=2, stride_in=2, left_pad=1, right_pad=1, kernel_size_out=2, stride_out=2, out_trim=1),
-        dict(kernel_size_out=7, out_trim=5),
-        dict(kernel_size_out=10, stride_out=3, out_trim=8),
-        dict(kernel_size_in=5, stride_in=1, left_pad=3, right_pad=0, kernel_size_out=7, stride_out=2, out_trim=6),
-        dict(kernel_size_in=3, stride_in=1, left_pad=0, right_pad=2, kernel_size_out=2, stride_out=2, out_trim=1),
+        dict(kernel_size_out=5, stride_out=5, left_out_trim=4, right_out_trim=4),
+        dict(kernel_size_out=5, stride_out=3, left_out_trim=2, right_out_trim=2),
+        dict(
+            kernel_size_in=2,
+            stride_in=2,
+            left_pad=1,
+            right_pad=1,
+            kernel_size_out=2,
+            stride_out=2,
+            left_out_trim=1,
+            right_out_trim=1,
+        ),
+        dict(kernel_size_out=7, left_out_trim=5, right_out_trim=5),
+        dict(kernel_size_out=10, stride_out=3, left_out_trim=8, right_out_trim=8),
+        dict(
+            kernel_size_in=5,
+            stride_in=1,
+            left_pad=3,
+            right_pad=0,
+            kernel_size_out=7,
+            stride_out=2,
+            left_out_trim=6,
+            right_out_trim=6,
+        ),
+        dict(
+            kernel_size_in=3,
+            stride_in=1,
+            left_pad=0,
+            right_pad=2,
+            kernel_size_out=2,
+            stride_out=2,
+            left_out_trim=1,
+            right_out_trim=1,
+        ),
         dict(kernel_size_in=31, stride_in=17),
         # TODO Add dilation=2 (k=17)
         dict(kernel_size_in=33, stride_in=17, left_pad=2),
         # TODO Add dilation=2 (k=10)
         dict(kernel_size_in=19, stride_in=10, left_pad=1, right_pad=4),
-        dict(kernel_size_in=5, stride_in=4, left_pad=1, right_pad=2, kernel_size_out=7, stride_out=7, out_trim=3),
+        dict(
+            kernel_size_in=5,
+            stride_in=4,
+            left_pad=1,
+            right_pad=2,
+            kernel_size_out=7,
+            stride_out=7,
+            left_out_trim=3,
+            right_out_trim=3,
+        ),
     ]
 )

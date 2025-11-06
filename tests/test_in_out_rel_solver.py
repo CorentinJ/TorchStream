@@ -97,7 +97,14 @@ def test_conv_transpose_1d(sli_params: SlidingWindowParams, dilation: int):
                 {"transposed": True, "kernel_size": 4, "stride": 3, "padding": 2},
             ],
             SlidingWindowParams(
-                kernel_size_in=5, stride_in=2, left_pad=1, right_pad=1, kernel_size_out=4, stride_out=3, out_trim=2
+                kernel_size_in=5,
+                stride_in=2,
+                left_pad=1,
+                right_pad=1,
+                kernel_size_out=4,
+                stride_out=3,
+                left_out_trim=2,
+                right_out_trim=2,
             ),
         ),
         (
@@ -106,7 +113,14 @@ def test_conv_transpose_1d(sli_params: SlidingWindowParams, dilation: int):
                 {"transposed": True, "kernel_size": 10, "stride": 3, "padding": 2},
             ],
             SlidingWindowParams(
-                kernel_size_in=5, stride_in=2, left_pad=1, right_pad=1, kernel_size_out=10, stride_out=3, out_trim=2
+                kernel_size_in=5,
+                stride_in=2,
+                left_pad=1,
+                right_pad=1,
+                kernel_size_out=10,
+                stride_out=3,
+                left_out_trim=2,
+                right_out_trim=2,
             ),
         ),
         (

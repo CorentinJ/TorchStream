@@ -31,7 +31,8 @@ def main():
         right_pad=17,
         kernel_size_out=418,
         stride_out=256,
-        out_trim=81,
+        left_out_trim=81,
+        right_out_trim=81,
     )
 
     # test_stream_equivalent(

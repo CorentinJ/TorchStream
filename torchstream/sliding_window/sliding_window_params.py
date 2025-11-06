@@ -19,7 +19,8 @@ class SlidingWindowParams:
         right_pad: int = 0,
         kernel_size_out: int = 1,
         stride_out: int = 1,
-        out_trim: int = 0,
+        left_out_trim: int = 0,
+        right_out_trim: int = 0,
         min_input_size: int | None = None,
     ):
         """
@@ -31,15 +32,15 @@ class SlidingWindowParams:
         this value.
         :param kernel_size_out: The kernel size of the output. It is 1 for normal convolutions, but can be larger for
         transposed convolutions.
-        :param out_trim: The number of elements to trim from both sides of the output. It is rare to trim the output
-        in practice, typically it's for getting rid of non-fully overlapping windows of the output when the output
-        kernel size is larger than 1. Transposed convolutions expose this parameter through the "padding" parameter
-        for example.
-        NOTE: So far I haven't met a model that had different left/right values, output padding or trimming
-        larger than the kernel size.
+        :param left_out_trim: The number of elements to trim from the left of the output. It is uncommon to trim the
+        output in practice, typically it's for getting rid of non-fully overlapping windows of the output when the
+        output kernel size is larger than 1. Transposed convolutions expose this parameter through the "padding"
+        parameter for example.
+        :param right_out_trim: The number of elements to trim from the right of the output. Transposed convolutions
+        allow different trimming values with their "output_padding" parameter.
         :param min_input_size: If provided, allows setting a higher bound on the minimum input size necessary to have
         any output element. This is useful for transforms that have a hard minimum input size requirement, such as
-        relect padding.
+        reflect padding.
         """
         self.kernel_size_in = int(kernel_size_in)
         self.kernel_size_out = int(kernel_size_out)
@@ -47,7 +48,8 @@ class SlidingWindowParams:
         self.left_pad = int(left_pad)
         self.right_pad = int(right_pad)
         self.stride_out = int(stride_out)
-        self.out_trim = int(out_trim)
+        self.left_out_trim = int(left_out_trim)
+        self.right_out_trim = int(right_out_trim)
 
         if self.kernel_size_in < 1:
             raise ValueError("kernel_size_in must be at least 1.")
@@ -61,8 +63,10 @@ class SlidingWindowParams:
             raise ValueError("left_pad must be at least 0 and at most kernel_size_in - 1.")
         if self.right_pad < 0 or self.right_pad >= self.kernel_size_in:
             raise ValueError("right_pad must be at least 0 and at most kernel_size_in - 1.")
-        if self.out_trim < 0 or self.out_trim >= self.kernel_size_out:
-            raise ValueError("out_trim must be at least 0 and at most kernel_size_out - 1.")
+        if self.left_out_trim < 0 or self.left_out_trim >= self.kernel_size_out:
+            raise ValueError("left_out_trim must be at least 0 and at most kernel_size_out - 1.")
+        if self.right_out_trim < 0 or self.right_out_trim >= self.kernel_size_out:
+            raise ValueError("right_out_trim must be at least 0 and at most kernel_size_out - 1.")
 
         native_min_input_size = self.native_min_input_size
         if min_input_size is not None and min_input_size < native_min_input_size:
@@ -95,7 +99,7 @@ class SlidingWindowParams:
         Returns the minimum input size necessary to have any output element (i.e. length>0). The returned value is
         always at least one.
         """
-        out_needed = 1 + self.out_trim * 2
+        out_needed = 1 + self.left_out_trim + self.right_out_trim
         num_wins_needed = int(math.ceil(max(0, out_needed - self.kernel_size_out) / self.stride_out)) + 1
         non_padded_min_input_size = (num_wins_needed - 1) * self.stride_in + self.kernel_size_in
         return max(1, non_padded_min_input_size - self.left_pad - self.right_pad)
@@ -111,7 +115,7 @@ class SlidingWindowParams:
         """
         Returns the minimum input size necessary to have a given output size.
         """
-        pre_trim_out_size = out_size + 2 * self.out_trim
+        pre_trim_out_size = out_size + self.left_out_trim + self.right_out_trim
         num_wins_needed = int(math.ceil(max(0, pre_trim_out_size - self.kernel_size_out) / self.stride_out)) + 1
         return self.get_min_input_size_for_num_wins(num_wins_needed)
 
@@ -157,7 +161,7 @@ class SlidingWindowParams:
         if num_wins == 0:
             out_len = 0
         else:
-            out_len = (num_wins - 1) * self.stride_out + self.kernel_size_out - 2 * self.out_trim
+            out_len = (num_wins - 1) * self.stride_out + self.kernel_size_out - self.left_out_trim - self.right_out_trim
             assert out_len > 0
 
         return padding, num_wins, out_len
@@ -195,8 +199,8 @@ class SlidingWindowParams:
                     i * self.stride_in + self.kernel_size_in - self.left_pad,
                 ),
                 (
-                    i * self.stride_out - self.out_trim,
-                    i * self.stride_out + self.kernel_size_out - self.out_trim,
+                    i * self.stride_out - self.left_out_trim,
+                    i * self.stride_out + self.kernel_size_out - self.left_out_trim,
                 ),
             )
 
@@ -255,7 +259,8 @@ class SlidingWindowParams:
             self.right_pad,
             self.kernel_size_out,
             self.stride_out,
-            self.out_trim,
+            self.left_out_trim,
+            self.right_out_trim,
         ) + ((self.min_input_size,) if with_min_in_size else ())
 
     def __eq__(self, other):
@@ -275,7 +280,7 @@ class SlidingWindowParams:
             + f"    kernel_size_in={self.kernel_size_in}, stride_in={self.stride_in}, "
             + f"left_pad={self.left_pad}, right_pad={self.right_pad},\n"
             + f"    kernel_size_out={self.kernel_size_out}, stride_out={self.stride_out}, "
-            + f"out_trim={self.out_trim},\n"
+            + f"left_out_trim={self.left_out_trim}, right_out_trim={self.right_out_trim},\n"
             + mis_str
             + ")"
         )
@@ -284,17 +289,8 @@ class SlidingWindowParams:
 def _get_sli_args(args):
     if len(args) == 1 and isinstance(args[0], SlidingWindowParams):
         p = args[0]
-        # TODO: order consistency with constructor & as_tuple()
-        return (
-            p.kernel_size_in,
-            p.stride_in,
-            p.left_pad,
-            p.right_pad,
-            p.kernel_size_out,
-            p.stride_out,
-            p.out_trim,
-        )
-    elif len(args) == 7:
+        return p.as_tuple(with_min_in_size=False)
+    elif len(args) == 8:
         return args
     else:
         raise TypeError()
@@ -306,13 +302,13 @@ def get_canonicalized_in_out_shape_params(
 ) -> Tuple[int, int, int, int]: ...
 @overload
 def get_canonicalized_in_out_shape_params(
-    k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_o: IntLike
+    k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_l: IntLike, t_r: IntLike
 ) -> Tuple[IntLike, IntLike, IntLike, IntLike]: ...
 def get_canonicalized_in_out_shape_params(*args) -> Tuple[IntLike, IntLike, IntLike, IntLike]:
-    k_i, s_i, p_l, p_r, k_o, s_o, t_o = _get_sli_args(args)
+    k_i, s_i, p_l, p_r, k_o, s_o, t_l, t_r = _get_sli_args(args)
 
     in_size_bias = p_l + p_r - k_i
-    out_size_bias = k_o - 2 * t_o
+    out_size_bias = k_o - t_l - t_r
 
     # Make the biases canonical so size relations are uniquely determined by a set of parameters
     if isinstance(s_i, int) and isinstance(in_size_bias, int):
@@ -340,7 +336,8 @@ def get_output_delay(
     p_r: IntLike,
     k_o: IntLike,
     s_o: IntLike,
-    t_o: IntLike,
+    t_l: IntLike,
+    t_r: IntLike,
     input_size: int,
     as_phase=False,
 ) -> IntLike: ...
@@ -356,7 +353,7 @@ def get_output_delay(*args, as_phase=False) -> IntLike:
     values depending on the phase (i.e. on the input size).
 
     """
-    (k_i, s_i, p_l, p_r, k_o, s_o, t_o), input_size = _get_sli_args(args[:-1]), args[-1]
+    (k_i, s_i, p_l, p_r, k_o, s_o, t_l, t_r), input_size = _get_sli_args(args[:-1]), args[-1]
 
     if as_phase:
         if isinstance(input_size, int) and isinstance(s_i, int):
@@ -367,7 +364,8 @@ def get_output_delay(*args, as_phase=False) -> IntLike:
 
     n_right_pad_corrupted_wins = z3_floor_div(phase + p_r, s_i)
     output_delay_pre_trim = k_o + (n_right_pad_corrupted_wins - 1) * s_o
-    output_delay = z3_max(0, output_delay_pre_trim - t_o)
+    # FIXME!! double check tr vs tl
+    output_delay = z3_max(0, output_delay_pre_trim - t_r)
 
     return output_delay
 
@@ -376,14 +374,14 @@ def get_output_delay(*args, as_phase=False) -> IntLike:
 def get_output_delay_bounds(sli_params: SlidingWindowParams) -> Tuple[int, int]: ...
 @overload
 def get_output_delay_bounds(
-    k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_o: IntLike
+    k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_l: IntLike, t_r: IntLike
 ) -> Tuple[IntLike, IntLike]: ...
 def get_output_delay_bounds(*args) -> Tuple[IntLike, IntLike]:
     # TODO: doc
-    k_i, s_i, p_l, p_r, k_o, s_o, t_o = _get_sli_args(args)
+    k_i, s_i, p_l, p_r, k_o, s_o, t_l, t_r = _get_sli_args(args)
     return (
-        get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_o, 0, as_phase=True),
-        get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_o, s_i - 1, as_phase=True),
+        get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_l, t_r, 0, as_phase=True),
+        get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_l, t_r, s_i - 1, as_phase=True),
     )
 
 
@@ -391,13 +389,13 @@ def get_output_delay_bounds(*args) -> Tuple[IntLike, IntLike]:
 def get_all_output_delays(sli_params: SlidingWindowParams) -> Tuple[int, ...]: ...
 @overload
 def get_all_output_delays(
-    k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_o: IntLike
+    k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_l: IntLike, t_r: IntLike
 ) -> Tuple[IntLike, ...]: ...
 def get_all_output_delays(*args) -> Tuple[IntLike, ...]:
     # TODO: doc
-    k_i, s_i, p_l, p_r, k_o, s_o, t_o = _get_sli_args(args)
+    k_i, s_i, p_l, p_r, k_o, s_o, t_l, t_r = _get_sli_args(args)
     # NOTE: can be computed more efficiently for very large strides if necessary
-    return tuple(get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_o, phase, as_phase=True) for phase in range(s_i))
+    return tuple(get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_l, t_r, phase, as_phase=True) for phase in range(s_i))
 
 
 @overload
@@ -406,7 +404,7 @@ def get_streaming_context_size(
 ) -> int: ...
 @overload
 def get_streaming_context_size(
-    k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_o: IntLike
+    k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_l: IntLike, t_r: IntLike
 ) -> IntLike: ...
 def get_streaming_context_size(*args) -> IntLike:
     """
@@ -417,16 +415,17 @@ def get_streaming_context_size(*args) -> IntLike:
     output to be equivalent from its non-streamed version. This value is the context size and we can derive it from
     the sliding window parameters.
     """
-    k_i, s_i, p_l, p_r, k_o, s_o, t_o = _get_sli_args(args)
+    k_i, s_i, p_l, p_r, k_o, s_o, t_l, t_r = _get_sli_args(args)
 
     in_delay = p_l + p_r - k_i
     in_delay_n_wins, in_delay_remainder = z3_divmod(in_delay, s_i)
 
-    last_left_incomplete_out_idx = z3_ceil_div(p_l, s_i) * s_o + (k_o - 1) - t_o
+    # TODO!! verify
+    last_left_incomplete_out_idx = z3_ceil_div(p_l, s_i) * s_o + (k_o - 1) - t_l
 
     def ctx_for_remainder(remainder: IntLike) -> IntLike:
-        out_delay = get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_o, remainder)
-        effective_out_core = k_o - 2 * t_o - out_delay
+        out_delay = get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_l, t_r, remainder)
+        effective_out_core = k_o - t_l - t_r - out_delay
 
         if isinstance(in_delay_remainder, int) and isinstance(remainder, int):
             bias_carry = 1 if (in_delay_remainder + remainder) >= s_i else 0

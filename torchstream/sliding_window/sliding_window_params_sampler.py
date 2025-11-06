@@ -49,7 +49,7 @@ class SlidingWindowParamsSampler:
         self.p_r = Int("p_r")
         # Output trimming: this many output elements are removed both on the left and right of the output. Often used
         # for transposed convolutions
-        self.t_o = Int("t_o")
+        self.t_l, self.t_r = Ints("t_l t_r")
         self.optimizer.add(
             # It would be highly unusual to have a stride larger than the kernel size, leading to inputs being unused or
             # to gaps in the output.
@@ -65,14 +65,16 @@ class SlidingWindowParamsSampler:
             self.p_r < self.k_i,
             # Same for output trimming, if we're discarding more than an entire kernel, then we're effectively wasting
             # inputs
-            0 <= self.t_o,
-            self.t_o < self.k_o,
+            0 <= self.t_l,
+            0 <= self.t_r,
+            self.t_l < self.k_o,
+            self.t_r < self.k_o,
         )
 
         ## Minimum input size
         self.mis = minimum_input_size
         # TODO: isolate?
-        out_needed = 1 + self.t_o * 2
+        out_needed = 1 + self.t_l + self.t_r
         num_wins_needed = z3_ceil_div(z3_max(0, out_needed - self.k_o), self.s_o) + 1
         non_padded_min_input_size = (num_wins_needed - 1) * self.s_i + self.k_i
         native_min_input_size = z3_max(1, non_padded_min_input_size - self.p_l - self.p_r)
@@ -80,20 +82,14 @@ class SlidingWindowParamsSampler:
 
         ## Streaming parameters
         self.isbc, self.osbc = in_size_bias_canonical, out_size_bias_canonical
-        *_, isbc, osbc = get_canonicalized_in_out_shape_params(
-            self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
-        )
+        sli_params = (self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_l, self.t_r)
+        *_, isbc, osbc = get_canonicalized_in_out_shape_params(*sli_params)
         # FIXME: keep either?
-        self.min_od, self.max_od = get_output_delay_bounds(
-            self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o
-        )
-        self.ods = get_all_output_delays(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
+        self.min_od, self.max_od = get_output_delay_bounds(*sli_params)
+        self.ods = get_all_output_delays(*sli_params)
         # TODO? model ictx + s_i >= native_min_input_size
         self.ictx = Int("ictx")
-        self.optimizer.add(
-            self.ictx
-            == get_streaming_context_size(self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o)
-        )
+        self.optimizer.add(self.ictx == get_streaming_context_size(*sli_params))
 
         # FIXME!
         # Bounds for the input size bias: -k_i < isb <= 2 * (k_i - 1)
@@ -119,7 +115,7 @@ class SlidingWindowParamsSampler:
         # Ideally we'd figure out a solver that embeds kernel sparsity directly - or if that is too costly we'd do it
         # in a separate class and focus on streaming parameters here.
         # NOTE: using optimizer.minimize() does not seem to be an option due to the logic type used
-        self.simplicity_cost = self.k_i + self.k_o + (self.p_l + self.p_r) / 2 + self.t_o
+        self.simplicity_cost = 2 * self.k_i + 2 * self.k_o + self.p_l + self.p_r + self.t_l + self.t_r
         self.max_simplicity_cost_sampler = ThresholdHarvester(lower_bound=2)
         self.performance_cost = self.max_od / self.s_o + self.ictx
         self.max_performance_cost_sampler = ThresholdHarvester()
@@ -205,14 +201,14 @@ class SlidingWindowParamsSampler:
                 And(nw > 0, out_len == 0),
                 Or(
                     # With enough output trimming
-                    (nw - 1) * self.s_o + self.k_o <= 2 * self.t_o,
+                    (nw - 1) * self.s_o + self.k_o <= self.t_l + self.t_r,
                     # With a minimum input size that is set larger than the native transform input size
                     # (e.g. reflect padding does this)
                     in_len < self.mis,
                 ),
             ),
             # If we do have an output, we necessarily have at least one window and the following out size relation
-            Implies(out_len > 0, And(nw > 0, out_len == (nw - 1) * self.s_o + self.k_o - 2 * self.t_o)),
+            Implies(out_len > 0, And(nw > 0, out_len == (nw - 1) * self.s_o + self.k_o - self.t_l - self.t_r)),
         )
 
         return nw
@@ -229,6 +225,7 @@ class SlidingWindowParamsSampler:
             # wrs is the index of the first window that could possibly output the first nan in the output (we have no
             # guarantee that it is indeed that window, this is a lower bound).
             wrs >= 0,
+            # TODO!! Resume t_o replacement here
             wrs * self.s_o >= out_nan_range[0] - self.k_o + 1 + self.t_o,
             # Likewise, cre is the index of the last window that could possibly have output the last nan in the output.
             wre < nw,

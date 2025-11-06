@@ -58,7 +58,7 @@ def _compare_sli_params_str(params: SlidingWindowParams, real_params: SlidingWin
 
     params_size_rel = params.canonicalized_in_out_shape_params + (params.min_input_size,)
     return (
-        f"\n\tparameters ({_compare_params_str(params.as_tuple(with_min_in_size=False), ref_params, 'ki,si,lp,rp,ko,so,ot'.split(','))})"
+        f"\n\tparameters ({_compare_params_str(params.as_tuple(with_min_in_size=False), ref_params, 'ki,si,lp,rp,ko,so,lt,rt'.split(','))})"
         f"\n\twith shape ({_compare_params_str(params_size_rel, ref_size_rel, 's_i,s_o,isbc,osbc,mis'.split(','))})"
         f"\n\twith output delays ({_compare_params_str(params.output_delays, ref_delays)})"
         f"\n\twith context size {_compare_params_str((params.streaming_context_size,), ref_ctx)}"
