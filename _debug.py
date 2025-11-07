@@ -284,7 +284,6 @@ for stride in [2, 5, 10]:
 
                 print("\n\n------")
                 print(stride, kernel_size, padding, output_padding)
-                # 5 3 2 0
 
                 solver = SlidingWindowParamsSolver(
                     conv_transpose,

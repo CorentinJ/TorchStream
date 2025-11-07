@@ -24,7 +24,7 @@ text = """
 [Kokoro](/kˈOkəɹO/) is an open-weight TTS model with 82 million parameters. Despite its lightweight architecture, it delivers comparable quality to larger models while being significantly faster and more cost-efficient. With Apache-licensed weights, [Kokoro](/kˈOkəɹO/) can be deployed anywhere from production environments to personal projects.
 """
 
-# Normal, non-streaming inference
+# # Normal, non-streaming inference
 # import soundfile as sf
 # *_, audio = next(pipeline(text, voice="af_heart"))
 # sf.write("demo_audio.wav", audio, 24000)
@@ -50,11 +50,11 @@ def mod_decoder_forward(self, asr, F0_curve, N, s):
     return x
 
 
-def trsfm(x: torch.Tensor):
-    asr = x.expand((-1, 512, -1))
-    F0_curve = x.repeat_interleave(2, dim=-1)[0]
+def trsfm(t: torch.Tensor):
+    asr = t.expand((-1, 512, -1))
+    F0_curve = t.repeat_interleave(2, dim=-1)[0]
     N = F0_curve
-    s = x.new_zeros(1, 128)
+    s = t.new_zeros(1, 128)
 
     # return pipeline.model.decoder.forward(asr, F0_curve, N, s)
 
@@ -66,22 +66,29 @@ def trsfm(x: torch.Tensor):
     x = self.encode(x, s)
     asr_res = self.asr_res(asr)
     res = True
-    for block in self.decode[:3]:
+    for block in self.decode:
         if res:
             x = torch.cat([x, asr_res, F0, N], axis=1)
         x = block(x, s)
         if block.upsample_type != "none":
             res = False
-    # x = self.generator(x, s, F0_curve)
+    x = self.generator(x, s, F0_curve)
 
     return x
+
+
+# def trsfm(x: torch.Tensor):
+#     F0_curve = x[:, 0, :]
+#     s = x.new_zeros(1, 128)
+#     return pipeline.model.decoder.generator(x, s, F0_curve)
 
 
 find_sliding_window_params(
     trsfm,
     SeqSpec(1, 1, -1, device=device),  # Decoder in
-    SeqSpec(1, 1024, -1, device=device),  # Decoder out
-    # SeqSpec(1, 1, -1, device=device), # Audio
+    # SeqSpec(1, 512, -1, device=device),  # Decoder out
+    SeqSpec(1, 1, -1, device=device),  # Audio
+    max_equivalent_sols=5,
 )
 
 # *_, audio = next(pipeline(text, voice="af_heart"))

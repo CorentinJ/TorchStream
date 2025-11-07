@@ -296,8 +296,8 @@ class SlidingWindowParamsSolver:
             if self.min_in_size_bounds[0] < self.min_in_size_bounds[1]:
                 range_str = f"range {self.min_in_size_bounds}"
             else:
-                range_str = f"found to be {self.min_in_size_bounds[0]}"
-            logger.info(f"[Min input size] Step {self.step} - {range_str}")
+                range_str = f"is {self.min_in_size_bounds[0]}"
+            logger.info(f"[Min input size] Step {self.step} - min in size {range_str}")
 
         return self.min_in_size_bounds[0]
 
