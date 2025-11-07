@@ -1,10 +1,11 @@
 import logging
 import numbers
-from typing import Callable, Optional, Tuple, overload
+from typing import Callable, Iterable, Optional, Tuple, overload
 
 import torch
 from opentelemetry import trace
 
+from torchstream.exception_signature import DEFAULT_ZERO_SIZE_EXCEPTIONS, ExceptionWithSubstring, matches_any_exception
 from torchstream.sequence.array_interface import ArrayInterface
 from torchstream.sequence.dtype import SeqArrayLike
 from torchstream.sequence.seq_spec import SeqSpec
@@ -312,16 +313,15 @@ class Sequence:
         self.drop(n)
         return out
 
-    # TODO: multiple inputs/outputs support
     @classmethod
     def apply(
         cls,
         trsfm: Callable,
         in_seq: "Sequence",
         out_spec: SeqSpec | None = None,
-        # TODO! support catching exception by their signature rather than type alone
-        zero_size_exception_types: Tuple[type[Exception], ...] = (RuntimeError,),
+        zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
     ) -> "Sequence":
+        # TODO! doc
         out_spec = out_spec or in_seq
         out_spec = out_spec.spec if isinstance(out_spec, Sequence) else out_spec
 
@@ -329,11 +329,9 @@ class Sequence:
             try:
                 with tracer.start_as_current_span(trsfm.__name__ if hasattr(trsfm, "__name__") else "transform"):
                     out_arr = trsfm(in_seq.data)
-            except zero_size_exception_types as e:
-                logger.info(
-                    f"Forwarding an input of size {in_seq.size} gave a {e.__class__.__name__}, "
-                    f"returning an empty sequence."
-                )
+            except Exception as e:
+                if not matches_any_exception(e, zero_size_exception_signatures):
+                    raise e
                 out_arr = Sequence.empty(out_spec)
 
             out_seq = out_arr if isinstance(out_arr, Sequence) else cls(out_spec, out_arr, close_input=True)
