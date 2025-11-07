@@ -7,6 +7,7 @@ import torch
 from colorama import Fore as colors
 from opentelemetry import trace
 
+from torchstream.exception_signature import DEFAULT_ZERO_SIZE_EXCEPTIONS, ExceptionWithSubstring
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.kernel_sparsity import KernelSparsitySampler
@@ -82,7 +83,7 @@ class SlidingWindowParamsSolver:
         max_in_seq_size: int = 10_000,
         atol: float = 1e-5,
         max_equivalent_sols: int = 1,
-        zero_size_exception_types: Tuple[type[Exception], ...] = (RuntimeError,),
+        zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
         debug_ref_params: SlidingWindowParams | None = None,
     ):
         if isinstance(input_provider, SeqSpec):
@@ -96,7 +97,7 @@ class SlidingWindowParamsSolver:
         self.max_in_seq_size = max_in_seq_size
         self.atol = atol
         self.max_equivalent_sols = max_equivalent_sols
-        self.zero_size_exception_types = zero_size_exception_types
+        self.zero_size_exception_signatures = zero_size_exception_signatures
 
         self.in_out_rel_params = None
         self.min_in_size_bounds = [1, max_in_seq_size]
@@ -135,7 +136,7 @@ class SlidingWindowParamsSolver:
             in_seq[slice(*in_nan_range)] = float("nan")
 
         out_seq = Sequence.apply(
-            self._trsfm, in_seq, self.out_spec, zero_size_exception_types=self.zero_size_exception_types
+            self._trsfm, in_seq, self.out_spec, zero_size_exception_signatures=self.zero_size_exception_signatures
         )
 
         # Keep track of the outcome in the history
@@ -159,10 +160,11 @@ class SlidingWindowParamsSolver:
 
         # Raise if we get no output with the maximum input size
         if in_seq_size == self.max_in_seq_size and out_seq.size == 0:
-            # TODO: display the caught exceptions?
             raise RuntimeError(
                 f"Your transform gave an output of size 0 given the maximum input size (={self.max_in_seq_size}). "
-                f"Aborting."
+                f"Aborting.\n"
+                f"It's possible you have specified a too broad exception for the zero_size_exception_signatures "
+                f"argument."
             )
 
         # Raise if we get all NaNs in the output with the maximum input size (kernels with infinite output size)
@@ -474,7 +476,7 @@ def find_sliding_window_params(
     max_in_seq_size: int = 10_000,
     atol: float = 1e-5,
     max_equivalent_sols: int = 1,
-    zero_size_exception_types: Tuple[type[Exception], ...] = (RuntimeError,),
+    zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
     debug_ref_params: SlidingWindowParams | None = None,
 ) -> List[SlidingWindowParams]:
     """
@@ -487,9 +489,6 @@ def find_sliding_window_params(
     This is only possible if the transform can be assimilated to a sliding window operation TODO: describe properties
     of this operation
 
-    TODO: rewrite docs
-
-    TODO: handle multi-input/output
     :param input_spec: specification for the input format of the transform. The transform must accept the data format
     described in the input spec as positional arguments.
     :param output_spec: same as input_spec but for the output of the transform. If the transform has multiple
@@ -497,7 +496,7 @@ def find_sliding_window_params(
     identical to the input spec, it can be omitted, and the input spec will be used instead.
     :param input_provider: a function that takes an integer representing the sequence size, and returns a Sequence of
     this size.
-    FIXME: incorrect doc
+    TODO!: rewrite docs
     """
     return SlidingWindowParamsSolver(
         trsfm=trsfm,
@@ -507,6 +506,6 @@ def find_sliding_window_params(
         max_in_seq_size=max_in_seq_size,
         atol=atol,
         max_equivalent_sols=max_equivalent_sols,
-        zero_size_exception_types=zero_size_exception_types,
+        zero_size_exception_signatures=zero_size_exception_signatures,
         debug_ref_params=debug_ref_params,
     ).find_sliding_window_params()
