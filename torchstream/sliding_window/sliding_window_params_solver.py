@@ -266,7 +266,6 @@ class SlidingWindowParamsSolver:
         # Ensure we have at least one example input before starting
         self.run_initial_input()
 
-        step = 1
         while self.min_in_size_bounds[0] < self.min_in_size_bounds[1]:
             # Heuristic: if the canonical min input size hasn't been tested, we'll test it. Most often that will be
             # the actual minimum input size. Otherwise we'll bisect
@@ -298,8 +297,7 @@ class SlidingWindowParamsSolver:
                 range_str = f"range {self.min_in_size_bounds}"
             else:
                 range_str = f"found to be {self.min_in_size_bounds[0]}"
-            logger.info(f"[Min input size] Step {step} - {range_str}")
-            step += 1
+            logger.info(f"[Min input size] Step {self.step} - {range_str}")
 
         return self.min_in_size_bounds[0]
 
@@ -376,7 +374,7 @@ class SlidingWindowParamsSolver:
         for hypothesis in hypotheses:
             self._debug_check_ref_params(sampler, "adding nan trick record", hypothesis.params)
             if not sampler.is_compatible(hypothesis.params):
-                logger.info(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED by constraints{colors.RESET}")
+                logger.info(f"Hypothesis #{hypothesis.id} REJECTED by constraints")
                 continue
 
             if record["in_nan_range"] and record["out_seq_size"]:
@@ -384,7 +382,7 @@ class SlidingWindowParamsSolver:
                     record["in_seq_size"], record["in_nan_range"], record["out_nan_idx"]
                 )
                 if not hypothesis.kernel_sparsity_sampler.has_solution():
-                    logger.info(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED after kernel check{colors.RESET}")
+                    logger.info(f"Hypothesis #{hypothesis.id} REJECTED after kernel check")
                     continue
 
             out_hyps.append(hypothesis)
@@ -404,17 +402,18 @@ class SlidingWindowParamsSolver:
         for record in self.nan_trick_history:
             self._sli_search_integrate_nan_trick_record(sampler, [], record)
 
-        step = 1
+        n_hyps = 0
         out_sols = []
         while len(out_sols) < self.max_equivalent_sols:
             # Sample new sliding window parameters
             params = sampler.get_new_solution(same_family_as=(out_sols[0].params if out_sols else None))
             if params is None:
                 break
+            n_hyps += 1
 
-            hypothesis = _SliHypothesis(params, id=step)
+            hypothesis = _SliHypothesis(params, id=n_hyps)
             logger.info(
-                f"[Sli params] Step {step} - Testing hypothesis #{hypothesis.id}:"
+                f"[Sli params] Step {self.step} - Testing hypothesis #{hypothesis.id}:"
                 + _compare_sli_params_str(hypothesis.params, self.debug_ref_params)
             )
 
@@ -426,7 +425,7 @@ class SlidingWindowParamsSolver:
             checks_passed = hypothesis.kernel_sparsity_sampler.has_solution()
             if not checks_passed:
                 # We don't break here - despite failing the kernel checks, we want to get at least one nan trick run
-                # for this hypothesis.
+                # for this hypothesis. This will guide the sampler towards better hypotheses next step
                 logger.info(f"Hypothesis #{hypothesis.id} REJECTED after kernel check")
             else:
                 out_sols.append(hypothesis)
@@ -439,7 +438,8 @@ class SlidingWindowParamsSolver:
                 if not checks_passed:
                     break
 
-            step += 1
+            if checks_passed:
+                logger.info(f"Hypothesis #{hypothesis.id} ACCEPTED as solution - all checks passed")
 
         return [hyp.params for hyp in out_sols]
 
