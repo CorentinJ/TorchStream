@@ -67,10 +67,13 @@ def test_conv_transpose_1d(sli_params: SlidingWindowParams, dilation: int):
         stride=sli_params.stride_out,
         # "padding" is poorly explained in https://pytorch.org/docs/stable/generated/torch.nn.ConvTranspose1d.html
         # A better explanation of the parameter is that it trims the output on both sides by the given amount.
-        padding=sli_params.out_trim,
+        padding=sli_params.left_out_trim,
+        # "output_padding" increases the output size on the right by the given amount, hence it's the inverse of
+        # right_out_trim. However we already trim on both sides by "padding=sli_params.left_out_trim" (see above),
+        # so we need to counterbalance by re-adding left_out_trim.
+        output_padding=sli_params.left_out_trim - sli_params.right_out_trim,
         dilation=dilation,
         # TODO: handle grouping?
-        # TODO: handle output padding?
     )
 
     conv_stream = SlidingWindowStream(
@@ -82,7 +85,7 @@ def test_conv_transpose_1d(sli_params: SlidingWindowParams, dilation: int):
     test_stream_equivalent(
         conv,
         conv_stream,
-        throughput_check_max_delay=sli_params.out_trim,
+        throughput_check_max_delay=sli_params.right_out_trim,
     )
 
 
@@ -99,7 +102,7 @@ def test_moving_average(sli_params: SlidingWindowParams, dilation: int):
     test_stream_equivalent(
         tsfm,
         tsfm_stream,
-        throughput_check_max_delay=sli_params.out_trim,
+        throughput_check_max_delay=sli_params.right_out_trim,
     )
 
 
@@ -116,5 +119,5 @@ def test_edge_cases(sli_params: SlidingWindowParams, dilation: int):
     test_stream_equivalent(
         tsfm,
         tsfm_stream,
-        throughput_check_max_delay=sli_params.out_trim,
+        throughput_check_max_delay=sli_params.right_out_trim,
     )

@@ -3,7 +3,9 @@ from typing import List, Tuple
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 
 
-def _sli_params_to_test_args(params_iter) -> Tuple[List[Tuple[SlidingWindowParams, int, int]], List[str]]:
+def _sli_params_to_test_args(
+    params_iter, filter_invalid_tconv=False
+) -> Tuple[List[Tuple[SlidingWindowParams, int, int]], List[str]]:
     out_args = []
     for params_dict in params_iter:
         try:
@@ -15,6 +17,12 @@ def _sli_params_to_test_args(params_iter) -> Tuple[List[Tuple[SlidingWindowParam
                 and params_dict.get("kernel_size_out", 1) == 1
             ):
                 continue
+
+            # These are invalid constructor params for ConvTranspose1d
+            if filter_invalid_tconv:
+                output_padding = params_dict.get("left_out_trim", 0) - params_dict.get("right_out_trim", 0)
+                if output_padding >= max(params_dict.get("stride_out", 1), params_dict.get("dilation", 1)):
+                    continue
 
             # Kernel size -> kernel span conversion for convolutions with dilation
             dilation = params_dict.pop("dilation", 1)
@@ -77,9 +85,10 @@ TRANSPOSED_CONV_1D_PARAMS = _sli_params_to_test_args(
         for kernel_size in [1, 2, 3, 10, 17]
         for stride in [1, 2, 3, 10, 17]
         # NOTE: right out trim <= left out trim for tconvs
-        for out_trim in [(0, 0), (1, 0), (2, 2), (8, 7), (9, 0)]
+        for out_trim in [(0, 0), (1, 0), (2, 2), (8, 6), (9, 0)]
         for dilation in [1, 2, 3]
-    )
+    ),
+    filter_invalid_tconv=True,
 )
 
 # TODO: reduce these:
