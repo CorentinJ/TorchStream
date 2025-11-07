@@ -77,7 +77,9 @@ def get_nan_map(
         overlap_fn=np.maximum,
     )
 
-    out_vec = out_vec[params.out_trim : -params.out_trim] if params.out_trim > 0 else out_vec
+    out_vec = out_vec[params.left_out_trim :]
+    if params.right_out_trim > 0:
+        out_vec = out_vec[: -params.right_out_trim]
     assert out_vec.shape == (out_len,)
 
     return out_vec

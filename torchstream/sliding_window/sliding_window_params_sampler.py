@@ -225,11 +225,10 @@ class SlidingWindowParamsSampler:
             # wrs is the index of the first window that could possibly output the first nan in the output (we have no
             # guarantee that it is indeed that window, this is a lower bound).
             wrs >= 0,
-            # TODO!! Resume t_o replacement here
-            wrs * self.s_o >= out_nan_range[0] - self.k_o + 1 + self.t_o,
+            wrs * self.s_o >= out_nan_range[0] - self.k_o + 1 + self.t_l,
             # Likewise, cre is the index of the last window that could possibly have output the last nan in the output.
             wre < nw,
-            wre * self.s_o <= out_nan_range[1] + self.t_o,
+            wre * self.s_o <= out_nan_range[1] + self.t_l,
             # [crs, cre] defines a range of windows which necessarily overlaps the input nans. We have no guarantee
             # it fully contains them due to the edge cases listed above.
             self.p_l + in_nan_range[0] < wre * self.s_i + self.k_i,
@@ -244,7 +243,7 @@ class SlidingWindowParamsSampler:
             n_right_elems_overwritten = pre_nan_out_size - out_nan_range[0]
             # TODO: doc
             out_delay = get_output_delay(
-                self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o, in_nan_range[0]
+                self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_l, self.t_r, in_nan_range[0]
             )
             self.optimizer.add(
                 # FIXME? is this at all helpful or is it redundant?
@@ -254,15 +253,15 @@ class SlidingWindowParamsSampler:
                     # Usual case: the first nan we see in the output is the first that could be produced.
                     And(n_right_elems_overwritten >= 0, out_delay == n_right_elems_overwritten),
                     # More rare but still normal case: the output delay is technically negative
-                    And(n_right_elems_overwritten < 0, self.t_o > 0, out_delay == 0),
+                    And(n_right_elems_overwritten < 0, self.t_l + self.t_r > 0, out_delay == 0),
                     # Edge case 1: the first output is a nan. Either we're in the usual case handled above, either
                     # the delay is actually larger than measured here because output nans were trimmed on the left.
                     And(
                         n_right_elems_overwritten >= 0,
                         out_nan_range[0] == 0,
                         out_delay > pre_nan_out_size,
-                        out_delay <= pre_nan_out_size + self.t_o,
-                        self.t_o > 0,
+                        out_delay <= pre_nan_out_size + self.t_l,
+                        self.t_l > 0,
                     ),
                     # Edge case 2: even if the first output is not a nan, we could be missing the first nan because
                     # the output kernel could be sparse with some output trimming. It's hard to formulate strong
@@ -271,8 +270,8 @@ class SlidingWindowParamsSampler:
                     And(
                         self.k_o >= out_nan_range[0] + 2,
                         out_delay > pre_nan_out_size,
-                        out_delay <= pre_nan_out_size + self.t_o,
-                        self.t_o > 0,
+                        out_delay <= pre_nan_out_size + self.t_l,
+                        self.t_l > 0,
                     ),
                     # Edge case 3: the input kernel has gaps and skips over the input nans. In that case the delay
                     # would be underestimated using the usual case formula, so we can't say much.
@@ -293,7 +292,7 @@ class SlidingWindowParamsSampler:
         # Obtain where a stream would end if we forwarded the input sequence up to the end of the nans
         post_nan_out_size = max(0, ((in_nan_range[1] + self.isbc) // self.s_i) * self.s_o + self.osbc)
         out_delay = get_output_delay(
-            self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_o, in_nan_range[1]
+            self.k_i, self.s_i, self.p_l, self.p_r, self.k_o, self.s_o, self.t_l, self.t_r, in_nan_range[1]
         )
         stream_out_pos = post_nan_out_size - out_delay
 
@@ -317,7 +316,7 @@ class SlidingWindowParamsSampler:
                     Or(
                         self.k_i >= min(in_nan_range[0], in_nan_size, post_nan_in_size) + 2,
                         self.k_o >= out_nan_size + 2,
-                        self.k_o >= min(out_nan_range[0], post_nan_out_size) + 2 - self.t_o,
+                        self.k_o >= min(out_nan_range[0], post_nan_out_size) + 2 - self.t_r,
                     ),
                 ),
             )
@@ -334,7 +333,8 @@ class SlidingWindowParamsSampler:
                 And(
                     self.k_o % self.s_o != kernel_mod,
                     self.k_o >= min(out_nan_range[0], out_nan_size, post_nan_out_size) + 2,
-                    self.t_o > 0,
+                    # FIXME!!: why not just plug t_l in the normal case above
+                    self.t_l > 0,
                 ),
             )
         )
@@ -394,7 +394,8 @@ class SlidingWindowParamsSampler:
                     model[self.p_r].as_long(),
                     model[self.k_o].as_long(),
                     self.s_o,
-                    model[self.t_o].as_long(),
+                    model[self.t_l].as_long(),
+                    model[self.t_r].as_long(),
                     self.mis,
                 )
 
@@ -404,7 +405,8 @@ class SlidingWindowParamsSampler:
                     self.p_l != model[self.p_l],
                     self.p_r != model[self.p_r],
                     self.k_o != model[self.k_o],
-                    self.t_o != model[self.t_o],
+                    self.t_l != model[self.t_l],
+                    self.t_r != model[self.t_r],
                 )
                 self.optimizer.add(new_sol_constraint)
                 self.prev_sol_constraints.append(new_sol_constraint)
@@ -444,7 +446,8 @@ class SlidingWindowParamsSampler:
                 self.p_r == solution.right_pad,
                 self.k_o == solution.kernel_size_out,
                 self.s_o == solution.stride_out,
-                self.t_o == solution.out_trim,
+                self.t_l == solution.left_out_trim,
+                self.t_r == solution.right_out_trim,
             )
         )
 

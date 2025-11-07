@@ -18,7 +18,8 @@ def _seed_from_params(params) -> int:
         + 7 * params.right_pad
         + 11 * params.kernel_size_out
         + 13 * params.stride_out
-        + 17 * params.out_trim
+        + 17 * params.left_out_trim
+        + 19 * params.right_out_trim
     )
 
 

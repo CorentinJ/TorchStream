@@ -364,7 +364,6 @@ def get_output_delay(*args, as_phase=False) -> IntLike:
 
     n_right_pad_corrupted_wins = z3_floor_div(phase + p_r, s_i)
     output_delay_pre_trim = k_o + (n_right_pad_corrupted_wins - 1) * s_o
-    # FIXME!! double check tr vs tl
     output_delay = z3_max(0, output_delay_pre_trim - t_r)
 
     return output_delay
@@ -420,7 +419,6 @@ def get_streaming_context_size(*args) -> IntLike:
     in_delay = p_l + p_r - k_i
     in_delay_n_wins, in_delay_remainder = z3_divmod(in_delay, s_i)
 
-    # TODO!! verify
     last_left_incomplete_out_idx = z3_ceil_div(p_l, s_i) * s_o + (k_o - 1) - t_l
 
     def ctx_for_remainder(remainder: IntLike) -> IntLike:

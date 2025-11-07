@@ -22,8 +22,6 @@ from torchstream.sliding_window.sliding_window_params import (
     in_out_rel_repr,
 )
 from torchstream.sliding_window.sliding_window_params_sampler import SlidingWindowParamsSampler
-from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
-from torchstream.stream_equivalence import test_stream_equivalent
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -110,6 +108,13 @@ class SlidingWindowParamsSolver:
         if debug_ref_params:
             logger.info(f"Debug reference parameters: {_compare_sli_params_str(debug_ref_params)}")
 
+    @property
+    def step(self) -> int:
+        """
+        Solver step = number of times the transform has been
+        """
+        return len(self.nan_trick_history)
+
     def run_nan_trick(self, in_seq_size: int, in_nan_range: Tuple[int, int] | None) -> dict:
         """
         Runs the nan trick once on the transform, updating the sampler and history in the process.
@@ -142,7 +147,7 @@ class SlidingWindowParamsSolver:
         # Keep track of the outcome in the history
         out_nan_idx = get_nan_idx(out_seq)
         out_nan_range = (int(out_nan_idx[0]), int(out_nan_idx[-1] + 1)) if len(out_nan_idx) else None
-        logger.info(f"Forwarded {in_seq.size}->{out_seq.size} with nans {in_nan_range}->{out_nan_range}")
+        logger.info(f"Forwarded size {in_seq.size}->{out_seq.size} with nans {in_nan_range}->{out_nan_range}")
         record = {
             "in_seq_size": in_seq.size,
             "in_nan_range": in_nan_range,
@@ -196,7 +201,7 @@ class SlidingWindowParamsSolver:
             # the sampler, otherwise we may be stuck sampling for a while before getting decent candidates.
             self.init_seq_size = min(10 * self.init_seq_size, self.max_in_seq_size)
             logger.info(
-                f"Transform failed with input size {record['in_seq_size']}. "
+                f"[Init input] Step {self.step} - Transform failed with input size {record['in_seq_size']}. "
                 f"Increasing init sequence size to {self.init_seq_size}"
             )
 
@@ -216,7 +221,6 @@ class SlidingWindowParamsSolver:
         for record in self.nan_trick_history:
             sampler.add_in_out_size(record["in_seq_size"], record["out_seq_size"])
 
-        step = 1
         while True:
             shape_params, next_in_size = sampler.solve(self.min_in_size_bounds[0], self.max_in_seq_size)
             if shape_params:
@@ -226,15 +230,14 @@ class SlidingWindowParamsSolver:
                 self.min_in_size_bounds[0] = max(
                     self.min_in_size_bounds[0], get_canonicalized_min_in_size(*shape_params)
                 )
-
-                min_in_size_str = (
-                    f"in [{self.min_in_size_bounds[0]}, {self.min_in_size_bounds[1]}]"
-                    if self.min_in_size_bounds[0] < self.min_in_size_bounds[1]
-                    else f"= {self.min_in_size_bounds[0]}"
+                logger.info(
+                    f"[In/out rel] Step {self.step} - Converged to in/out size relation:"
+                    f"\n\t{in_out_rel_repr(*shape_params)}"
                 )
-                logger.info(f"In/out size relationship determined in {step} steps:\n\t{in_out_rel_repr(*shape_params)}")
 
                 return self.in_out_rel_params
+            else:
+                logger.info(f"[In/out rel] Step {self.step}")
 
             # If we have no solution, the transform is not a sliding window.
             if not next_in_size:
@@ -256,9 +259,6 @@ class SlidingWindowParamsSolver:
             nan_idx = (next_in_size // 2, next_in_size // 2 + 1)
             record = self.run_nan_trick(next_in_size, nan_idx)
             sampler.add_in_out_size(next_in_size, record["out_seq_size"])
-
-            logger.info(f"[In/out rel] Step {step}")
-            step += 1
 
     @tracer.start_as_current_span("find_min_input_size")
     def find_min_input_size(self) -> int:
@@ -294,7 +294,11 @@ class SlidingWindowParamsSolver:
             nan_idx = (in_size // 2, in_size // 2 + 1)
             self.run_nan_trick(in_size, nan_idx)
 
-            logger.info(f"[Min input size] Step {step} - range {self.min_in_size_bounds}")
+            if self.min_in_size_bounds[0] < self.min_in_size_bounds[1]:
+                range_str = f"range {self.min_in_size_bounds}"
+            else:
+                range_str = f"found to be {self.min_in_size_bounds[0]}"
+            logger.info(f"[Min input size] Step {step} - {range_str}")
             step += 1
 
         return self.min_in_size_bounds[0]
@@ -347,13 +351,10 @@ class SlidingWindowParamsSolver:
         sampler,
         event: str,
         other_params: SlidingWindowParams | None = None,
-        allow_rejection: bool = False,
     ):
         """
         Debugging method for checking why a good reference hypothesis gets rejected.
         """
-        # FIXME! review
-
         if self.debug_ref_params and (violations := sampler.get_violations(self.debug_ref_params)):
             violations_str = "\n\n-------------------\n\t".join(str(v) for v in violations)
             logger.info(
@@ -363,31 +364,6 @@ class SlidingWindowParamsSolver:
                 f"{_compare_sli_params_str(other_params, self.debug_ref_params) if other_params else ''}\n"
                 f"{colors.YELLOW}Violations:\n\t{violations_str}{colors.RESET}"
             )
-
-            if other_params:
-                in_size = max(50, other_params.get_min_input_size_for_num_wins(10))
-                in_seq = self.input_provider(in_size)
-                try:
-                    test_stream_equivalent(
-                        self._trsfm,
-                        SlidingWindowStream(self._trsfm, other_params, in_seq.spec, self.out_spec),
-                        in_seq,
-                        atol=self.atol,
-                    )
-                except:
-                    pass
-                test_stream_equivalent(
-                    self._trsfm,
-                    SlidingWindowStream(self._trsfm, self.debug_ref_params, in_seq.spec, self.out_spec),
-                    in_seq,
-                    atol=self.atol,
-                )
-
-            if allow_rejection:
-                logger.info(f"--> {colors.BLUE}Rejection is allowed{colors.RESET}")
-                self.debug_ref_params = None
-            else:
-                raise RuntimeError()
 
     def _sli_search_integrate_nan_trick_record(
         self, sampler: SlidingWindowParamsSampler, hypotheses: List[_SliHypothesis], record: dict
@@ -438,7 +414,8 @@ class SlidingWindowParamsSolver:
 
             hypothesis = _SliHypothesis(params, id=step)
             logger.info(
-                f"[Sli params] Step {step}: {_compare_sli_params_str(hypothesis.params, self.debug_ref_params)}"
+                f"[Sli params] Step {step} - Testing hypothesis #{hypothesis.id}:"
+                + _compare_sli_params_str(hypothesis.params, self.debug_ref_params)
             )
 
             for record in self.nan_trick_history:
@@ -450,7 +427,7 @@ class SlidingWindowParamsSolver:
             if not checks_passed:
                 # We don't break here - despite failing the kernel checks, we want to get at least one nan trick run
                 # for this hypothesis.
-                logger.info(f"{colors.RED}Hypothesis #{hypothesis.id} REJECTED after kernel check{colors.RESET}")
+                logger.info(f"Hypothesis #{hypothesis.id} REJECTED after kernel check")
             else:
                 out_sols.append(hypothesis)
 

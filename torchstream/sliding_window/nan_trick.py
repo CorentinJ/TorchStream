@@ -1,11 +1,12 @@
 import logging
 import math
 from functools import partial
-from typing import Callable, Optional, Tuple
+from typing import Callable, Iterable, Optional, Tuple
 
 import numpy as np
 import torch
 
+from torchstream.exception_signature import DEFAULT_ZERO_SIZE_EXCEPTIONS, ExceptionWithSubstring
 from torchstream.sequence.dtype import SeqArrayLike
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequence import Sequence
@@ -42,12 +43,10 @@ def run_nan_trick(
     in_seq: Sequence,
     in_nan_range: Tuple[int, int] | None,
     out_spec: Optional[SeqSpec] = None,
-    zero_size_exception_types: Tuple[type[Exception], ...] = (RuntimeError,),
+    zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
 ) -> Tuple[Sequence, np.ndarray]:
     """
     TODO: doc
-
-    TODO: handle multi-input/output
     """
     if not in_seq.size:
         raise ValueError(f"Input sequence size must be greater than 0, got {in_seq.size}")
@@ -60,7 +59,7 @@ def run_nan_trick(
         in_seq[slice(*in_nan_range)] = float("nan")
 
     # Forward the input through the transform
-    out_seq = Sequence.apply(trsfm, in_seq, out_spec, zero_size_exception_types=zero_size_exception_types)
+    out_seq = Sequence.apply(trsfm, in_seq, out_spec, zero_size_exception_signatures=zero_size_exception_signatures)
 
     out_nan_idx = get_nan_idx(out_seq)
     logger.info(f"Got a {tuple(out_seq.shape)} shaped output with nans at {out_nan_idx}")
