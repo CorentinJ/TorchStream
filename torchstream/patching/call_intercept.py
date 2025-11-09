@@ -2,7 +2,7 @@ import importlib
 from typing import Callable
 
 
-class _Intercept:
+class intercept_calls:
     # TODO:
     #   - arg to intercept only once
     #   - boolean for storing the call
@@ -53,13 +53,5 @@ class _Intercept:
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        if self._owner is not None and self._attr_name is not None:
-            setattr(self._owner, self._attr_name, self._original)
+        setattr(self._owner, self._attr_name, self._original)
         return False
-
-
-intercept = _Intercept
-
-
-def intercept_function_for_analysis(target: str):
-    pass
