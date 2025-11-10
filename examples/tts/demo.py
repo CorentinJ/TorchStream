@@ -2,9 +2,11 @@ import logging
 
 import torch
 
+from torchstream.patching.call_intercept import intercept_calls
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
 
+# Setup logging to see the solver's message
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
@@ -31,68 +33,36 @@ text = """
 # quit()
 
 
-# Step 1: because kokoro is a third party library, we'll avoid modifying it's source code directly. Instead,
-# we'll monkey-patch the method where streaming can happen and work there.
-def mod_decoder_forward(self, asr, F0_curve, N, s):
-    F0 = self.F0_conv(F0_curve.unsqueeze(1))
-    N = self.N_conv(N.unsqueeze(1))
-    x = torch.cat([asr, F0, N], axis=1)
-    x = self.encode(x, s)
-    asr_res = self.asr_res(asr)
-    res = True
-    for block in self.decode:
-        if res:
-            x = torch.cat([x, asr_res, F0, N], axis=1)
-        x = block(x, s)
-        if block.upsample_type != "none":
-            res = False
-    x = self.generator(x, s, F0_curve)
-    return x
-
-
 def trsfm(t: torch.Tensor):
     asr = t.expand((-1, 512, -1))
     F0_curve = t.repeat_interleave(2, dim=-1)[0]
     N = F0_curve
     s = t.new_zeros(1, 128)
 
-    # return pipeline.model.decoder.forward(asr, F0_curve, N, s)
+    return pipeline.model.decoder.forward(asr, F0_curve, N, s)
 
-    self = pipeline.model.decoder
 
-    F0 = self.F0_conv(F0_curve.unsqueeze(1))
-    N = self.N_conv(N.unsqueeze(1))
-    x = torch.cat([asr, F0, N], axis=1)
-    x = self.encode(x, s)
-    asr_res = self.asr_res(asr)
-    res = True
-    for block in self.decode:
-        if res:
-            x = torch.cat([x, asr_res, F0, N], axis=1)
-        x = block(x, s)
-        if block.upsample_type != "none":
-            res = False
-    x = self.generator(x, s, F0_curve)
+def cumsum_patch_with_nan_passthrough(*args, original_fn, **kwargs):
+    x = args[0]
+    nan_mask = torch.isnan(x)
+
+    x[nan_mask] = 0.0
+    x = original_fn(*args, **kwargs)
+
+    x[nan_mask] = float("nan")
 
     return x
 
 
-# def trsfm(x: torch.Tensor):
-#     F0_curve = x[:, 0, :]
-#     s = x.new_zeros(1, 128)
-#     return pipeline.model.decoder.generator(x, s, F0_curve)
+def instancenorm_patch_noop(*args, original_fn, **kwargs):
+    # return original_fn(*args, **kwargs)
+    return args[0]
 
 
-find_sliding_window_params(
-    trsfm,
-    SeqSpec(1, 1, -1, device=device),  # Decoder in
-    # SeqSpec(1, 512, -1, device=device),  # Decoder out
-    SeqSpec(1, 1, -1, device=device),  # Audio
-    max_equivalent_sols=5,
-)
-
-# *_, audio = next(pipeline(text, voice="af_heart"))
-# sf.write("demo_audio.wav", audio, 24000)
-
-# TODO
-# with intercept("kokoro.istftnet.Decoder.forward") as calls:
+with intercept_calls("torch.nn.functional.instance_norm", instancenorm_patch_noop, pass_original_fn=True):
+    with intercept_calls("torch.cumsum", cumsum_patch_with_nan_passthrough, pass_original_fn=True):
+        find_sliding_window_params(
+            trsfm,
+            SeqSpec(1, 1, -1, device=device),  # Decoder in
+            SeqSpec(1, 1, -1, device=device),  # Audio
+        )
