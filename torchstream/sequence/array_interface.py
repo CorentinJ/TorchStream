@@ -150,7 +150,7 @@ class TensorInterface(ArrayInterface[torch.Tensor]):
         if torch.is_tensor(dtype_like):
             self.dtype = dtype_like.dtype
             self.device = dtype_like.device
-            if torch.device(device) != dtype_like.device:
+            if device and torch.device(device) != dtype_like.device:
                 raise ValueError(
                     f"Got conflicting device {device} and {dtype_like.device} for the tensor {dtype_like}."
                 )

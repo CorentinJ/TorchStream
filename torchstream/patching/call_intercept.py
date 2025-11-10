@@ -1,4 +1,5 @@
 import importlib
+from copy import deepcopy
 from typing import Callable
 
 from torchstream.patching.call_identification import (
@@ -45,7 +46,9 @@ class intercept_calls:
     def __init__(
         self,
         target_fn: str | object,
-        handler_fn: Callable,
+        handler_fn: Callable | None = None,
+        store_in_out: bool = False,
+        deep_copy_in_out: bool = True,
         pass_original_fn: bool = False,
         pass_callstack_locs: bool = False,
     ):
@@ -57,23 +60,41 @@ class intercept_calls:
         function object directly is supported but may fail to resolve.
         :param handler_fn: The handler function that will be called instead of the target function. It will be given
         the same arguments as the original function and its return value will be returned in place of the original
-        function's return value.
+        function's return value. If None, the original function will be called instead, which is useful to
+        store call inputs and outputs without modifying behavior.
+        :param store_in_out: If True, the context manager will store the inputs and outputs of each intercepted call.
+        :param deep_copy_in_out: If True, the stored inputs and outputs will be deep-copied before being stored.
         :param pass_original_fn: If True, the original function will be passed to the handler function as a keyword
         argument named 'original_fn'.
         :param pass_callstack_locs: If True, a list of triplets (filename: str, function_name: str, line_number: int)
         will be passed as a keyword argument named 'callstack_locs' to the handler function. This list represents
         call stack frame between where this context manager's __enter__ was called and the intercepted function call.
-        It serves as a way to identify the call site relative to the context manager. 
+        It serves as a way to identify the call site relative to the context manager.
         """
         self._target_fqn = get_fully_qualified_name(target_fn)
         self._handler_fn = handler_fn
         self._pass_callstack_locs = pass_callstack_locs
         self._pass_original_fn = pass_original_fn
+        self._store_in_out = store_in_out
+        self._deep_copy_in_out = deep_copy_in_out
 
+        self._call_in_outs = []
         self._callstack_reference = None
         self._target_owner = None
         self._target_attr_name = None
         self._original_fn = None
+
+    @property
+    def call_in_outs(self) -> list[tuple[tuple, dict, object]]:
+        """
+        Returns the stored call inputs and outputs as a list of tuples (in_args, in_kwargs, out).
+        """
+        if not self._store_in_out:
+            raise RuntimeError(
+                "Call in-out storage was not enabled. "
+                "Set store_in_out=True when creating the intercept_calls context manager to enable it."
+            )
+        return self._call_in_outs
 
     def __enter__(self):
         # Mark where we are being called from in the callstack
@@ -87,7 +108,16 @@ class intercept_calls:
                 kwargs["callstack_locs"] = get_relative_callstack_locs(self._callstack_reference, skip_n_first=1)
             if self._pass_original_fn:
                 kwargs["original_fn"] = self._original_fn
-            return self._handler_fn(*args, **kwargs)
+
+            out = (self._handler_fn or self._original_fn)(*args, **kwargs)
+
+            if self._store_in_out:
+                stored_call = (args, kwargs, out)
+                if self._deep_copy_in_out:
+                    stored_call = deepcopy(stored_call)
+                self._call_in_outs.append(stored_call)
+
+            return out
 
         # Patch it
         self._original_fn = getattr(self._target_owner, self._target_attr_name)

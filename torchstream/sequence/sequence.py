@@ -36,6 +36,7 @@ class Sequence:
     TODO: transform asserts into exceptions
     """
 
+    # TODO!: invert order, data first...
     # Sigs:
     #   - Spec
     #   - Spec + data (+close) -> check data
@@ -59,9 +60,9 @@ class Sequence:
         elif isinstance(args[0], numbers.Number) and len(args) > 1:
             # Case 3
             # TODO: implement that same overload for SeqSpec
-            shape = ArrayInterface(args[1]).get_shape(args[1])
+            shape = list(ArrayInterface(args[1]).get_shape(args[1]))
             shape[args[0]] = -1
-            self.spec = SeqSpec(shape, args[1])
+            self.spec = SeqSpec(tuple(shape), dtype=args[1])
             arrays = args[1:]
         elif isinstance(args[0], Sequence):
             # Case 4
@@ -83,6 +84,7 @@ class Sequence:
         if kwargs.get("close_input", False):
             self.close_input()
 
+    # FIXME! Remove these 3 methods, let seqspec do this
     @classmethod
     def empty(cls, seq_spec: SeqSpec, seq_size: int = 0) -> "Sequence":
         """
@@ -304,7 +306,7 @@ class Sequence:
         """
         return self.drop(max(self.size - n, 0))
 
-    def consume(self, n: Optional[int] = None) -> "Sequence":
+    def read(self, n: Optional[int] = None) -> "Sequence":
         """
         Reads a sequence of size up to n from the start of buffer while dropping it from the buffer. If the
         buffer does not have enough elements, the entire buffer is returned.

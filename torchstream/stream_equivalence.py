@@ -51,12 +51,12 @@ def test_stream_equivalent(
     i = 0
     while not stream.output_closed:
         step_size = next(step_size_iter)
-        in_stream_i = in_seq.consume(step_size)
+        in_stream_i = in_seq.read(step_size)
 
         # FIXME: this is a seq
         out_seq_stream_i = stream(in_stream_i, is_last_input=not in_seq.size, on_starve="empty")
 
-        out_sync_i = out_seq_ref.consume(out_seq_stream_i.size)
+        out_sync_i = out_seq_ref.read(out_seq_stream_i.size)
         total_stream_out = out_seq_ref.n_consumed
 
         # Ensure the outputs are close

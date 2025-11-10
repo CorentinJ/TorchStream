@@ -201,6 +201,7 @@ def test_variable_receptive_field(variant: str):
     """
     Tests that the solver does not find a solution for a transform that has a receptive field of variable size.
     """
+    # TODO!!
     if variant in ("prefix_mean", "suffix_mean"):
         pytest.skip("These cases are not properly handled yet")
 

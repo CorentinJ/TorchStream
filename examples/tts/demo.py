@@ -4,7 +4,9 @@ import torch
 
 from torchstream.patching.call_intercept import intercept_calls
 from torchstream.sequence.seq_spec import SeqSpec
-from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
+from torchstream.sequence.sequence import Sequence
+from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 
 # Setup logging to see the solver's message
 logger = logging.getLogger(__name__)
@@ -26,9 +28,11 @@ text = """
 [Kokoro](/kˈOkəɹO/) is an open-weight TTS model with 82 million parameters. Despite its lightweight architecture, it delivers comparable quality to larger models while being significantly faster and more cost-efficient. With Apache-licensed weights, [Kokoro](/kˈOkəɹO/) can be deployed anywhere from production environments to personal projects.
 """
 
-# # Normal, non-streaming inference
+# Normal, non-streaming inference
 # import soundfile as sf
-# *_, audio = next(pipeline(text, voice="af_heart"))
+with intercept_calls("kokoro.istftnet.Decoder.forward", store_in_out=True) as interceptor:
+    *_, audio = next(pipeline(text, voice="af_heart"))
+    (decoder, ref_asr, ref_f0_curve, ref_n, ref_s), _, ref_audio = interceptor.call_in_outs[0]
 # sf.write("demo_audio.wav", audio, 24000)
 # quit()
 
@@ -61,8 +65,44 @@ def instancenorm_patch_noop(*args, original_fn, **kwargs):
 
 with intercept_calls("torch.nn.functional.instance_norm", instancenorm_patch_noop, pass_original_fn=True):
     with intercept_calls("torch.cumsum", cumsum_patch_with_nan_passthrough, pass_original_fn=True):
-        find_sliding_window_params(
-            trsfm,
-            SeqSpec(1, 1, -1, device=device),  # Decoder in
-            SeqSpec(1, 1, -1, device=device),  # Audio
+        # sli_params = find_sliding_window_params(
+        #     trsfm,
+        #     SeqSpec(1, 1, -1, device=device),  # Decoder in
+        #     SeqSpec(1, 1, -1, device=device),  # Audio
+        # )[0]
+        # print(sli_params)
+
+        sli_params = SlidingWindowParams(
+            kernel_size_in=28,
+            stride_in=1,
+            left_pad=14,
+            right_pad=14,
+            kernel_size_out=675,
+            stride_out=600,
+            left_out_trim=185,
+            right_out_trim=490,
         )
+
+        # ref_asr, ref_f0_curve, ref_n, ref_s
+        asr_in_buff = Sequence(2, ref_asr)
+        f0_curve_in_buff = Sequence(1, ref_f0_curve)
+        n_in_buff = Sequence(1, ref_n)
+
+        def trsfm(asr: torch.Tensor):
+            return pipeline.model.decoder.forward(
+                asr,
+                f0_curve_in_buff.read(asr.shape[-1] * 2),
+                n_in_buff.read(asr.shape[-1] * 2),
+                ref_s,
+            )
+
+        stream = SlidingWindowStream(
+            trsfm,
+            sli_params,
+            SeqSpec(1, 512, -1, device=device),
+            SeqSpec(1, 1, -1, device=device),
+        )
+
+        while asr_in_buff.size:
+            out = stream(asr_in_buff.read(100))
+            print(out.size)
