@@ -1,19 +1,31 @@
 import numbers
-from typing import Tuple
+from typing import Sequence, Tuple, TypeAlias, overload
 
 import torch
 
 from torchstream.sequence.array_interface import ArrayInterface, SeqArray
 from torchstream.sequence.dtype import SeqArrayLike, SeqDTypeLike
 
-
 class SeqSpec:
-    # TODO! overloads in pyi
+    @overload
+    def __init__(self, *shape: int) -> None: ...
+
+    @overload
+    def __init__(self, *shape: ShapeArg, dtype: SeqDTypeLike) -> None: ...
+
+    @overload
+    def __init__(self, *shape: ShapeArg, dtype: SeqDTypeLike, device: DeviceLike) -> None: ...
+
+    @overload
+    def __init__(self, array: SeqArrayLike, seq_dim: int, /) -> None: ...
+
+    @overload
+    def __init__(self, *specs: SpecTuple) -> None: ...
     def __init__(
         self,
-        *shape,
-        dtype: SeqDTypeLike | SeqArrayLike = torch.float32,
-        device: str | torch.device = None,
+        *specs,
+        dtype: SeqDTypeLike = torch.float32,
+        device: OptionalDevice = None,
     ):
         """
         TODO: doc

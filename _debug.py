@@ -1,6 +1,7 @@
 import torch
 
 from torchstream.patching.call_intercept import intercept_calls
+from torchstream.sequence.seq_spec import SeqSpec
 
 
 def work_fn():
@@ -21,3 +22,5 @@ if __name__ == "__main__":
         for _ in range(2):
             result = work_fn()
             print("Result:", result)
+
+SeqSpec()

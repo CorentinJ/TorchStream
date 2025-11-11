@@ -1,3 +1,5 @@
+from typing import TypeAlias
+
 import numpy as np
 import torch
 from numpy.typing import ArrayLike, DTypeLike
@@ -10,11 +12,12 @@ a similar scalar type but also memory layout information, byte encoding order, e
 """
 
 # Used for argument typing. Supports a broad range of types.
-SeqDTypeLike = torch.dtype | DTypeLike
-SeqArrayLike = torch.Tensor | ArrayLike
+SeqDTypeLike: TypeAlias = torch.dtype | DTypeLike
+SeqArrayLike: TypeAlias = torch.Tensor | ArrayLike
+DeviceLike: TypeAlias = str | torch.device
 
 # Used for normalized types (e.g. class attributes)
-seqdtype = torch.dtype | np.dtype
+seqdtype: TypeAlias = torch.dtype | np.dtype
 
 
 # TODO: clean overload for type vs array
