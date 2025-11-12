@@ -15,12 +15,10 @@ def get_shape_and_array_interface(
 ) -> Tuple[Tuple[int, ...], ArrayInterface]: ...
 @overload
 def get_shape_and_array_interface(
-    shape: _Sequence[int], /, dtype: SeqDTypeLike = torch.float32, device: DeviceLike = "cpu"
+    shape: _Sequence[int], dtype: SeqDTypeLike = torch.float32, device: DeviceLike = "cpu"
 ) -> Tuple[Tuple[int, ...], ArrayInterface]: ...
 @overload
-def get_shape_and_array_interface(
-    array: SeqArrayLike, /, seq_dim: int = -1
-) -> Tuple[Tuple[int, ...], ArrayInterface]: ...
+def get_shape_and_array_interface(array: SeqArrayLike, seq_dim: int = -1) -> Tuple[Tuple[int, ...], ArrayInterface]: ...
 def get_shape_and_array_interface(*spec, **kwargs) -> Tuple[Tuple[int, ...], ArrayInterface]:
     """
     TODO: doc
@@ -53,8 +51,10 @@ def get_shape_and_array_interface(*spec, **kwargs) -> Tuple[Tuple[int, ...], Arr
             shape = tuple(int(dim_size) for dim_size in spec[:split_idx])
             spec = spec[split_idx:]
 
-        device = kwargs.pop("device", "cpu")
+        device = kwargs.pop("device", None)
         dtype = kwargs.pop("dtype", torch.float32)
+        if kwargs:
+            raise ValueError(f"Unexpected keyword arguments {kwargs} when passing shape dimensions")
         for remaining_arg in spec:
             if isinstance(remaining_arg, (str, torch.device)):
                 device = remaining_arg
@@ -73,36 +73,54 @@ def get_shape_and_array_interface(*spec, **kwargs) -> Tuple[Tuple[int, ...], Arr
 
 
 # TODO: needs heavy testing
-def matches(self, arr: SeqArrayLike) -> Tuple[bool, str]:
+def array_matches_shape_and_type(
+    arr: SeqArrayLike, seq_shape: Tuple[int, ...], arr_if: ArrayInterface
+) -> Tuple[bool, str]:
     """
     Returns whether a given array is compatible with the sequence specification. Compatible in this context means
     that, at least, the array:
         - is from the same library as the specification (torch, numpy, ...)
         - has the same number representation type (floating point, integer, complex, ...) as the sequence dtype
-        - matches the shape of the specification (except for the sequence dimension, which is -1), or the number of
-        dimensions when the shape is not specified.
+        - matches the shape of the specification (except for the sequence dimension, which is a strictly
+        negative integer)
     """
-    if not self._arr_if.matches(arr):
+    if not arr_if.matches(arr):
         device_str = f" {arr.device}" if isinstance(arr, torch.Tensor) else ""
-        return False, f"library or dtype mismatch, got{device_str} {arr.dtype} for {self._arr_if}"
+        return False, f"library or dtype mismatch, got{device_str} {arr.dtype} for {arr_if}"
 
-    if self.shape:
-        if len(arr.shape) != len(self.shape):
-            return False, f"shape ndim mismatch (got {arr.shape}, expected {self.shape})"
-        for i, (dim_size, expected_dim_size) in enumerate(zip(arr.shape, self.shape)):
-            if expected_dim_size is not None and i != self.seq_dim and dim_size != expected_dim_size:
+    if len(arr.shape) != len(seq_shape):
+        return False, f"shape ndim mismatch (got {arr.shape}, expected {seq_shape})"
+
+    seq_dim = next((i for i, dim_size in enumerate(seq_shape) if dim_size <= -1), None)
+    for i, (dim_size, expected_dim_size) in enumerate(zip(arr.shape, seq_shape)):
+        if i == seq_dim:
+            if dim_size % (-expected_dim_size) != 0:
                 return (
                     False,
-                    f"shape mismatch on dimension {i}: got {tuple(arr.shape)}, "
-                    f"expected a shape like {tuple(self.shape)}",
+                    f"sequence dimension is not a multiple of expected size (got {dim_size}, expected "
+                    f"a shape like {tuple(seq_shape)})",
                 )
-    else:
-        pass  # TODO!
+
+        elif dim_size != expected_dim_size:
+            return (
+                False,
+                f"shape mismatch on dimension {i}: got {tuple(arr.shape)}, expected a shape like {tuple(seq_shape)}",
+            )
 
     return True, ""
 
 
-def get_shape_for_size(self, seq_size: int) -> Tuple[int, ...]:
-    shape = list(self.shape)
-    shape[self.seq_dim] = seq_size
+def get_shape_for_seq_size(shape: Tuple[int, ...], seq_size: int) -> Tuple[int, ...]:
+    """
+    Takes a shape with a sequence dimension (indicated by a strictly negative integer), and returns a shape
+    with the sequence dimension replaced by the given sequence size. If the sequence dimension is a value other than
+    -1, the absolute value of that integer is used as a multiplier for the sequence size. If there is no sequence
+    dimension, the shape is returned as-is.
+    """
+    seq_dim = next((i for i, dim_size in enumerate(shape) if dim_size == -1), None)
+    if seq_dim is None:
+        return shape
+
+    shape = list(shape)
+    shape[seq_dim] = seq_size * (-shape[seq_dim])
     return tuple(shape)
