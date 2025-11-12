@@ -1,35 +1,36 @@
 import numbers
-from typing import Sequence, Tuple, TypeAlias, overload
+from typing import Sequence as _Sequence
+from typing import Tuple, overload
 
 import torch
 
 from torchstream.sequence.array_interface import ArrayInterface, SeqArray
-from torchstream.sequence.dtype import SeqArrayLike, SeqDTypeLike
+from torchstream.sequence.dtype import DeviceLike, SeqArrayLike, SeqDTypeLike
+
 
 class SeqSpec:
     @overload
     def __init__(self, *shape: int) -> None: ...
-
     @overload
-    def __init__(self, *shape: ShapeArg, dtype: SeqDTypeLike) -> None: ...
-
+    def __init__(self, *shape: int, dtype: SeqDTypeLike) -> None: ...
     @overload
-    def __init__(self, *shape: ShapeArg, dtype: SeqDTypeLike, device: DeviceLike) -> None: ...
-
+    def __init__(self, *shape: int, dtype: SeqDTypeLike, device: DeviceLike) -> None: ...
     @overload
-    def __init__(self, array: SeqArrayLike, seq_dim: int, /) -> None: ...
-
+    def __init__(self, shape: _Sequence[int]) -> None: ...
     @overload
-    def __init__(self, *specs: SpecTuple) -> None: ...
-    def __init__(
-        self,
-        *specs,
-        dtype: SeqDTypeLike = torch.float32,
-        device: OptionalDevice = None,
-    ):
+    def __init__(self, shape: _Sequence[int], /, dtype: SeqDTypeLike) -> None: ...
+    @overload
+    def __init__(self, shape: _Sequence[int], /, dtype: SeqDTypeLike, device: DeviceLike) -> None: ...
+    @overload
+    def __init__(self, array: SeqArrayLike, /, seq_dim: int) -> None: ...
+    @overload
+    def __init__(self, *specs: Tuple) -> None: ...
+    def __init__(self, *specs):
         """
         TODO: doc
         """
+        #
+
         if not isinstance(shape[0], numbers.Number):
             if not isinstance(shape[0], (list, tuple)):
                 raise ValueError(f"Shape must be a list or tuple of integers, got {shape[0]}")
@@ -72,9 +73,9 @@ class SeqSpec:
 
         return True, ""
 
-    def get_shape_for_size(self, size: int) -> Tuple[int, ...]:
+    def get_shape_for_size(self, seq_size: int) -> Tuple[int, ...]:
         shape = list(self.shape)
-        shape[self.seq_dim] = size
+        shape[self.seq_dim] = seq_size
         return tuple(shape)
 
     def new_empty(self, seq_size: int = 0) -> SeqArray:

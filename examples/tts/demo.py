@@ -106,3 +106,16 @@ with intercept_calls("torch.nn.functional.instance_norm", instancenorm_patch_noo
         while asr_in_buff.size:
             out = stream(asr_in_buff.read(100))
             print(out.size)
+
+
+in_spec = SeqSpec(
+    (1, 512, -1),
+    (1, 1, -1),
+)
+out_spec = SeqSpec(1, 1, -1)
+in_buff = in_spec.new_from_data(ref_asr, ref_f0_curve, ref_n, ref_s)
+out_buff = out_spec.new_empty()
+
+while asr_in_buff.size:
+    out = stream(asr_in_buff.read(100))
+    print(out.size)
