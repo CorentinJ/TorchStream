@@ -5,8 +5,7 @@ import pytest
 import torch
 
 from torchstream.sequence.dtype import SeqDTypeLike
-from torchstream.sequence.seq_spec import SeqSpec
-from torchstream.sequence.sequence import Sequence
+from torchstream.sequence.stream_buffer import StreamBuffer
 from torchstream.sliding_window.nan_trick import get_nan_idx
 
 
@@ -35,7 +34,7 @@ def test_get_nan_range(
     dtype: SeqDTypeLike,
     nan_range: Tuple[int, int] | None,
 ):
-    seq = Sequence.zeros(SeqSpec(shape, dtype=dtype), seq_size=20)
+    seq = StreamBuffer.new_zeros(shape, dtype, seq_size=20)
 
     if nan_range is not None:
         seq[nan_range] = float("nan")

@@ -35,5 +35,5 @@ params = sols[0]
 test_stream_equivalent(
     transform,
     SlidingWindowStream(transform, params, in_spec, out_spec),
-    in_seq=in_spec.new_randn(500),
+    in_seq=in_spec.new_randn_arrays(500),
 )

@@ -27,7 +27,7 @@ for res_dict in RESAMPLING_ALGOS:
     with log_tracing_profile("solver"):
         sols = find_sliding_window_params(
             resample_fn,
-            SeqSpec((-1), dtype=np.float32),
+            SeqSpec(-1, dtype=np.float32),
             zero_size_exception_types=res_dict["zero_size_exception_types"],
         )
         print(sols)

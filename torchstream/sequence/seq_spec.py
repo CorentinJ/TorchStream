@@ -1,5 +1,4 @@
-from typing import Sequence as _Sequence
-from typing import Tuple, overload
+from typing import Sequence, Tuple, overload
 
 import numpy as np
 import torch
@@ -11,6 +10,7 @@ from torchstream.sequence.sequential_array import (
     get_shape_and_array_interface,
     get_shape_for_seq_size,
 )
+from torchstream.sequence.stream_buffer import StreamBuffer
 
 
 class SeqSpec:
@@ -18,7 +18,7 @@ class SeqSpec:
     def __init__(self, *shape: int, dtype: SeqDTypeLike = torch.float32, device: DeviceLike = "cpu") -> None: ...
     @overload
     def __init__(
-        self, shape: _Sequence[int], dtype: SeqDTypeLike = torch.float32, device: DeviceLike = "cpu"
+        self, shape: Sequence[int], dtype: SeqDTypeLike = torch.float32, device: DeviceLike = "cpu"
     ) -> None: ...
     @overload
     def __init__(self, array: SeqArrayLike, seq_dim: int = -1) -> None: ...
@@ -32,6 +32,13 @@ class SeqSpec:
             self.specs = [get_shape_and_array_interface(*spec) for spec in specs]
         else:
             self.specs = [get_shape_and_array_interface(*specs, **kwargs)]
+
+    @property
+    def seqdims(self) -> Tuple[int | None, ...]:
+        """
+        Returns the sequence dimensions of all arrays in the specification.
+        """
+        return tuple(next((i for i, dim in enumerate(shape) if dim < 0), None) for shape, _ in self.specs)
 
     def matches(self, *arrs: SeqArrayLike) -> Tuple[bool, str]:
         """
@@ -74,26 +81,54 @@ class SeqSpec:
         """
         return tuple([get_shape_for_seq_size(shape, seq_size) for shape, _ in self.specs])
 
-    def new_empty(self, seq_size: int = 0) -> Tuple[SeqArray, ...]:
+    def new_empty_arrays(self, seq_size: int = 0) -> Tuple[SeqArray, ...]:
         """
         Returns empty arrays with the given specification. The array's values are uninitialized.
         """
         shapes = self.get_shapes_for_seq_size(seq_size)
         return tuple(arr_if.new_empty(*shape) for shape, (_, arr_if) in zip(shapes, self.specs))
 
-    def new_zeros(self, seq_size: int) -> Tuple[SeqArray, ...]:
+    def new_zeros_arrays(self, seq_size: int) -> Tuple[SeqArray, ...]:
         """
         Returns arrays of the given sequence size with the given specification, filled with zeros.
         """
         shapes = self.get_shapes_for_seq_size(seq_size)
         return tuple(arr_if.new_zeros(*shape) for shape, (_, arr_if) in zip(shapes, self.specs))
 
-    def new_randn(self, seq_size: int) -> Tuple[SeqArray, ...]:
+    def new_randn_arrays(self, seq_size: int) -> Tuple[SeqArray, ...]:
         """
         Sample arrays of the given sequence size from a normal distribution (discretized for integer types).
         """
         shapes = self.get_shapes_for_seq_size(seq_size)
         return tuple(arr_if.new_randn(*shape) for shape, (_, arr_if) in zip(shapes, self.specs))
+
+    def new_empty_buffers(self) -> Tuple[StreamBuffer | None, ...]:
+        """
+        Returns empty StreamBuffers with the given specification. Returns None where there is no sequence dimension.
+        """
+        return tuple(
+            StreamBuffer(*spec) if seq_dim is not None else None for (seq_dim, spec) in zip(self.seqdims, self.specs)
+        )
+
+    def new_zero_buffers(self, seq_size: int) -> Tuple[StreamBuffer | SeqArray, ...]:
+        """
+        Returns StreamBuffers of the given sequence size with the given specification, filled with zeros. Returns
+        fixed-size arrays where there is no sequence dimension.
+        """
+        arrays = self.new_zeros_arrays(seq_size)
+        return tuple(
+            StreamBuffer(arr, seq_dim) if seq_dim is not None else arr for arr, seq_dim in zip(arrays, self.seqdims)
+        )
+
+    def new_randn_buffers(self, seq_size: int) -> Tuple[StreamBuffer | SeqArray, ...]:
+        """
+        Sample StreamBuffers of the given sequence size from a normal distribution (discretized for integer types).
+        Returns fixed-size arrays where there is no sequence dimension.
+        """
+        arrays = self.new_randn_arrays(seq_size)
+        return tuple(
+            StreamBuffer(arr, seq_dim) if seq_dim is not None else arr for arr, seq_dim in zip(arrays, self.seqdims)
+        )
 
     def __repr__(self) -> str:
         out = ""

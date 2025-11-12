@@ -1,6 +1,5 @@
 import numbers
-from typing import Sequence as _Sequence
-from typing import Tuple, overload
+from typing import Sequence, Tuple, overload
 
 import numpy as np
 import torch
@@ -11,18 +10,35 @@ from torchstream.sequence.dtype import DeviceLike, SeqArrayLike, SeqDTypeLike, t
 
 @overload
 def get_shape_and_array_interface(
-    *shape: int, dtype: SeqDTypeLike = torch.float32, device: DeviceLike = "cpu"
+    *shape: int,
+    dtype: SeqDTypeLike = torch.float32,
+    device: DeviceLike = "cpu",
+    allow_fixed_shape: bool = True,
 ) -> Tuple[Tuple[int, ...], ArrayInterface]: ...
 @overload
 def get_shape_and_array_interface(
-    shape: _Sequence[int], dtype: SeqDTypeLike = torch.float32, device: DeviceLike = "cpu"
+    shape: Sequence[int],
+    dtype: SeqDTypeLike = torch.float32,
+    device: DeviceLike = "cpu",
+    allow_fixed_shape: bool = True,
 ) -> Tuple[Tuple[int, ...], ArrayInterface]: ...
 @overload
-def get_shape_and_array_interface(array: SeqArrayLike, seq_dim: int = -1) -> Tuple[Tuple[int, ...], ArrayInterface]: ...
+def get_shape_and_array_interface(
+    array: SeqArrayLike,
+    seq_dim: int = -1,
+) -> Tuple[Tuple[int, ...], ArrayInterface]: ...
+@overload
+def get_shape_and_array_interface(
+    shape: Sequence[int],
+    arr_if: ArrayInterface,
+    allow_fixed_shape: bool = True,
+) -> Tuple[Tuple[int, ...], ArrayInterface]: ...
 def get_shape_and_array_interface(*spec, **kwargs) -> Tuple[Tuple[int, ...], ArrayInterface]:
     """
     TODO: doc
     """
+    allow_fixed_shape = kwargs.pop("allow_fixed_shape", True)
+
     # First arg is an array, that's the third overload
     if torch.is_tensor(spec[0]) or isinstance(spec[0], np.ndarray):
         if len(spec) == 1:
@@ -39,7 +55,7 @@ def get_shape_and_array_interface(*spec, **kwargs) -> Tuple[Tuple[int, ...], Arr
         shape[seq_dim] = -1
         shape = tuple(shape)
 
-    # Otherwise we're in the first two overloads
+    # Otherwise we're in the other overloads
     else:
         if not isinstance(spec[0], numbers.Number):
             if not isinstance(spec[0], (list, tuple)):
@@ -51,21 +67,26 @@ def get_shape_and_array_interface(*spec, **kwargs) -> Tuple[Tuple[int, ...], Arr
             shape = tuple(int(dim_size) for dim_size in spec[:split_idx])
             spec = spec[split_idx:]
 
-        device = kwargs.pop("device", None)
-        dtype = kwargs.pop("dtype", torch.float32)
-        if kwargs:
-            raise ValueError(f"Unexpected keyword arguments {kwargs} when passing shape dimensions")
-        for remaining_arg in spec:
-            if isinstance(remaining_arg, (str, torch.device)):
-                device = remaining_arg
-            else:
-                dtype = to_seqdtype(remaining_arg)
-
-        arr_if = ArrayInterface(dtype, device)
+        if len(spec) == 1 and isinstance(spec[0], ArrayInterface):
+            arr_if = spec[0]
+        else:
+            device = kwargs.pop("device", None)
+            dtype = kwargs.pop("dtype", torch.float32)
+            if kwargs:
+                raise ValueError(f"Unexpected keyword arguments {kwargs} when passing shape dimensions")
+            for remaining_arg in spec:
+                if isinstance(remaining_arg, (str, torch.device)):
+                    device = remaining_arg
+                else:
+                    dtype = to_seqdtype(remaining_arg)
+            arr_if = ArrayInterface(dtype, device)
 
     # Verify the shape
-    if sum(1 for dim in shape if dim <= -1) > 1:
+    num_seq_dims = sum(1 for dim in shape if dim <= -1)
+    if num_seq_dims > 1:
         raise ValueError(f"Shape must have at most one negative (=sequence) dimension, got {shape}")
+    if not allow_fixed_shape and num_seq_dims == 0:
+        raise ValueError(f"Shape must have exactly one negative (=sequence) dimension, got {shape}")
     if any(dim == 0 for dim in shape):
         raise ValueError(f"Shape dimensions cannot be 0, got {shape}")
 

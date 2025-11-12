@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from torchstream.sequence.dtype import SeqArrayLike
-from torchstream.sequence.sequence import Sequence
+from torchstream.sequence.stream_buffer import StreamBuffer
 from torchstream.sliding_window.nan_trick import get_nan_idx
 from torchstream.stream import Stream
 
@@ -17,7 +17,7 @@ def test_stream_equivalent(
     sync_fn: Callable,
     stream: Stream,
     # TODO: offer comparison to an output array instead, to avoid recomputing for multiple streams
-    in_seq: Sequence | SeqArrayLike | None = None,
+    in_seq: StreamBuffer | SeqArrayLike | None = None,
     in_step_sizes: Tuple[int, ...] = (7, 4, 12, 1, 17, 9),
     atol: float = 1e-5,
     throughput_check_max_delay: int | None = None,
@@ -32,20 +32,20 @@ def test_stream_equivalent(
     :param throughput_check_max_delay: TODO: doc
     """
     if in_seq is None:
-        in_seq = Sequence.randn(stream.in_spec, seq_size=sum(in_step_sizes))
-    elif isinstance(in_seq, Sequence):
+        in_seq = StreamBuffer.randn(stream.in_spec, seq_size=sum(in_step_sizes))
+    elif isinstance(in_seq, StreamBuffer):
         in_seq = in_seq.copy()
     else:
-        in_seq = Sequence(stream.in_spec, in_seq, close_input=True)
+        in_seq = StreamBuffer(stream.in_spec, in_seq, close_input=True)
 
     # Get the sync output
-    out_seq_ref = Sequence.apply(sync_fn, in_seq, stream.out_spec)
+    out_seq_ref = StreamBuffer.apply(sync_fn, in_seq, stream.out_spec)
     if out_seq_ref.size == 0:
         raise ValueError(f"Input size of {in_seq.size} is too small for the transform to produce any output")
 
     # FIXME: this is a trivial hack that assumes that the input size is at least the kernel size, ideally we'd only
     # add the kernel size - 1 NaNs to the input.
-    in_nan_trick_seq = Sequence(in_seq, in_seq, close_input=True)
+    in_nan_trick_seq = StreamBuffer(in_seq, in_seq, close_input=True)
 
     step_size_iter = iter(itertools.cycle(in_step_sizes))
     i = 0
@@ -74,7 +74,7 @@ def test_stream_equivalent(
         if throughput_check_max_delay is not None and not stream.output_closed:
             in_nan_trick_seq_i = in_nan_trick_seq.copy()
             in_nan_trick_seq_i[in_seq.n_consumed :] = float("nan")
-            out_nan_trick_seq_i = Sequence.apply(sync_fn, in_nan_trick_seq_i, stream.out_spec)
+            out_nan_trick_seq_i = StreamBuffer.apply(sync_fn, in_nan_trick_seq_i, stream.out_spec)
             out_nan_idx = get_nan_idx(out_nan_trick_seq_i)
 
             # FIXME: handle

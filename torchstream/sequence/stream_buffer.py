@@ -1,29 +1,26 @@
 import logging
-import numbers
-from typing import Callable, Iterable, Optional, Tuple, overload
+from typing import Callable, Iterable, Optional, Sequence, Tuple, overload
 
+import numpy as np
 import torch
 from opentelemetry import trace
 
 from torchstream.exception_signature import DEFAULT_ZERO_SIZE_EXCEPTIONS, ExceptionWithSubstring, matches_any_exception
 from torchstream.sequence.array_interface import ArrayInterface
-from torchstream.sequence.dtype import SeqArrayLike
+from torchstream.sequence.dtype import DeviceLike, SeqArrayLike, SeqDTypeLike
 from torchstream.sequence.seq_spec import SeqSpec
+from torchstream.sequence.sequential_array import get_shape_and_array_interface, get_shape_for_seq_size
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 
-class Sequence:
+class StreamBuffer:
     """
     FIXME! rewrite this doc
     Tensor-like class for buffering multidimensional sequential data. Supports both torch tensors and numpy arrays.
 
-    The Sequence class is essentially the implementation of queues for multidimensional tensors. Tensors of the
-    same shape (aside from the sequence dimension) are queued up into the buffer and can be read or dropped in
-    FIFO order.
-
-    >>> buff = Sequence(spec=SeqSpec(seq_dim=1))
+    >>> buff = StreamBuffer(spec=SeqSpec(seq_dim=1))
     >>> buff.feed(torch.arange(6).reshape((3, 2)))
     >>> buff.feed(torch.arange(9).reshape((3, 3)))
     >>> buff.read(4)
@@ -36,84 +33,62 @@ class Sequence:
     TODO: transform asserts into exceptions
     """
 
-    # TODO!: invert order, data first...
-    # Sigs:
-    #   - Spec
-    #   - Spec + data (+close) -> check data
-    #   - dim + data (+close) -> derive spec
-    #   - Seq (possibly multiple +close) -> copy data
-    # close & name forced in kwarg
-
+    @overload
+    def __init__(self, *shape: int, dtype: SeqDTypeLike = torch.float32, device: DeviceLike = "cpu") -> None: ...
+    @overload
+    def __init__(
+        self, shape: Sequence[int], dtype: SeqDTypeLike = torch.float32, device: DeviceLike = "cpu"
+    ) -> None: ...
+    @overload
+    def __init__(self, array: SeqArrayLike, seq_dim: int = -1) -> None: ...
+    @overload
+    def __init__(self, shape: Sequence[int], arr_if: ArrayInterface) -> None: ...
     def __init__(self, *args, **kwargs):
         """
         TODO! rewrite all the docs for this class
-
-        :param data: optional initial tensors to buffer
-        :param dim: data specification for the sequence, containing at the minimum the shape or sequence dimension.
-        :param name: a name to give to this instance, useful for debugging
         """
-        # TODO: verify compatible types when multiple inputs provided
-        if isinstance(args[0], SeqSpec) or "spec" in kwargs:
-            # Case 1 & 2
-            self.spec = kwargs.get("spec", args[0])
-            arrays = args[1:]
-        elif isinstance(args[0], numbers.Number) and len(args) > 1:
-            # Case 3
-            # TODO: implement that same overload for SeqSpec
-            shape = list(ArrayInterface(args[1]).get_shape(args[1]))
-            shape[args[0]] = -1
-            self.spec = SeqSpec(tuple(shape), dtype=args[1])
-            arrays = args[1:]
-        elif isinstance(args[0], Sequence):
-            # Case 4
-            self.spec = args[0].spec
-            arrays = args
-        else:
-            raise TypeError(f"Cannot infer a SeqSpec from positional arguments Sequence{args}")
+        self._seq_shape, self._arr_if = get_shape_and_array_interface(*args, **kwargs, allow_fixed_shape=False)
 
-        self._arr_if = self.spec._arr_if
         self._buff = None
         self._n_consumed = 0
         self._input_closed = False
         # TODO: better default name, or just default to none and handle in repr?
-        self._name = kwargs.get("name", "Sequence")
+        self._name = kwargs.get("name", "StreamBuffer")
 
-        for arr in arrays:
-            # TODO! copy (only if sequence)
-            self.feed(arr)
-        if kwargs.get("close_input", False):
-            self.close_input()
-
-    # FIXME! Remove these 3 methods, let seqspec do this
-    @classmethod
-    def empty(cls, seq_spec: SeqSpec, seq_size: int = 0) -> "Sequence":
-        """
-        Returns an empty Sequence of the given shape. The array's values are uninitialized.
-        """
-        return cls(seq_spec, seq_spec.new_empty(seq_size))
+        # If the overload with the array was used, feed it
+        if torch.is_tensor(args[0]) or isinstance(args[0], np.ndarray):
+            self.feed(args[0])
 
     @classmethod
-    def zeros(cls, seq_spec: SeqSpec, seq_size: int) -> "Sequence":
+    def new_zeros(cls, *cons_args, seq_size: int, **cons_kwargs) -> "StreamBuffer":
         """
-        Returns a Sequence of the given size, filled with zeros.
+        Returns a StreamBuffer of the given size, filled with zeros.
         """
-        return cls(seq_spec, seq_spec.new_zeros(seq_size))
+        buff = cls(*cons_args, **cons_kwargs)
+        shape = get_shape_for_seq_size(buff._seq_shape, seq_size)
+        buff.feed(buff._arr_if.new_zeros(shape))
+        return buff
 
     @classmethod
-    def randn(cls, seq_spec: SeqSpec, seq_size: int) -> "Sequence":
+    def randn(cls, *cons_args, seq_size: int, **cons_kwargs) -> "StreamBuffer":
         """
-        Sample a Sequence of the given size from a normal distribution (discretized for integer types).
+        Sample a StreamBuffer of the given size from a normal distribution (discretized for integer types).
         """
-        return cls(seq_spec, seq_spec.new_randn(seq_size))
+        buff = cls(*cons_args, **cons_kwargs)
+        shape = get_shape_for_seq_size(buff._seq_shape, seq_size)
+        buff.feed(buff._arr_if.new_randn(shape))
+        return buff
 
-    def copy(self) -> "Sequence":
+    def copy(self) -> "StreamBuffer":
         """
-        Returns a deep copy of this Sequence.
+        Returns a copy of this StreamBuffer with its own data and n_consumed set 
         """
-        return Sequence(self.spec, self._arr_if.copy(self._buff), name=self._name)
+        buff = StreamBuffer(self._seq_shape, self._arr_if)
+        buff.feed(self._arr_if.copy(self._buff))
+        return buff
 
     @property
-    def data(self) -> SeqArrayLike:
+    def data(self) -> SeqArrayLike | None:
         """
         The data currently in the buffer. None if no data has been fed.
         """
@@ -247,7 +222,7 @@ class Sequence:
         if self._buff is not None:
             self._buff = self.spec.new_empty()
 
-    def feed(self, x: SeqArrayLike | "Sequence", close_input=False):
+    def feed(self, x: SeqArrayLike | "StreamBuffer", close_input=False):
         """
         Feeds data at the end of the buffer. If the buffer is closed for input, this will raise an exception.
 
@@ -257,7 +232,7 @@ class Sequence:
         """
         assert not self._input_closed, f"Trying to feed data into {self.name}, but input is closed"
 
-        x = x.data if isinstance(x, Sequence) else x
+        x = x.data if isinstance(x, StreamBuffer) else x
         is_matching, reason = self.spec.matches(x)
         if not is_matching:
             raise ValueError(f"Cannot feed {type(x)} to {self.name}: {reason}")
@@ -306,7 +281,7 @@ class Sequence:
         """
         return self.drop(max(self.size - n, 0))
 
-    def read(self, n: Optional[int] = None) -> "Sequence":
+    def read(self, n: Optional[int] = None) -> "StreamBuffer":
         """
         Reads a sequence of size up to n from the start of buffer while dropping it from the buffer. If the
         buffer does not have enough elements, the entire buffer is returned.
@@ -319,13 +294,13 @@ class Sequence:
     def apply(
         cls,
         trsfm: Callable,
-        in_seq: "Sequence",
+        in_seq: "StreamBuffer",
         out_spec: SeqSpec | None = None,
         zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
-    ) -> "Sequence":
+    ) -> "StreamBuffer":
         # TODO! doc
         out_spec = out_spec or in_seq
-        out_spec = out_spec.spec if isinstance(out_spec, Sequence) else out_spec
+        out_spec = out_spec.spec if isinstance(out_spec, StreamBuffer) else out_spec
 
         with torch.inference_mode():
             try:
@@ -334,9 +309,9 @@ class Sequence:
             except Exception as e:
                 if not matches_any_exception(e, zero_size_exception_signatures):
                     raise e
-                out_arr = Sequence.empty(out_spec)
+                out_arr = StreamBuffer.empty(out_spec)
 
-            out_seq = out_arr if isinstance(out_arr, Sequence) else cls(out_spec, out_arr, close_input=True)
+            out_seq = out_arr if isinstance(out_arr, StreamBuffer) else cls(out_spec, out_arr, close_input=True)
 
         return out_seq
 

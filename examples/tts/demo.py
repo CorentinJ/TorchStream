@@ -4,7 +4,7 @@ import torch
 
 from torchstream.patching.call_intercept import intercept_calls
 from torchstream.sequence.seq_spec import SeqSpec
-from torchstream.sequence.sequence import Sequence
+from torchstream.sequence.stream_buffer import StreamBuffer
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 
@@ -84,9 +84,9 @@ with intercept_calls("torch.nn.functional.instance_norm", instancenorm_patch_noo
         )
 
         # ref_asr, ref_f0_curve, ref_n, ref_s
-        asr_in_buff = Sequence(2, ref_asr)
-        f0_curve_in_buff = Sequence(1, ref_f0_curve)
-        n_in_buff = Sequence(1, ref_n)
+        asr_in_buff = StreamBuffer(2, ref_asr)
+        f0_curve_in_buff = StreamBuffer(1, ref_f0_curve)
+        n_in_buff = StreamBuffer(1, ref_n)
 
         def trsfm(asr: torch.Tensor):
             return pipeline.model.decoder.forward(
@@ -114,7 +114,7 @@ in_spec = SeqSpec(
 )
 out_spec = SeqSpec(1, 1, -1)
 in_buff = in_spec.new_from_data(ref_asr, ref_f0_curve, ref_n, ref_s)
-out_buff = out_spec.new_empty()
+out_buff = out_spec.new_empty_arrays()
 
 while asr_in_buff.size:
     out = stream(asr_in_buff.read(100))

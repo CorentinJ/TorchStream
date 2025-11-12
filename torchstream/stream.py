@@ -1,7 +1,7 @@
 from typing import Optional, Tuple
 
 from torchstream.sequence.seq_spec import SeqSpec
-from torchstream.sequence.sequence import Sequence
+from torchstream.sequence.stream_buffer import StreamBuffer
 
 
 class Stream:
@@ -16,7 +16,7 @@ class Stream:
 
         self._output_closed = False
 
-        self._in_buffs = (Sequence(input_spec, name=f"{type(self)} input buffer"),)
+        self._in_buffs = (StreamBuffer(input_spec, name=f"{type(self)} input buffer"),)
 
     # FIXME: settle on the names for both these properties
     @property
@@ -33,10 +33,10 @@ class Stream:
 
     def __call__(
         self,
-        *inputs: Sequence,
+        *inputs: StreamBuffer,
         is_last_input: bool = False,
         on_starve="raise",
-    ) -> Sequence | Tuple[Sequence]:
+    ) -> StreamBuffer | Tuple[StreamBuffer]:
         # TODO: asserts -> exceptions
         assert not self.input_closed
         assert len(inputs) == len(self._in_buffs)
@@ -47,12 +47,12 @@ class Stream:
         try:
             # TODO! validate this output with the spec
             outputs = self._step(*self._in_buffs)
-            outputs = Sequence(self.out_spec, outputs)
+            outputs = StreamBuffer(self.out_spec, outputs)
         except NotEnoughInputError:
             if on_starve == "raise":
                 raise
             elif on_starve == "empty":
-                outputs = Sequence.empty(self.out_spec)
+                outputs = StreamBuffer.empty(self.out_spec)
         except:
             raise
         finally:
@@ -62,7 +62,7 @@ class Stream:
         return outputs
 
     # TODO: settle on return seq vs arrays
-    def _step(self, *in_seqs: Sequence) -> Sequence | Tuple[Sequence]:
+    def _step(self, *in_seqs: StreamBuffer) -> StreamBuffer | Tuple[StreamBuffer]:
         """
         :raises NotEnoughInputsError: if the stream cannot perform a step because it does not have enough inputs. This
         is typically a low severity error that can be caught by the caller in order to wait for more inputs before
