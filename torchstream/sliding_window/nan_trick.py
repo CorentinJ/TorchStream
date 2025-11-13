@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 def get_nan_idx(x: SeqArrayLike | StreamBuffer, axis=None) -> np.ndarray:
     if isinstance(x, StreamBuffer):
-        axis = x.dim
+        axis = x.seqdim
         x = x.data
     elif axis is None:
         axis = -1

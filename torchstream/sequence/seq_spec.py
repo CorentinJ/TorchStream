@@ -38,7 +38,7 @@ class SeqSpec:
         """
         Returns the sequence dimensions of all arrays in the specification.
         """
-        return tuple(next((i for i, dim in enumerate(shape) if dim < 0), None) for shape, _ in self.specs)
+        return tuple(next(i for i, dim in enumerate(shape) if dim < 0) for shape, _ in self.specs)
 
     def matches(self, *arrs: SeqArrayLike) -> Tuple[bool, str]:
         """
@@ -106,9 +106,7 @@ class SeqSpec:
         """
         Returns empty StreamBuffers with the given specification. Returns None where there is no sequence dimension.
         """
-        return tuple(
-            StreamBuffer(*spec) if seq_dim is not None else None for (seq_dim, spec) in zip(self.seqdims, self.specs)
-        )
+        return tuple(StreamBuffer(*spec) for spec in self.specs)
 
     def new_zero_buffers(self, seq_size: int) -> Tuple[StreamBuffer | SeqArray, ...]:
         """
@@ -116,9 +114,7 @@ class SeqSpec:
         fixed-size arrays where there is no sequence dimension.
         """
         arrays = self.new_zeros_arrays(seq_size)
-        return tuple(
-            StreamBuffer(arr, seq_dim) if seq_dim is not None else arr for arr, seq_dim in zip(arrays, self.seqdims)
-        )
+        return tuple(StreamBuffer(arr, seq_dim) for arr, seq_dim in zip(arrays, self.seqdims))
 
     def new_randn_buffers(self, seq_size: int) -> Tuple[StreamBuffer | SeqArray, ...]:
         """
@@ -126,9 +122,7 @@ class SeqSpec:
         Returns fixed-size arrays where there is no sequence dimension.
         """
         arrays = self.new_randn_arrays(seq_size)
-        return tuple(
-            StreamBuffer(arr, seq_dim) if seq_dim is not None else arr for arr, seq_dim in zip(arrays, self.seqdims)
-        )
+        return tuple(StreamBuffer(arr, seq_dim) for arr, seq_dim in zip(arrays, self.seqdims))
 
     def __repr__(self) -> str:
         out = ""

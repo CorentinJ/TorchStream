@@ -8,11 +8,13 @@ from opentelemetry import trace
 from torchstream.exception_signature import DEFAULT_ZERO_SIZE_EXCEPTIONS, ExceptionWithSubstring, matches_any_exception
 from torchstream.sequence.array_interface import ArrayInterface
 from torchstream.sequence.dtype import DeviceLike, SeqArrayLike, SeqDTypeLike
-from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sequence.sequential_array import get_shape_and_array_interface, get_shape_for_seq_size
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+
+# TODO? Type with a typevar for arrays instead
 
 
 class StreamBuffer:
@@ -47,7 +49,8 @@ class StreamBuffer:
         """
         TODO! rewrite all the docs for this class
         """
-        self._seq_shape, self._arr_if = get_shape_and_array_interface(*args, **kwargs, allow_fixed_shape=False)
+        self._seq_shape, self._arr_if = get_shape_and_array_interface(*args, **kwargs)
+        self._seqdim = next(i for i, s in enumerate(self._seq_shape) if s <= -1)
 
         self._buff = None
         self._n_consumed = 0
@@ -81,7 +84,7 @@ class StreamBuffer:
 
     def copy(self) -> "StreamBuffer":
         """
-        Returns a copy of this StreamBuffer with its own data and n_consumed set 
+        Returns a copy of this StreamBuffer with its own data and n_consumed set to 0
         """
         buff = StreamBuffer(self._seq_shape, self._arr_if)
         buff.feed(self._arr_if.copy(self._buff))
@@ -96,10 +99,8 @@ class StreamBuffer:
 
     @overload
     def __getitem__(self, idx: int) -> SeqArrayLike: ...
-
     @overload
     def __getitem__(self, sli: slice) -> SeqArrayLike: ...
-
     def __getitem__(self, sli: int | slice) -> SeqArrayLike:
         """
         TODO: doc
@@ -118,21 +119,18 @@ class StreamBuffer:
 
         # If we're reading the entire buffer, just return it
         if sli.stop - sli.start >= self.size:
-            # TODO! sort this empty buff thing...
             if self._buff is None:
-                return self.spec.empty()
+                return self._arr_if.new_empty(self.shape)
             return self._buff
 
         # Slice the buffer to make a copy of the elements, so as not to hold a view containing the ones we don't need
         # TODO: settle on copying or not
-        return self._arr_if.copy(self._arr_if.get_along_dim(self._buff, sli, dim=self.dim))
+        return self._arr_if.copy(self._arr_if.get_along_dim(self._buff, sli, dim=self.seqdim))
 
     @overload
     def __setitem__(self, idx: int, value: SeqArrayLike) -> None: ...
-
     @overload
     def __setitem__(self, sli: slice, value: SeqArrayLike) -> None: ...
-
     def __setitem__(self, sli: int | slice, value: SeqArrayLike) -> None:
         """
         TODO: doc
@@ -149,7 +147,7 @@ class StreamBuffer:
             f"Trying to set {sli.stop - sli.start} elements from {self._name}, n must be positive"
         )
 
-        self._arr_if.set_along_dim(self._buff, sli, self.dim, value)
+        self._arr_if.set_along_dim(self._buff, sli, self.seqdim, value)
 
     @property
     def n_consumed(self) -> int:
@@ -158,13 +156,12 @@ class StreamBuffer:
         """
         return self._n_consumed
 
-    # TODO: rename seqdim?
     @property
-    def dim(self) -> int:
+    def seqdim(self) -> int:
         """
         The dimension along which this buffer is buffering tensors or arrays
         """
-        return self.spec.seq_dim
+        return self._seqdim
 
     @property
     def size(self) -> int:
@@ -173,25 +170,24 @@ class StreamBuffer:
         TODO: __len__ override? Might be confusing with equivalent tensor len override that returns the size of the
         first dimension.
         """
-        return self.shape[self.dim] if self._buff is not None else 0
+        return self.shape[self.seqdim] if self._buff is not None else 0
 
     @property
-    def shape(self) -> Optional[Tuple[int]]:
+    def shape(self) -> Tuple[int, ...]:
         """
-        The shape of the buffer. None if no data has been fed.
+        The current shape of the buffer
         """
-        return self._arr_if.get_shape(self._buff) if self._buff is not None else None
+        if self._buff is not None:
+            return self._arr_if.get_shape(self._buff)
+        else:
+            return get_shape_for_seq_size(self._seq_shape, 0)
 
     @property
     def ndim(self) -> int:
-        return self.spec.ndim
-
-    @property
-    def name(self) -> str:
         """
-        Name of this instance if any was given, otherwise the class name
+        Number of dimensions, i.e. len(self.shape)
         """
-        return self._name or self.__class__.__name__
+        return len(self._seq_shape)
 
     @property
     def input_closed(self) -> bool:
@@ -218,10 +214,6 @@ class StreamBuffer:
         assert not self._input_closed, f"Trying to close input on {self.name}, but input is already closed"
         self._input_closed = True
 
-    def _clear_buf(self):
-        if self._buff is not None:
-            self._buff = self.spec.new_empty()
-
     def feed(self, x: SeqArrayLike | "StreamBuffer", close_input=False):
         """
         Feeds data at the end of the buffer. If the buffer is closed for input, this will raise an exception.
@@ -237,10 +229,11 @@ class StreamBuffer:
         if not is_matching:
             raise ValueError(f"Cannot feed {type(x)} to {self.name}: {reason}")
 
+        # TODO: use arr_if.normalize?
         if self._buff is None:
             self._buff = self._arr_if.copy(x)
         else:
-            self._buff = self._arr_if.concat(self._buff, x, dim=self.dim)
+            self._buff = self._arr_if.concat(self._buff, x, dim=self.seqdim)
 
         if close_input:
             self.close_input()
@@ -264,7 +257,7 @@ class StreamBuffer:
         if n >= self.size:
             out_size = self.size
             self._n_consumed += out_size
-            self._clear_buf()
+            self._buff = None
             return out_size
 
         # Slice the buffer to make a copy of the remaining elements, so as not to hold a view containing the
@@ -281,7 +274,7 @@ class StreamBuffer:
         """
         return self.drop(max(self.size - n, 0))
 
-    def read(self, n: Optional[int] = None) -> "StreamBuffer":
+    def read(self, n: Optional[int] = None) -> SeqArrayLike:
         """
         Reads a sequence of size up to n from the start of buffer while dropping it from the buffer. If the
         buffer does not have enough elements, the entire buffer is returned.
@@ -290,6 +283,7 @@ class StreamBuffer:
         self.drop(n)
         return out
 
+    # FIXME!!
     @classmethod
     def apply(
         cls,
@@ -316,4 +310,4 @@ class StreamBuffer:
         return out_seq
 
     def __repr__(self) -> str:
-        return f"<Sequence shape={self.shape} dim={self.dim}>"
+        return f"<Sequence shape={self.shape} dim={self.seqdim}>"

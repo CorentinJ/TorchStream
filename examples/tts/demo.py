@@ -65,12 +65,12 @@ def instancenorm_patch_noop(*args, original_fn, **kwargs):
 
 with intercept_calls("torch.nn.functional.instance_norm", instancenorm_patch_noop, pass_original_fn=True):
     with intercept_calls("torch.cumsum", cumsum_patch_with_nan_passthrough, pass_original_fn=True):
-        # sli_params = find_sliding_window_params(
-        #     trsfm,
-        #     SeqSpec(1, 1, -1, device=device),  # Decoder in
-        #     SeqSpec(1, 1, -1, device=device),  # Audio
-        # )[0]
-        # print(sli_params)
+        sli_params = find_sliding_window_params(
+            trsfm,
+            SeqSpec(1, 1, -1, device=device),  # Decoder in
+            SeqSpec(1, 1, -1, device=device),  # Audio
+        )[0]
+        print(sli_params)
 
         sli_params = SlidingWindowParams(
             kernel_size_in=28,

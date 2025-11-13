@@ -13,14 +13,12 @@ def get_shape_and_array_interface(
     *shape: int,
     dtype: SeqDTypeLike = torch.float32,
     device: DeviceLike = "cpu",
-    allow_fixed_shape: bool = True,
 ) -> Tuple[Tuple[int, ...], ArrayInterface]: ...
 @overload
 def get_shape_and_array_interface(
     shape: Sequence[int],
     dtype: SeqDTypeLike = torch.float32,
     device: DeviceLike = "cpu",
-    allow_fixed_shape: bool = True,
 ) -> Tuple[Tuple[int, ...], ArrayInterface]: ...
 @overload
 def get_shape_and_array_interface(
@@ -31,14 +29,11 @@ def get_shape_and_array_interface(
 def get_shape_and_array_interface(
     shape: Sequence[int],
     arr_if: ArrayInterface,
-    allow_fixed_shape: bool = True,
 ) -> Tuple[Tuple[int, ...], ArrayInterface]: ...
 def get_shape_and_array_interface(*spec, **kwargs) -> Tuple[Tuple[int, ...], ArrayInterface]:
     """
     TODO: doc
     """
-    allow_fixed_shape = kwargs.pop("allow_fixed_shape", True)
-
     # First arg is an array, that's the third overload
     if torch.is_tensor(spec[0]) or isinstance(spec[0], np.ndarray):
         if len(spec) == 1:
@@ -82,10 +77,7 @@ def get_shape_and_array_interface(*spec, **kwargs) -> Tuple[Tuple[int, ...], Arr
             arr_if = ArrayInterface(dtype, device)
 
     # Verify the shape
-    num_seq_dims = sum(1 for dim in shape if dim <= -1)
-    if num_seq_dims > 1:
-        raise ValueError(f"Shape must have at most one negative (=sequence) dimension, got {shape}")
-    if not allow_fixed_shape and num_seq_dims == 0:
+    if sum(1 for dim in shape if dim <= -1) != 1:
         raise ValueError(f"Shape must have exactly one negative (=sequence) dimension, got {shape}")
     if any(dim == 0 for dim in shape):
         raise ValueError(f"Shape dimensions cannot be 0, got {shape}")
@@ -138,10 +130,7 @@ def get_shape_for_seq_size(shape: Tuple[int, ...], seq_size: int) -> Tuple[int, 
     -1, the absolute value of that integer is used as a multiplier for the sequence size. If there is no sequence
     dimension, the shape is returned as-is.
     """
-    seq_dim = next((i for i, dim_size in enumerate(shape) if dim_size == -1), None)
-    if seq_dim is None:
-        return shape
-
+    seq_dim = next(i for i, dim_size in enumerate(shape) if dim_size == -1)
     shape = list(shape)
     shape[seq_dim] = seq_size * (-shape[seq_dim])
     return tuple(shape)

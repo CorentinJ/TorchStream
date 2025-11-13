@@ -5,7 +5,6 @@ from torchstream.sequence.stream_buffer import StreamBuffer
 
 
 class Stream:
-    # TODO: multiple inputs/outputs
     def __init__(
         self,
         input_spec: SeqSpec,
@@ -16,7 +15,7 @@ class Stream:
 
         self._output_closed = False
 
-        self._in_buffs = (StreamBuffer(input_spec, name=f"{type(self)} input buffer"),)
+        self._in_buffs = self.in_spec.new_empty_buffers()
 
     # FIXME: settle on the names for both these properties
     @property
