@@ -73,7 +73,6 @@ def run_nan_trick(
     out_seq = in_seq.apply(trsfm, out_spec, zero_size_exception_signatures=zero_size_exception_signatures)
 
     out_nan_idx = get_nan_idx(out_seq)
-    logger.info(f"Got a {tuple(out_seq.shape)} shaped output with nans at {out_nan_idx}")
 
     return out_seq, out_nan_idx
 

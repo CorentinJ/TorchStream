@@ -1,5 +1,4 @@
 import logging
-from functools import partial
 from itertools import zip_longest
 from typing import Callable, Iterable, List, Tuple
 
@@ -9,9 +8,8 @@ from opentelemetry import trace
 
 from torchstream.exception_signature import DEFAULT_ZERO_SIZE_EXCEPTIONS, ExceptionWithSubstring
 from torchstream.sequence.sequence import SeqSpec
-from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.kernel_sparsity import KernelSparsitySampler
-from torchstream.sliding_window.nan_trick import get_nan_idx
+from torchstream.sliding_window.nan_trick import run_nan_trick
 from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
     SlidingWindowInOutRelSampler,
 )
@@ -75,7 +73,7 @@ class SlidingWindowParamsSolver:
     def __init__(
         self,
         trsfm: Callable,
-        input_provider: Callable[[int], Sequence] | SeqSpec,
+        in_spec: SeqSpec,
         out_spec: SeqSpec | None = None,
         init_seq_size: int = 30,
         max_in_seq_size: int = 10_000,
@@ -84,13 +82,9 @@ class SlidingWindowParamsSolver:
         zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
         debug_ref_params: SlidingWindowParams | None = None,
     ):
-        if isinstance(input_provider, SeqSpec):
-            in_spec = input_provider
-            input_provider = partial(Sequence.new_randn, in_spec)
-
         self._trsfm = trsfm
-        self.input_provider = input_provider
-        self.out_spec = out_spec
+        self.in_spec = in_spec
+        self.out_spec = out_spec or in_spec
         self.init_seq_size = init_seq_size
         self.max_in_seq_size = max_in_seq_size
         self.atol = atol
@@ -100,9 +94,6 @@ class SlidingWindowParamsSolver:
         self.in_out_rel_params = None
         self.min_in_size_bounds = [1, max_in_seq_size]
         self.nan_trick_history = []
-
-        # FIXME!
-        self.in_spec = self.input_provider(0).spec
 
         self.debug_ref_params = debug_ref_params
         if debug_ref_params:
@@ -129,23 +120,12 @@ class SlidingWindowParamsSolver:
         ), "Internal error: reusing previously seen NaN trick parameters"
 
         # Get an input of said size and perform the nan trick on the actual transform
-        in_seq = self.input_provider(in_seq_size)
-        if not isinstance(in_seq, Sequence):
-            raise TypeError(
-                f"The input_provider function {self.input_provider} returned a {type(in_seq)} "
-                f"when a Sequence was expected"
-            )
-
-        # Corrupt the given range of the input sequence with NaNs
-        if in_nan_range:
-            in_seq[slice(*in_nan_range)] = float("nan")
-
-        out_seq = Sequence.apply(
-            self._trsfm, in_seq, self.out_spec, zero_size_exception_signatures=self.zero_size_exception_signatures
+        in_seq = self.in_spec.new_randn_sequence(in_seq_size)
+        out_seq, out_nan_idx = run_nan_trick(
+            self._trsfm, in_seq, in_nan_range, self.out_spec, self.zero_size_exception_signatures
         )
 
         # Keep track of the outcome in the history
-        out_nan_idx = get_nan_idx(out_seq)
         out_nan_range = (int(out_nan_idx[0]), int(out_nan_idx[-1] + 1)) if len(out_nan_idx) else None
         logger.info(f"Forwarded size {in_seq.size}->{out_seq.size} with nans {in_nan_range}->{out_nan_range}")
         record = {
@@ -447,7 +427,7 @@ class SlidingWindowParamsSolver:
 @torch.no_grad()
 def find_sliding_window_params(
     trsfm: Callable,
-    input_provider: Callable[[int], Sequence] | SeqSpec,
+    in_spec: SeqSpec,
     out_spec: SeqSpec | None = None,
     init_seq_size: int = 30,
     max_in_seq_size: int = 10_000,
@@ -471,13 +451,11 @@ def find_sliding_window_params(
     :param output_spec: same as input_spec but for the output of the transform. If the transform has multiple
     sequential outputs, they must be returned as an iterable matching the output spec. If the output spec is
     identical to the input spec, it can be omitted, and the input spec will be used instead.
-    :param input_provider: a function that takes an integer representing the sequence size, and returns a Sequence of
-    this size.
     TODO!: rewrite docs
     """
     return SlidingWindowParamsSolver(
         trsfm=trsfm,
-        input_provider=input_provider,
+        in_spec=in_spec,
         out_spec=out_spec,
         init_seq_size=init_seq_size,
         max_in_seq_size=max_in_seq_size,
