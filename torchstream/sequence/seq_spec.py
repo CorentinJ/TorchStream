@@ -136,6 +136,9 @@ class SeqSpec:
                 with tracer.start_as_current_span(trsfm.__name__ if hasattr(trsfm, "__name__") else "transform"):
                     out_arrs = trsfm(*in_arrs)
 
+                if not isinstance(out_arrs, tuple):
+                    out_arrs = (out_arrs,)
+
             except Exception as e:
                 if not matches_any_exception(e, zero_size_exception_signatures):
                     raise e

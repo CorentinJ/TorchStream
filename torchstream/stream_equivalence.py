@@ -25,7 +25,7 @@ def test_stream_equivalent(
 ):
     """
     Tests if a stream implementation gives outputs close or equivalent to its synchronous counterpart.
-
+ 
     Both the stream and the sync function must take the same arguments, and return the same number of outputs.
     Outputs must be sequential data of the same shape.
     TODO: better doc

@@ -80,7 +80,7 @@ class Sequence:
         Sample a Sequence of the given size from a normal distribution (discretized for integer types).
         """
         seq = cls(*cons_args, **cons_kwargs)
-        seq.feed(*seq.spec.randn_arrays(seq_size))
+        seq.feed(*seq.spec.new_randn_arrays(seq_size))
         return seq
 
     def copy(self) -> "Sequence":
@@ -114,6 +114,14 @@ class Sequence:
         The dimension along which the buffers are concatenating or reading from tensors or arrays
         """
         return self.spec.seq_dims
+
+    @property
+    def seq_scales(self) -> Tuple[int, ...]:
+        """
+        Returns the sequence scales of all arrays in the specification. The sequence scale is the absolute value
+        of the sequence dimension
+        """
+        return self.spec.seq_scales
 
     @property
     def size(self) -> int:
@@ -197,7 +205,7 @@ class Sequence:
             f"Trying to set {sli.stop - sli.start} elements from {self._name}, n must be positive"
         )
 
-        for buff, seq_dim, scale, (_, arr_if) in zip(self._buffs, self.seq_dims, self.seq_scales, self.specs):
+        for buff, seq_dim, scale, arr_if in zip(self._buffs, self.seq_dims, self.seq_scales, self._arr_ifs):
             scaled_sli = slice(
                 sli.start * scale if sli.start is not None else None,
                 sli.stop * scale if sli.stop is not None else None,

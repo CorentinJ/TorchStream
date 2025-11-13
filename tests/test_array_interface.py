@@ -28,8 +28,8 @@ def test_get_shape_and_array_interface():
     shape, _ = get_shape_and_array_interface(10, -2, 30)
     assert shape == (10, -2, 30)
 
-    shape, _ = get_shape_and_array_interface(10, 20, 30)
-    assert shape == (10, 20, 30)
+    with pytest.raises(ValueError):
+        shape, _ = get_shape_and_array_interface(10, 20, 30)
 
     with pytest.raises(ValueError):
         get_shape_and_array_interface(10, -1, -1)
