@@ -1,4 +1,4 @@
-from typing import Callable, Iterable, Tuple, overload
+from typing import TYPE_CHECKING, Callable, Iterable, Tuple, overload
 from typing import Sequence as _Sequence
 
 import numpy as np
@@ -8,12 +8,15 @@ from opentelemetry import trace
 from torchstream.exception_signature import DEFAULT_ZERO_SIZE_EXCEPTIONS, ExceptionWithSubstring, matches_any_exception
 from torchstream.sequence.array_interface import SeqArray, TensorInterface
 from torchstream.sequence.dtype import DeviceLike, SeqArrayLike, SeqDTypeLike
-from torchstream.sequence.sequence import Sequence
 from torchstream.sequence.sequential_array import (
     array_matches_shape_and_type,
     get_shape_and_array_interface,
     get_shape_for_seq_size,
 )
+
+# We have a circular dependecy for a few convenience methods
+if TYPE_CHECKING:
+    from torchstream.sequence.sequence import Sequence
 
 tracer = trace.get_tracer(__name__)
 
@@ -97,11 +100,10 @@ class SeqSpec:
     def apply(
         self,
         trsfm: Callable,
-        *in_arrs: SeqArrayLike | Sequence,
+        *in_arrs: SeqArrayLike,
         out_spec: "SeqSpec | None" = None,
-        to_buffers: bool = False,
         zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
-    ) -> Tuple[SeqArrayLike, ...] | Tuple[Sequence, ...]:
+    ) -> Tuple[SeqArrayLike, ...]:
         """
         Forwards the given input arrays through the given transform while:
             - Using torch's inference_mode
@@ -112,11 +114,9 @@ class SeqSpec:
 
         :param trsfm: A transform that takes in arrays matching exactly this specification, and returning arrays
         matching exactly the output specification.
-        :param in_arrs: Input arrays to forward through the transform. If Sequences are given, their data is
-        peeked at without being consumed.
+        :param in_arrs: Input arrays to forward through the transform.
         :param out_spec: Specification that the output arrays must match. If None, it is assumed to be the same as
         this specification.
-        :param to_buffers: If True, the output arrays are returned as Sequences
         :param zero_size_exception_signatures: Signatures of exceptions that indicate that the transform could not
         produce any output due to the input arrays being too small, leading to a zero-size output. You may pass
         an empty iterable to disable this behavior. You can also add to the base set of exceptions
@@ -125,7 +125,6 @@ class SeqSpec:
         """
         out_spec = out_spec or self
 
-        in_arrs = [arr.data if isinstance(arr, Sequence) else arr for arr in in_arrs]
         matches, reason = self.matches(*in_arrs)
         if not matches:
             raise ValueError(f"Input arrays do not match the input specification: {reason}")
@@ -135,17 +134,12 @@ class SeqSpec:
                 with tracer.start_as_current_span(trsfm.__name__ if hasattr(trsfm, "__name__") else "transform"):
                     out_arrs = trsfm(*in_arrs)
 
-                if to_buffers:
-                    out = out_spec.new_buffers_from_data(*out_arrs)
-                else:
-                    out = out_arrs
-
             except Exception as e:
                 if not matches_any_exception(e, zero_size_exception_signatures):
                     raise e
-                out = out_spec.new_empty_buffers() if to_buffers else out_spec.new_empty_arrays()
+                out_arrs = out_spec.new_empty_arrays()
 
-        return out
+        return out_arrs
 
     def get_shapes_for_seq_size(self, seq_size: int) -> Tuple[Tuple[int, ...], ...]:
         """
@@ -181,37 +175,36 @@ class SeqSpec:
         shapes = self.get_shapes_for_seq_size(seq_size)
         return tuple(arr_if.new_randn(*shape) for shape, (_, arr_if) in zip(shapes, self.specs))
 
-    def new_empty_buffers(self) -> Tuple[Sequence, ...]:
+    def new_empty_sequence(self) -> Sequence:
         """
-        Returns empty Sequences with the given specification.
+        Returns empty an Sequence with the given specification.
         """
-        return tuple(Sequence(*spec) for spec in self.specs)
+        from torchstream.sequence.sequence import Sequence
 
-    def new_zero_buffers(self, seq_size: int) -> Tuple[Sequence, ...]:
-        """
-        Returns Sequences of the given sequence size with the given specification, filled with zeros.
-        """
-        arrays = self.new_zeros_arrays(seq_size)
-        return tuple(Sequence(arr, seq_dim) for arr, seq_dim in zip(arrays, self.seq_dims))
+        return Sequence(self)
 
-    def new_randn_buffers(self, seq_size: int) -> Tuple[Sequence, ...]:
+    def new_zero_sequence(self, seq_size: int) -> Sequence:
         """
-        Sample Sequences of the given sequence size from a normal distribution (discretized for integer types).
+        Returns a Sequence of the given sequence size with the given specification, buffers filled with zeros.
         """
-        arrays = self.new_randn_arrays(seq_size)
-        return tuple(Sequence(arr, seq_dim) for arr, seq_dim in zip(arrays, self.seq_dims))
+        from torchstream.sequence.sequence import Sequence
 
-    def new_buffers_from_data(self, *arrs: SeqArrayLike | Sequence) -> Tuple[Sequence, ...]:
+        return Sequence.new_zeros(self, seq_size=seq_size)
+
+    def new_randn_sequence(self, seq_size: int) -> Sequence:
         """
-        Verfies that the given arrays match this specification, and returns them as Sequences.
-        Raises if they do not match.
-        If inputs are provided as Sequences, their data is peeked at without being consumed.
+        Sample a Sequence of the given sequence size from a normal distribution (discretized for integer types).
         """
-        arrs = [arr.data if isinstance(arr, Sequence) else arr for arr in arrs]
-        matches, reason = self.matches(*arrs)
-        if not matches:
-            raise ValueError(f"Arrays do not match the specification: {reason}")
-        return tuple(Sequence(arr, seq_dim) for arr, seq_dim in zip(arrs, self.seq_dims))
+        from torchstream.sequence.sequence import Sequence
+
+        return Sequence.new_randn(self, seq_size=seq_size)
+
+    def new_sequence_from_data(self, *arrs: SeqArrayLike) -> Sequence:
+        from torchstream.sequence.sequence import Sequence
+
+        seq = Sequence(self)
+        seq.feed(*arrs)
+        return seq
 
     def __repr__(self) -> str:
         out = ""

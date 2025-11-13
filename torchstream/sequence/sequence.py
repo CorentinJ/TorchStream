@@ -1,11 +1,12 @@
 import logging
-from typing import Optional, Tuple, overload
+from typing import Callable, Iterable, Optional, Tuple, overload
 from typing import Sequence as _Sequence
 
 import numpy as np
 import torch
 from opentelemetry import trace
 
+from torchstream.exception_signature import DEFAULT_ZERO_SIZE_EXCEPTIONS, ExceptionWithSubstring
 from torchstream.sequence.dtype import DeviceLike, SeqArrayLike, SeqDTypeLike
 from torchstream.sequence.seq_spec import SeqSpec
 
@@ -74,7 +75,7 @@ class Sequence:
         return seq
 
     @classmethod
-    def randn(cls, *cons_args, seq_size: int, **cons_kwargs) -> "Sequence":
+    def new_randn(cls, *cons_args, seq_size: int, **cons_kwargs) -> "Sequence":
         """
         Sample a Sequence of the given size from a normal distribution (discretized for integer types).
         """
@@ -263,6 +264,40 @@ class Sequence:
         out = self[:n]
         self.drop(n)
         return out
+
+    def apply(
+        self,
+        trsfm: Callable,
+        out_spec: "SeqSpec | None" = None,
+        zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
+    ) -> "Sequence":
+        """
+        Forwards the sequence's data (without consuming it) through the given transform while:
+            - Using torch's inference_mode
+            - Checking that the output arrays match the given output specification (or this specification if none is
+            given), raising otherwise
+            - Catching zero-size exceptions raised by the transform to return empty arrays instead
+
+        :param trsfm: A transform that takes in arrays matching exactly this sequence's specification (as positional
+        arguments), and returning arrays matching exactly the output specification.
+        :param out_spec: Specification that the output arrays must match. If None, it is assumed to be the same as
+        this specification.
+        :param zero_size_exception_signatures: Signatures of exceptions that indicate that the transform could not
+        produce any output due to the input arrays being too small, leading to a zero-size output. You may pass
+        an empty iterable to disable this behavior. You can also add to the base set of exceptions
+        DEFAULT_ZERO_SIZE_EXCEPTIONS with your own exception signatures.
+        :return: Output arrays returned by the transform.
+        """
+        out_spec = out_spec or self.spec
+
+        out_arrs = self.spec.apply(
+            trsfm,
+            *self.data,
+            out_spec=out_spec,
+            zero_size_exception_signatures=zero_size_exception_signatures,
+        )
+
+        return out_spec.new_sequence_from_data(*out_arrs)
 
     def __repr__(self) -> str:
         return f"Sequence of size {self.size} with {self.spec}"

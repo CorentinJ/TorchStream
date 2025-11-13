@@ -86,7 +86,7 @@ class SlidingWindowParamsSolver:
     ):
         if isinstance(input_provider, SeqSpec):
             in_spec = input_provider
-            input_provider = partial(Sequence.randn, in_spec)
+            input_provider = partial(Sequence.new_randn, in_spec)
 
         self._trsfm = trsfm
         self.input_provider = input_provider
