@@ -1,35 +1,33 @@
 import logging
 import math
-from functools import partial
 from typing import Callable, Iterable, Optional, Tuple
 
 import numpy as np
 import torch
 
 from torchstream.exception_signature import DEFAULT_ZERO_SIZE_EXCEPTIONS, ExceptionWithSubstring
-from torchstream.sequence.dtype import SeqArrayLike
-from torchstream.sequence.sequence import SeqSpec
-from torchstream.sequence.sequence import Sequence
+from torchstream.sequence.sequence import SeqSpec, Sequence
 from torchstream.sliding_window.kernel_sparsity import get_nan_map
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams, get_output_delay
 
 logger = logging.getLogger(__name__)
 
 
-def get_nan_idx(x: SeqArrayLike | Sequence, axis=None) -> np.ndarray:
-    if isinstance(x, Sequence):
-        axis = x.seq_dim
-        x = x.data
-    elif axis is None:
-        axis = -1
-    if torch.is_tensor(x):
-        x = x.cpu().numpy()
-
-    if not x.shapes[axis]:
+def get_nan_idx(x: Sequence) -> np.ndarray:
+    """
+    Given a sequence, returns the indices along the sequence dimension where NaNs are found. NaNs are expected to be
+    found along the same indices across all buffers of the sequence, otherwise the function raises a ValueError.
+    """
+    if not x.size:
         return np.empty(0, dtype=np.int64)
 
-    # TODO! doc
-    # TODO: numpy() function
+    for arr, seqdim, scale in zip(x.data, x.seq_dims, x.seq_scales):
+        if torch.is_tensor(arr):
+            arr = arr.detach().cpu().numpy()
+
+        arr_is_nan = np.isnan(arr)
+        
+
     # TODO: is_nan -> any reduction instead
     # Use flatnonzero maybe?
     x = x.mean(axis=tuple(i for i in range(x.ndim) if i != axis))
@@ -39,7 +37,6 @@ def get_nan_idx(x: SeqArrayLike | Sequence, axis=None) -> np.ndarray:
 
 def run_nan_trick(
     trsfm: Callable,
-    # TODO! seq/array distinction is annoying here
     in_seq: Sequence,
     in_nan_range: Tuple[int, int] | None,
     out_spec: Optional[SeqSpec] = None,
@@ -59,7 +56,7 @@ def run_nan_trick(
         in_seq[slice(*in_nan_range)] = float("nan")
 
     # Forward the input through the transform
-    out_seq = Sequence.apply(trsfm, in_seq, out_spec, zero_size_exception_signatures=zero_size_exception_signatures)
+    out_seq = in_seq.apply(trsfm, out_spec, zero_size_exception_signatures=zero_size_exception_signatures)
 
     out_nan_idx = get_nan_idx(out_seq)
     logger.info(f"Got a {tuple(out_seq.shape)} shaped output with nans at {out_nan_idx}")
@@ -70,16 +67,13 @@ def run_nan_trick(
 def get_context_size_empirically(
     params: SlidingWindowParams,
     trsfm: Callable | None = None,
-    input_provider: Callable[[int], Sequence] | SeqSpec | None = None,
+    in_spec: SeqSpec | None = None,
     out_spec: SeqSpec | None = None,
 ) -> int:
     if trsfm:
-        assert input_provider is not None, "Both trsfm and input_provider must be provided"
-        if isinstance(input_provider, SeqSpec):
-            seq_spec = input_provider
-            input_provider = partial(Sequence.zeros, seq_spec)
+        assert in_spec is not None, "Both trsfm and in_spec must be provided if either is provided"
     else:
-        assert input_provider is None and out_spec is None
+        assert in_spec is None and out_spec is None
 
     # Heuristic for the input size, asserts will catch if it's not enough
     base_in_size = (params.streaming_context_size + params.get_min_input_size_for_out_size(10)) * 3
@@ -104,7 +98,7 @@ def get_context_size_empirically(
         else:
             out_seq, out_nan_idx = run_nan_trick(
                 trsfm,
-                in_seq=input_provider(in_size),
+                in_seq=in_spec.new_randn_sequence(in_size),
                 in_nan_range=(0, params.stride_in),
                 out_spec=out_spec,
             )
