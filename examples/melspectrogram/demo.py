@@ -2,7 +2,7 @@ import logging
 
 import torchaudio
 
-from torchstream.sequence.seq_spec import SeqSpec
+from torchstream.sequence.sequence import SeqSpec
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 from torchstream.stream_equivalence import test_stream_equivalent
@@ -35,5 +35,5 @@ params = sols[0]
 test_stream_equivalent(
     transform,
     SlidingWindowStream(transform, params, in_spec, out_spec),
-    in_seq=in_spec.new_randn_arrays(500),
+    in_arrs=in_spec.new_randn_arrays(500),
 )

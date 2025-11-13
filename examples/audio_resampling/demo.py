@@ -6,7 +6,7 @@ import librosa.core
 import numpy as np
 
 from dev_tools.tracing import log_tracing_profile
-from torchstream.sequence.seq_spec import SeqSpec
+from torchstream.sequence.sequence import SeqSpec
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
 
 logger = logging.getLogger(__name__)

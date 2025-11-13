@@ -1,8 +1,8 @@
 from typing import Callable
 
 from torchstream.sequence.dtype import SeqArrayLike
-from torchstream.sequence.seq_spec import SeqSpec
-from torchstream.sequence.stream_buffer import StreamBuffer
+from torchstream.sequence.sequence import SeqSpec
+from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams, get_output_delay
 from torchstream.stream import NotEnoughInputError, Stream
 
@@ -38,13 +38,13 @@ class SlidingWindowStream(Stream):
         self._prev_trimmed_output = None
 
     # FIXME: signature
-    def _step(self, in_seq: StreamBuffer) -> SeqArrayLike:
+    def _step(self, in_seq: Sequence) -> SeqArrayLike:
         # Compute the actual output size we'll get from the transform
         (_, right_pad), num_wins, out_size = self.params.get_metrics_for_input(in_seq.size)
         sufficient_input = in_seq.size and out_size
 
         # See where the output should be trimmed
-        if in_seq.input_closed:
+        if self.input_closed:
             out_trim_end = out_size
         else:
             out_delay = get_output_delay(self.params, in_seq.size)
@@ -58,7 +58,7 @@ class SlidingWindowStream(Stream):
             raise NotEnoughInputError(f"Input sequence of size {in_seq.size} is not enough to produce any output.")
 
         # Forward the input
-        tsfm_out = StreamBuffer.apply(self.transform, in_seq, self.out_spec)
+        tsfm_out = Sequence.apply(self.transform, in_seq, self.out_spec)
         if tsfm_out.size != out_size:
             raise IncorrectSlidingWindowParametersError(
                 f"Sliding window parameters are not matching {self.transform}, got a {tsfm_out.size} sized "

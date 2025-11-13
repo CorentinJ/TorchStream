@@ -8,8 +8,8 @@ from colorama import Fore as colors
 from opentelemetry import trace
 
 from torchstream.exception_signature import DEFAULT_ZERO_SIZE_EXCEPTIONS, ExceptionWithSubstring
-from torchstream.sequence.seq_spec import SeqSpec
-from torchstream.sequence.stream_buffer import StreamBuffer
+from torchstream.sequence.sequence import SeqSpec
+from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.kernel_sparsity import KernelSparsitySampler
 from torchstream.sliding_window.nan_trick import get_nan_idx
 from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
@@ -75,7 +75,7 @@ class SlidingWindowParamsSolver:
     def __init__(
         self,
         trsfm: Callable,
-        input_provider: Callable[[int], StreamBuffer] | SeqSpec,
+        input_provider: Callable[[int], Sequence] | SeqSpec,
         out_spec: SeqSpec | None = None,
         init_seq_size: int = 30,
         max_in_seq_size: int = 10_000,
@@ -86,7 +86,7 @@ class SlidingWindowParamsSolver:
     ):
         if isinstance(input_provider, SeqSpec):
             in_spec = input_provider
-            input_provider = partial(StreamBuffer.randn, in_spec)
+            input_provider = partial(Sequence.randn, in_spec)
 
         self._trsfm = trsfm
         self.input_provider = input_provider
@@ -130,7 +130,7 @@ class SlidingWindowParamsSolver:
 
         # Get an input of said size and perform the nan trick on the actual transform
         in_seq = self.input_provider(in_seq_size)
-        if not isinstance(in_seq, StreamBuffer):
+        if not isinstance(in_seq, Sequence):
             raise TypeError(
                 f"The input_provider function {self.input_provider} returned a {type(in_seq)} "
                 f"when a Sequence was expected"
@@ -140,7 +140,7 @@ class SlidingWindowParamsSolver:
         if in_nan_range:
             in_seq[slice(*in_nan_range)] = float("nan")
 
-        out_seq = StreamBuffer.apply(
+        out_seq = Sequence.apply(
             self._trsfm, in_seq, self.out_spec, zero_size_exception_signatures=self.zero_size_exception_signatures
         )
 
@@ -447,7 +447,7 @@ class SlidingWindowParamsSolver:
 @torch.no_grad()
 def find_sliding_window_params(
     trsfm: Callable,
-    input_provider: Callable[[int], StreamBuffer] | SeqSpec,
+    input_provider: Callable[[int], Sequence] | SeqSpec,
     out_spec: SeqSpec | None = None,
     init_seq_size: int = 30,
     max_in_seq_size: int = 10_000,

@@ -1,7 +1,7 @@
 from typing import Optional, Tuple
 
-from torchstream.sequence.seq_spec import SeqSpec
-from torchstream.sequence.stream_buffer import StreamBuffer
+from torchstream.sequence.sequence import SeqSpec
+from torchstream.sequence.sequence import Sequence
 
 
 class Stream:
@@ -13,29 +13,28 @@ class Stream:
         self.in_spec = input_spec
         self.out_spec = output_spec or input_spec
 
+        self._input_closed = False
         self._output_closed = False
 
         self._in_buffs = self.in_spec.new_empty_buffers()
 
-    # FIXME: settle on the names for both these properties
     @property
     def input_closed(self) -> bool:
-        return all(in_buff.input_closed for in_buff in self._in_buffs)
+        return self._input_closed
 
     @property
     def output_closed(self) -> bool:
         return self._output_closed
 
     def close_input(self):
-        for in_buff in self._in_buffs:
-            in_buff.close_input()
+        self._input_closed = True
 
     def __call__(
         self,
-        *inputs: StreamBuffer,
+        *inputs: Sequence,
         is_last_input: bool = False,
         on_starve="raise",
-    ) -> StreamBuffer | Tuple[StreamBuffer]:
+    ) -> Sequence | Tuple[Sequence]:
         # TODO: asserts -> exceptions
         assert not self.input_closed
         assert len(inputs) == len(self._in_buffs)
@@ -46,12 +45,12 @@ class Stream:
         try:
             # TODO! validate this output with the spec
             outputs = self._step(*self._in_buffs)
-            outputs = StreamBuffer(self.out_spec, outputs)
+            outputs = Sequence(self.out_spec, outputs)
         except NotEnoughInputError:
             if on_starve == "raise":
                 raise
             elif on_starve == "empty":
-                outputs = StreamBuffer.empty(self.out_spec)
+                outputs = Sequence.empty(self.out_spec)
         except:
             raise
         finally:
@@ -61,7 +60,7 @@ class Stream:
         return outputs
 
     # TODO: settle on return seq vs arrays
-    def _step(self, *in_seqs: StreamBuffer) -> StreamBuffer | Tuple[StreamBuffer]:
+    def _step(self, *in_seqs: Sequence) -> Sequence | Tuple[Sequence]:
         """
         :raises NotEnoughInputsError: if the stream cannot perform a step because it does not have enough inputs. This
         is typically a low severity error that can be caught by the caller in order to wait for more inputs before

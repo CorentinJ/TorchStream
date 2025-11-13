@@ -1,16 +1,21 @@
-from typing import Sequence, Tuple, overload
+from typing import Callable, Iterable, Tuple, overload
+from typing import Sequence as _Sequence
 
 import numpy as np
 import torch
+from opentelemetry import trace
 
+from torchstream.exception_signature import DEFAULT_ZERO_SIZE_EXCEPTIONS, ExceptionWithSubstring, matches_any_exception
 from torchstream.sequence.array_interface import SeqArray, TensorInterface
 from torchstream.sequence.dtype import DeviceLike, SeqArrayLike, SeqDTypeLike
+from torchstream.sequence.sequence import Sequence
 from torchstream.sequence.sequential_array import (
     array_matches_shape_and_type,
     get_shape_and_array_interface,
     get_shape_for_seq_size,
 )
-from torchstream.sequence.stream_buffer import StreamBuffer
+
+tracer = trace.get_tracer(__name__)
 
 
 class SeqSpec:
@@ -18,7 +23,7 @@ class SeqSpec:
     def __init__(self, *shape: int, dtype: SeqDTypeLike = torch.float32, device: DeviceLike = "cpu") -> None: ...
     @overload
     def __init__(
-        self, shape: Sequence[int], dtype: SeqDTypeLike = torch.float32, device: DeviceLike = "cpu"
+        self, shape: _Sequence[int], dtype: SeqDTypeLike = torch.float32, device: DeviceLike = "cpu"
     ) -> None: ...
     @overload
     def __init__(self, array: SeqArrayLike, seq_dim: int = -1) -> None: ...
@@ -33,12 +38,33 @@ class SeqSpec:
         else:
             self.specs = [get_shape_and_array_interface(*specs, **kwargs)]
 
+    def __len__(self) -> int:
+        """
+        Returns the number of arrays in the specification.
+        """
+        return len(self.specs)
+
     @property
-    def seqdims(self) -> Tuple[int | None, ...]:
+    def seq_shapes(self) -> Tuple[Tuple[int, ...], ...]:
+        """
+        Returns the sequence shapes of the specification.
+        """
+        return tuple(shape for shape, _ in self.specs)
+
+    @property
+    def seq_dims(self) -> Tuple[int, ...]:
         """
         Returns the sequence dimensions of all arrays in the specification.
         """
         return tuple(next(i for i, dim in enumerate(shape) if dim < 0) for shape, _ in self.specs)
+
+    @property
+    def seq_scales(self) -> Tuple[int, ...]:
+        """
+        Returns the sequence scales of all arrays in the specification. The sequence scale is the absolute value
+        of the sequence dimension
+        """
+        return tuple(-shape[seq_dim] for shape, seq_dim in zip((shape for shape, _ in self.specs), self.seq_dims))
 
     def matches(self, *arrs: SeqArrayLike) -> Tuple[bool, str]:
         """
@@ -64,15 +90,68 @@ class SeqSpec:
             if not matches:
                 return False, f"array #{idx}: {reason}" if len(self.specs) > 1 else reason
 
+        # TODO: verify sizes match
+
         return True, ""
+
+    def apply(
+        self,
+        trsfm: Callable,
+        *in_arrs: SeqArrayLike | Sequence,
+        out_spec: "SeqSpec | None" = None,
+        to_buffers: bool = False,
+        zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
+    ) -> Tuple[SeqArrayLike, ...] | Tuple[Sequence, ...]:
+        """
+        Forwards the given input arrays through the given transform while:
+            - Using torch's inference_mode
+            - Checking that the input arrays match this specification, raising otherwise
+            - Checking that the output arrays match the given output specification (or this specification if none is
+            given), raising otherwise
+            - Catching zero-size exceptions raised by the transform to return empty arrays instead
+
+        :param trsfm: A transform that takes in arrays matching exactly this specification, and returning arrays
+        matching exactly the output specification.
+        :param in_arrs: Input arrays to forward through the transform. If Sequences are given, their data is
+        peeked at without being consumed.
+        :param out_spec: Specification that the output arrays must match. If None, it is assumed to be the same as
+        this specification.
+        :param to_buffers: If True, the output arrays are returned as Sequences
+        :param zero_size_exception_signatures: Signatures of exceptions that indicate that the transform could not
+        produce any output due to the input arrays being too small, leading to a zero-size output. You may pass
+        an empty iterable to disable this behavior. You can also add to the base set of exceptions
+        DEFAULT_ZERO_SIZE_EXCEPTIONS with your own exception signatures.
+        :return: Output arrays returned by the transform.
+        """
+        out_spec = out_spec or self
+
+        in_arrs = [arr.data if isinstance(arr, Sequence) else arr for arr in in_arrs]
+        matches, reason = self.matches(*in_arrs)
+        if not matches:
+            raise ValueError(f"Input arrays do not match the input specification: {reason}")
+
+        with torch.inference_mode():
+            try:
+                with tracer.start_as_current_span(trsfm.__name__ if hasattr(trsfm, "__name__") else "transform"):
+                    out_arrs = trsfm(*in_arrs)
+
+                if to_buffers:
+                    out = out_spec.new_buffers_from_data(*out_arrs)
+                else:
+                    out = out_arrs
+
+            except Exception as e:
+                if not matches_any_exception(e, zero_size_exception_signatures):
+                    raise e
+                out = out_spec.new_empty_buffers() if to_buffers else out_spec.new_empty_arrays()
+
+        return out
 
     def get_shapes_for_seq_size(self, seq_size: int) -> Tuple[Tuple[int, ...], ...]:
         """
         Returns the shapes of all arrays in the specification for a sequence of the given size. Each shape is returned
         with the sequence dimension replaced by the given sequence size. If the sequence dimension is a value other than
-        -1, the absolute value of that integer is used as a multiplier for the sequence size. If there is no sequence
-        dimension, the shape is returned as-is.
-
+        -1, the absolute value of that integer is used as a multiplier for the sequence size.
         Example
         --------
         >>> spec = SeqSpec((-1, 10, 15), (8, -2))
@@ -102,27 +181,37 @@ class SeqSpec:
         shapes = self.get_shapes_for_seq_size(seq_size)
         return tuple(arr_if.new_randn(*shape) for shape, (_, arr_if) in zip(shapes, self.specs))
 
-    def new_empty_buffers(self) -> Tuple[StreamBuffer | None, ...]:
+    def new_empty_buffers(self) -> Tuple[Sequence, ...]:
         """
-        Returns empty StreamBuffers with the given specification. Returns None where there is no sequence dimension.
+        Returns empty Sequences with the given specification.
         """
-        return tuple(StreamBuffer(*spec) for spec in self.specs)
+        return tuple(Sequence(*spec) for spec in self.specs)
 
-    def new_zero_buffers(self, seq_size: int) -> Tuple[StreamBuffer | SeqArray, ...]:
+    def new_zero_buffers(self, seq_size: int) -> Tuple[Sequence, ...]:
         """
-        Returns StreamBuffers of the given sequence size with the given specification, filled with zeros. Returns
-        fixed-size arrays where there is no sequence dimension.
+        Returns Sequences of the given sequence size with the given specification, filled with zeros.
         """
         arrays = self.new_zeros_arrays(seq_size)
-        return tuple(StreamBuffer(arr, seq_dim) for arr, seq_dim in zip(arrays, self.seqdims))
+        return tuple(Sequence(arr, seq_dim) for arr, seq_dim in zip(arrays, self.seq_dims))
 
-    def new_randn_buffers(self, seq_size: int) -> Tuple[StreamBuffer | SeqArray, ...]:
+    def new_randn_buffers(self, seq_size: int) -> Tuple[Sequence, ...]:
         """
-        Sample StreamBuffers of the given sequence size from a normal distribution (discretized for integer types).
-        Returns fixed-size arrays where there is no sequence dimension.
+        Sample Sequences of the given sequence size from a normal distribution (discretized for integer types).
         """
         arrays = self.new_randn_arrays(seq_size)
-        return tuple(StreamBuffer(arr, seq_dim) for arr, seq_dim in zip(arrays, self.seqdims))
+        return tuple(Sequence(arr, seq_dim) for arr, seq_dim in zip(arrays, self.seq_dims))
+
+    def new_buffers_from_data(self, *arrs: SeqArrayLike | Sequence) -> Tuple[Sequence, ...]:
+        """
+        Verfies that the given arrays match this specification, and returns them as Sequences.
+        Raises if they do not match.
+        If inputs are provided as Sequences, their data is peeked at without being consumed.
+        """
+        arrs = [arr.data if isinstance(arr, Sequence) else arr for arr in arrs]
+        matches, reason = self.matches(*arrs)
+        if not matches:
+            raise ValueError(f"Arrays do not match the specification: {reason}")
+        return tuple(Sequence(arr, seq_dim) for arr, seq_dim in zip(arrs, self.seq_dims))
 
     def __repr__(self) -> str:
         out = ""

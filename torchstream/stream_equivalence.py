@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from torchstream.sequence.dtype import SeqArrayLike
-from torchstream.sequence.stream_buffer import StreamBuffer
+from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.nan_trick import get_nan_idx
 from torchstream.stream import Stream
 
@@ -17,7 +17,8 @@ def test_stream_equivalent(
     sync_fn: Callable,
     stream: Stream,
     # TODO: offer comparison to an output array instead, to avoid recomputing for multiple streams
-    in_seq: StreamBuffer | SeqArrayLike | None = None,
+    # TODO: overloads with input sequence size
+    in_arrs: Tuple[Sequence | SeqArrayLike, ...] | None = None,
     in_step_sizes: Tuple[int, ...] = (7, 4, 12, 1, 17, 9),
     atol: float = 1e-5,
     throughput_check_max_delay: int | None = None,
@@ -31,21 +32,20 @@ def test_stream_equivalent(
 
     :param throughput_check_max_delay: TODO: doc
     """
-    if in_seq is None:
-        in_seq = StreamBuffer.randn(stream.in_spec, seq_size=sum(in_step_sizes))
-    elif isinstance(in_seq, StreamBuffer):
-        in_seq = in_seq.copy()
+    # Get the input
+    if in_arrs is None:
+        in_buffs = stream.in_spec.new_randn_buffers(sum(in_step_sizes))
     else:
-        in_seq = StreamBuffer(stream.in_spec, in_seq, close_input=True)
+        in_buffs = stream.in_spec.new_buffers_from_data(*in_arrs)
 
     # Get the sync output
-    out_seq_ref = StreamBuffer.apply(sync_fn, in_seq, stream.out_spec)
-    if out_seq_ref.size == 0:
-        raise ValueError(f"Input size of {in_seq.size} is too small for the transform to produce any output")
+    out_ref_buffs = stream.in_spec.apply(sync_fn, *in_buffs, out_spec=stream.out_spec, to_buffers=True)
+    if any(size == 0 for size in out_ref_buffs.size):
+        raise ValueError("Input size is too small for the transform to produce any output")
 
     # FIXME: this is a trivial hack that assumes that the input size is at least the kernel size, ideally we'd only
     # add the kernel size - 1 NaNs to the input.
-    in_nan_trick_seq = StreamBuffer(in_seq, in_seq, close_input=True)
+    in_nan_trick_seq = Sequence(in_seq, in_seq)
 
     step_size_iter = iter(itertools.cycle(in_step_sizes))
     i = 0
@@ -56,12 +56,12 @@ def test_stream_equivalent(
         # FIXME: this is a seq
         out_seq_stream_i = stream(in_stream_i, is_last_input=not in_seq.size, on_starve="empty")
 
-        out_sync_i = out_seq_ref.read(out_seq_stream_i.size)
-        total_stream_out = out_seq_ref.n_consumed
+        out_sync_i = out_ref_buffs.read(out_seq_stream_i.size)
+        total_stream_out = out_ref_buffs.n_consumed
 
         # Ensure the outputs are close
-        if out_sync_i.shape != out_seq_stream_i.shape:
-            raise ValueError(f"Shape mismatch on step {i} (got {out_seq_stream_i.shape}, expected {out_sync_i.shape})")
+        if out_sync_i.shape != out_seq_stream_i.shapes:
+            raise ValueError(f"Shape mismatch on step {i} (got {out_seq_stream_i.shapes}, expected {out_sync_i.shape})")
         if out_seq_stream_i.size:
             max_error = np.abs(out_sync_i - out_seq_stream_i.data).max()
             if max_error > atol or np.isnan(max_error):
@@ -74,7 +74,7 @@ def test_stream_equivalent(
         if throughput_check_max_delay is not None and not stream.output_closed:
             in_nan_trick_seq_i = in_nan_trick_seq.copy()
             in_nan_trick_seq_i[in_seq.n_consumed :] = float("nan")
-            out_nan_trick_seq_i = StreamBuffer.apply(sync_fn, in_nan_trick_seq_i, stream.out_spec)
+            out_nan_trick_seq_i = Sequence.apply(sync_fn, in_nan_trick_seq_i, stream.out_spec)
             out_nan_idx = get_nan_idx(out_nan_trick_seq_i)
 
             # FIXME: handle
@@ -91,5 +91,5 @@ def test_stream_equivalent(
 
         i += 1
 
-    if not out_seq_ref.output_closed:
-        raise ValueError(f"Stream output is too short, {out_seq_ref.size} more outputs were expected")
+    if not out_ref_buffs.output_closed:
+        raise ValueError(f"Stream output is too short, {out_ref_buffs.size} more outputs were expected")

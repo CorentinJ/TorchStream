@@ -3,7 +3,7 @@ import logging
 import torch
 
 from examples.bigvgan.bigvgan import load_uninit_bigvgan
-from torchstream.sequence.seq_spec import SeqSpec
+from torchstream.sequence.sequence import SeqSpec
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
 

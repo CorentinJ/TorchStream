@@ -11,7 +11,7 @@ from tests.sliding_window_params_cases import (
     MOVING_AVERAGE_PARAMS,
     TRANSPOSED_CONV_1D_PARAMS,
 )
-from torchstream.sequence.seq_spec import SeqSpec
+from torchstream.sequence.sequence import SeqSpec
 from torchstream.sliding_window.dummy_sliding_window_transform import DummySlidingWindowTransform
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
