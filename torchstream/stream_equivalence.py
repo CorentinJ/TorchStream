@@ -18,7 +18,7 @@ def test_stream_equivalent(
     stream: Stream,
     # TODO: offer comparison to an output array instead, to avoid recomputing for multiple streams
     # TODO: overloads with input sequence size
-    in_arrs: Tuple[Sequence | SeqArrayLike, ...] | None = None,
+    in_data: Tuple[SeqArrayLike, ...] | Sequence | None = None,
     in_step_sizes: Tuple[int, ...] = (7, 4, 12, 1, 17, 9),
     atol: float = 1e-5,
     throughput_check_max_delay: int | None = None,
@@ -33,63 +33,66 @@ def test_stream_equivalent(
     :param throughput_check_max_delay: TODO: doc
     """
     # Get the input
-    if in_arrs is None:
-        in_buffs = stream.in_spec.new_randn_buffers(sum(in_step_sizes))
+    if in_data is None:
+        in_seq = stream.in_spec.new_randn_sequence(sum(in_step_sizes))
+    elif isinstance(in_data, Sequence):
+        in_seq = in_data
     else:
-        in_buffs = stream.in_spec.new_buffers_from_data(*in_arrs)
+        in_seq = stream.in_spec.new_sequence_from_data(*in_data)
 
     # Get the sync output
-    out_ref_buffs = stream.in_spec.apply(sync_fn, *in_buffs, out_spec=stream.out_spec, to_buffers=True)
-    if any(size == 0 for size in out_ref_buffs.size):
+    out_ref_seq = in_seq.apply(sync_fn, stream.out_spec)
+    if out_ref_seq.size == 0:
         raise ValueError("Input size is too small for the transform to produce any output")
 
     # FIXME: this is a trivial hack that assumes that the input size is at least the kernel size, ideally we'd only
     # add the kernel size - 1 NaNs to the input.
-    in_nan_trick_seq = Sequence(in_seq, in_seq)
+    in_nan_trick_seq = in_seq.copy()
+    in_nan_trick_seq.feed(in_seq)
 
     step_size_iter = iter(itertools.cycle(in_step_sizes))
     i = 0
     while not stream.output_closed:
+        # Read the next input chunk
         step_size = next(step_size_iter)
         in_stream_i = in_seq.read(step_size)
 
-        # FIXME: this is a seq
+        # Forward through the stream to get an output chunk
         out_seq_stream_i = stream(in_stream_i, is_last_input=not in_seq.size, on_starve="empty")
 
-        out_sync_i = out_ref_buffs.read(out_seq_stream_i.size)
-        total_stream_out = out_ref_buffs.n_consumed
+        # Read the corresponding output chunk from the sync output
+        out_sync_i = out_ref_seq.read(out_seq_stream_i.size)
 
-        # Ensure the outputs are close
-        if out_sync_i.shape != out_seq_stream_i.shapes:
-            raise ValueError(f"Shape mismatch on step {i} (got {out_seq_stream_i.shapes}, expected {out_sync_i.shape})")
+        # Compare the stream to the sync output chunk
         if out_seq_stream_i.size:
-            max_error = np.abs(out_sync_i - out_seq_stream_i.data).max()
-            if max_error > atol or np.isnan(max_error):
-                raise ValueError(
-                    f"Error too large on step {i} (got {max_error}, expected <= {atol})\n"
-                    f"Sync: {out_sync_i}\nStream: {out_seq_stream_i.data}"
-                )
+            for sync_arr, stream_arr in zip(out_sync_i.data, out_seq_stream_i.data):
+                max_error = np.abs(sync_arr - stream_arr).max()
+                if max_error > atol or np.isnan(max_error):
+                    raise ValueError(
+                        f"Error too large on step {i} (got {max_error}, expected <= {atol})\n"
+                        f"Sync: {sync_arr}\nStream: {stream_arr}"
+                    )
 
         # Check throughput with the NaN trick
         if throughput_check_max_delay is not None and not stream.output_closed:
             in_nan_trick_seq_i = in_nan_trick_seq.copy()
-            in_nan_trick_seq_i[in_seq.n_consumed :] = float("nan")
-            out_nan_trick_seq_i = Sequence.apply(sync_fn, in_nan_trick_seq_i, stream.out_spec)
+            in_nan_trick_seq_i[stream.total_in_fed :] = float("nan")
+            out_nan_trick_seq_i = in_nan_trick_seq_i.apply(sync_fn, stream.out_spec)
             out_nan_idx = get_nan_idx(out_nan_trick_seq_i)
 
             # FIXME: handle
             if not len(out_nan_idx):
                 raise ValueError("Transform did not output any NaN")
-            if out_nan_idx[0] < total_stream_out:
+            if out_nan_idx[0] < stream.total_out_produced:
                 raise RuntimeError("Internal error: stream has output more than sync")
-            if total_stream_out < out_nan_idx[0] - throughput_check_max_delay:
+            if stream.total_out_produced < out_nan_idx[0] - throughput_check_max_delay:
                 raise ValueError(
                     f"The stream has output less than what's possible to output based on the NaN trick. "
-                    f"Expected {out_nan_idx[0]} outputs total at step {i}, got {total_stream_out} (max delay is "
-                    f"{throughput_check_max_delay})"
+                    f"Expected {out_nan_idx[0]} outputs total at step {i}, got {stream.total_out_produced} (max delay "
+                    f"is {throughput_check_max_delay})"
                 )
 
         i += 1
 
-    if not out_ref_buffs.output_closed:
-        raise ValueError(f"Stream output is too short, {out_ref_buffs.size} more outputs were expected")
+    if not out_ref_seq.output_closed:
+        raise ValueError(f"Stream output is too short, {out_ref_seq.size} more outputs were expected")

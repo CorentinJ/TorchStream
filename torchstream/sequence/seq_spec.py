@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import TYPE_CHECKING, Callable, Iterable, Tuple, overload
 from typing import Sequence as _Sequence
 

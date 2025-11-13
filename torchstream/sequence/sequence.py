@@ -149,17 +149,17 @@ class Sequence:
         return self._buffs
 
     @overload
-    def __getitem__(self, idx: int) -> Tuple[SeqArrayLike, ...]: ...
+    def __getitem__(self, idx: int) -> "Sequence": ...
     @overload
-    def __getitem__(self, sli: slice) -> Tuple[SeqArrayLike, ...]: ...
-    def __getitem__(self, sli: int | slice) -> Tuple[SeqArrayLike, ...]:
+    def __getitem__(self, sli: slice) -> "Sequence": ...
+    def __getitem__(self, sli: int | slice) -> "Sequence":
         """
         TODO: doc
         Reads a sequence of size up to n from the start of buffer without consuming it. If the buffer does not have
-        enough elements, the entire buffers are returned.
+        enough elements, the entire sequence is returned.
 
         :param n: Number of elements to peek at. If None, peeks at the entire buffers.
-        :return: The first n elements of the buffers as a tuple of arrays
+        :return: A sequence with the n first elements of the buffers.
         """
         if not isinstance(sli, slice):
             sli = slice(sli, sli + 1)
@@ -168,9 +168,9 @@ class Sequence:
             f"Trying to read {sli.stop - sli.start} elements from {self._name}, n must be positive"
         )
 
-        # If we're reading the entire buffer, just return it
+        # If we're reading the entire buffer, just return self
         if sli.stop - sli.start >= self.size:
-            return self.data
+            return self
 
         # Slice the buffer to make a copy of the elements, so as not to hold a view containing the ones we don't need
         out = []
@@ -182,7 +182,7 @@ class Sequence:
             sliced_array = arr_if.get_along_dim(buff, scaled_sli, seq_dim)
             # TODO: settle on copying or not
             out.append(arr_if.copy(sliced_array))
-        return tuple(out)
+        return self.spec.new_sequence_from_data(*out)
 
     @overload
     def __setitem__(self, idx: int, value: SeqArrayLike) -> None: ...
@@ -204,11 +204,17 @@ class Sequence:
             )
             arr_if.set_along_dim(buff, scaled_sli, seq_dim, value)
 
-    def feed(self, *x: SeqArrayLike | "Sequence"):
+    @overload
+    def feed(self, *x: SeqArrayLike) -> None: ...
+    @overload
+    def feed(self, x: "Sequence") -> None: ...
+    def feed(self, *x):
         """
         TODO
         """
-        x = [arr.data if isinstance(arr, Sequence) else arr for arr in x]
+        if len(x) == 1 and isinstance(x[0], Sequence):
+            x = x[0].data
+
         matches, reason = self.spec.matches(*x)
         if not matches:
             raise ValueError(f"Cannot feed arrays to Sequence: {reason}")
@@ -245,8 +251,7 @@ class Sequence:
 
         # Slice the buffer to make a copy of the remaining elements, so as not to hold a view containing the
         # dropped ones
-        # TODO: copy
-        self._buffs = tuple(arr_if.copy(arr) for arr, arr_if in zip(self[n:], self._arr_ifs))
+        self._buffs = self[n:]._buffs
 
         return n
 
@@ -256,7 +261,7 @@ class Sequence:
         """
         return self.drop(max(self.size - n, 0))
 
-    def read(self, n: Optional[int] = None) -> Tuple[SeqArrayLike, ...]:
+    def read(self, n: Optional[int] = None) -> "Sequence":
         """
         Reads a sequence of size up to n from the start of buffer while dropping it from the buffer. If the
         buffer does not have enough elements, the entire buffer is returned.
