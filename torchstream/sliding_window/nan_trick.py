@@ -21,18 +21,32 @@ def get_nan_idx(x: Sequence) -> np.ndarray:
     if not x.size:
         return np.empty(0, dtype=np.int64)
 
+    common_nan_mask = None
     for arr, seqdim, scale in zip(x.data, x.seq_dims, x.seq_scales):
         if torch.is_tensor(arr):
             arr = arr.detach().cpu().numpy()
 
+        # Get a boolean array of where the nans are
         arr_is_nan = np.isnan(arr)
-        
 
-    # TODO: is_nan -> any reduction instead
-    # Use flatnonzero maybe?
-    x = x.mean(axis=tuple(i for i in range(x.ndim) if i != axis))
+        # Reduce along all non-sequence dimensions with an OR
+        nan_mask = np.any(arr_is_nan, axis=tuple(i for i in range(arr.ndim) if i != seqdim))
 
-    return np.where(np.isnan(x))[0]
+        # If the sequence scale is not 1, we need to check for any gaps before scaling down
+        if scale > 1:
+            nan_mask = nan_mask.reshape(-1, scale)
+            consistent = np.all(nan_mask, axis=1) | np.all(~nan_mask, axis=1)
+            if not np.all(consistent):
+                raise ValueError(f"Inconsistent NaN indices for array with scale {scale}: {nan_mask}")
+            nan_mask = np.all(nan_mask, axis=1)
+
+        if common_nan_mask is None:
+            common_nan_mask = nan_mask
+        else:
+            if not np.array_equal(common_nan_mask, nan_mask):
+                raise ValueError(f"Inconsistent NaN indices between arrays: {common_nan_mask} vs {nan_mask}")
+
+    return np.where(common_nan_mask)[0]
 
 
 def run_nan_trick(

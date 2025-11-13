@@ -99,7 +99,7 @@ class Sequence:
         """
         if self._buffs is None:
             return self.spec.get_shapes_for_seq_size(0)
-        return tuple(arr_if.shape(buff) for buff, arr_if in zip(self._buffs, self._arr_ifs))
+        return tuple(arr_if.get_shape(buff) for buff, arr_if in zip(self._buffs, self._arr_ifs))
 
     @property
     def seq_shapes(self) -> Tuple[Tuple[int, ...], ...]:
@@ -145,7 +145,7 @@ class Sequence:
         """
         Number of dimensions, i.e. len(self.shape)
         """
-        return len(self._seq_shape)
+        return len(self.spec)
 
     @property
     def data(self) -> Tuple[SeqArrayLike, ...]:
@@ -178,7 +178,7 @@ class Sequence:
 
         # If we're reading the entire buffer, just return self
         if sli.stop - sli.start >= self.size:
-            return self
+            return self.copy()
 
         # Slice the buffer to make a copy of the elements, so as not to hold a view containing the ones we don't need
         out = []
@@ -188,7 +188,6 @@ class Sequence:
                 sli.stop * scale if sli.stop is not None else None,
             )
             sliced_array = arr_if.get_along_dim(buff, scaled_sli, seq_dim)
-            # TODO: settle on copying or not
             out.append(arr_if.copy(sliced_array))
         return self.spec.new_sequence_from_data(*out)
 

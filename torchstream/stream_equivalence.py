@@ -25,7 +25,7 @@ def test_stream_equivalent(
 ):
     """
     Tests if a stream implementation gives outputs close or equivalent to its synchronous counterpart.
- 
+
     Both the stream and the sync function must take the same arguments, and return the same number of outputs.
     Outputs must be sequential data of the same shape.
     TODO: better doc
@@ -94,5 +94,5 @@ def test_stream_equivalent(
 
         i += 1
 
-    if not out_ref_seq.output_closed:
+    if out_ref_seq.size:
         raise ValueError(f"Stream output is too short, {out_ref_seq.size} more outputs were expected")
