@@ -6,7 +6,6 @@ import torch
 from torchstream.patching.call_intercept import intercept_calls
 from torchstream.sequence.sequence import SeqSpec
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
-from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 
 # Setup logging to see the solver's message
@@ -30,11 +29,12 @@ text = """
 """
 
 # Normal, non-streaming inference
-# import soundfile as sf
+import soundfile as sf
+
 with intercept_calls("kokoro.istftnet.Decoder.forward", store_in_out=True) as interceptor:
     *_, audio = next(pipeline(text, voice="af_heart"))
     (decoder, ref_asr, ref_f0_curve, ref_n, ref_s), _, ref_audio = interceptor.call_in_outs[0]
-# sf.write("demo_audio.wav", audio, 24000)
+sf.write("demo_audio.wav", audio, 24000)
 
 
 decoder_in_spec = SeqSpec(
@@ -44,7 +44,7 @@ decoder_in_spec = SeqSpec(
     (1, -2, device),
     # n (same as above)
     (1, -2, device),
-    # s is a fixed input, it does not fit as sequential data
+    # s is a fixed input of size (1, 128), it does not fit as sequential data
 )
 # Audio is 1-dimensional, but is output with the batch & channel dimensions
 audio_out_spec = SeqSpec(1, 1, -1, device=device)
@@ -52,12 +52,11 @@ audio_out_spec = SeqSpec(1, 1, -1, device=device)
 decoder_trsfm = partial(pipeline.model.decoder.forward, s=ref_s)
 
 
-def cumsum_patch_with_nan_passthrough(*args, original_fn, **kwargs):
-    x = args[0]
+def cumsum_patch_with_nan_passthrough(x, dim, original_fn):
     nan_mask = torch.isnan(x)
 
     x[nan_mask] = 0.0
-    x = original_fn(*args, **kwargs)
+    x = original_fn(x, dim=dim)
 
     x[nan_mask] = float("nan")
 
@@ -65,28 +64,38 @@ def cumsum_patch_with_nan_passthrough(*args, original_fn, **kwargs):
 
 
 def instancenorm_patch_noop(*args, original_fn, **kwargs):
-    # return original_fn(*args, **kwargs)
-    return args[0]
+    return original_fn(*args, **kwargs)
+    # return args[0]
 
 
 with intercept_calls("torch.nn.functional.instance_norm", instancenorm_patch_noop, pass_original_fn=True):
-    with intercept_calls("torch.cumsum", cumsum_patch_with_nan_passthrough, pass_original_fn=True):
-        sli_params = find_sliding_window_params(decoder_trsfm, decoder_in_spec, audio_out_spec)[0]
+    with intercept_calls(
+        "torch.cumsum", cumsum_patch_with_nan_passthrough, pass_original_fn=True, store_in_out=True
+    ) as cumsum_interceptor:
+        *_, audio = next(pipeline(text, voice="af_heart"))
 
-        sli_params = SlidingWindowParams(
-            kernel_size_in=28,
-            stride_in=1,
-            left_pad=14,
-            right_pad=14,
-            kernel_size_out=675,
-            stride_out=600,
-            left_out_trim=185,
-            right_out_trim=490,
-        )
+        # sf.write("demo_audio_patched.wav", audio, 24000)
+        # quit()
 
-        stream = SlidingWindowStream(decoder_trsfm, sli_params, decoder_in_spec, audio_out_spec)
+        # sli_params = find_sliding_window_params(decoder_trsfm, decoder_in_spec, audio_out_spec)[0]
 
-        in_buff = decoder_in_spec.new_sequence_from_data(ref_asr, ref_f0_curve, ref_n)
-        while in_buff.size:
-            out = stream(in_buff.read(100))
-            print(out.size)
+sli_params = SlidingWindowParams(
+    kernel_size_in=28,
+    stride_in=1,
+    left_pad=14,
+    right_pad=14,
+    kernel_size_out=675,
+    stride_out=600,
+    left_out_trim=185,
+    right_out_trim=490,
+)
+
+stream = SlidingWindowStream(decoder_trsfm, sli_params, decoder_in_spec, audio_out_spec)
+
+in_buff = decoder_in_spec.new_sequence_from_data(ref_asr, ref_f0_curve, ref_n)
+out_buff = audio_out_spec.new_empty_sequence()
+while in_buff.size:
+    out_buff.feed(stream(in_buff.read(100)))
+
+audio = out_buff.data[0]
+sf.write("demo_audio_streamed.wav", audio[0, 0], 24000)

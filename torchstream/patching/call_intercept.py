@@ -1,5 +1,4 @@
 import importlib
-from copy import deepcopy
 from typing import Callable
 
 from torchstream.patching.call_identification import (
@@ -130,3 +129,28 @@ class intercept_calls:
         setattr(self._target_owner, self._target_attr_name, self._original_fn)
 
         return False
+
+
+# TODO: offer to return on the exit of the the target function, rather than on the start
+def early_exit(fn: Callable, exit_on_target: str, out_proc_fn: Callable | None = None) -> Callable:
+    class DummyException(Exception):
+        pass
+
+    def raiser(*args, **kwargs):
+        raise DummyException((args, kwargs))
+
+    def wrapped_fn_with_early_exit(*args, **kwargs):
+        with intercept_calls(exit_on_target, raiser):
+            try:
+                fn(*args, **kwargs)
+                raise RuntimeError(
+                    f"Function {fn} was succesfully called but did not trigger {exit_on_target}, "
+                    "ensure the target name is set correctly."
+                )
+            except DummyException as e:
+                ret_args, ret_kwargs = e.args[0]
+                if out_proc_fn is not None:
+                    return out_proc_fn(*ret_args, **ret_kwargs)
+                return ret_args, ret_kwargs
+
+    return wrapped_fn_with_early_exit
