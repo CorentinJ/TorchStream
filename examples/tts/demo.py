@@ -1,11 +1,12 @@
 import logging
+from functools import partial
 
 import torch
 
 from torchstream.patching.call_intercept import intercept_calls
 from torchstream.sequence.sequence import SeqSpec
-from torchstream.sequence.sequence import Sequence
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 
 # Setup logging to see the solver's message
@@ -34,16 +35,21 @@ with intercept_calls("kokoro.istftnet.Decoder.forward", store_in_out=True) as in
     *_, audio = next(pipeline(text, voice="af_heart"))
     (decoder, ref_asr, ref_f0_curve, ref_n, ref_s), _, ref_audio = interceptor.call_in_outs[0]
 # sf.write("demo_audio.wav", audio, 24000)
-# quit()
 
 
-def trsfm(t: torch.Tensor):
-    asr = t.expand((-1, 512, -1))
-    F0_curve = t.repeat_interleave(2, dim=-1)[0]
-    N = F0_curve
-    s = t.new_zeros(1, 128)
+decoder_in_spec = SeqSpec(
+    # asr
+    (1, 512, -1, device),
+    # f0_curve (twice the time resolution of asr -> we put -2 to scale accordingly)
+    (1, -2, device),
+    # n (same as above)
+    (1, -2, device),
+    # s is a fixed input, it does not fit as sequential data
+)
+# Audio is 1-dimensional, but is output with the batch & channel dimensions
+audio_out_spec = SeqSpec(1, 1, -1, device=device)
 
-    return pipeline.model.decoder.forward(asr, F0_curve, N, s)
+decoder_trsfm = partial(pipeline.model.decoder.forward, s=ref_s)
 
 
 def cumsum_patch_with_nan_passthrough(*args, original_fn, **kwargs):
@@ -65,12 +71,7 @@ def instancenorm_patch_noop(*args, original_fn, **kwargs):
 
 with intercept_calls("torch.nn.functional.instance_norm", instancenorm_patch_noop, pass_original_fn=True):
     with intercept_calls("torch.cumsum", cumsum_patch_with_nan_passthrough, pass_original_fn=True):
-        sli_params = find_sliding_window_params(
-            trsfm,
-            SeqSpec(1, 1, -1, device=device),  # Decoder in
-            SeqSpec(1, 1, -1, device=device),  # Audio
-        )[0]
-        print(sli_params)
+        sli_params = find_sliding_window_params(decoder_trsfm, decoder_in_spec, audio_out_spec)[0]
 
         sli_params = SlidingWindowParams(
             kernel_size_in=28,
@@ -83,39 +84,9 @@ with intercept_calls("torch.nn.functional.instance_norm", instancenorm_patch_noo
             right_out_trim=490,
         )
 
-        # ref_asr, ref_f0_curve, ref_n, ref_s
-        asr_in_buff = Sequence(2, ref_asr)
-        f0_curve_in_buff = Sequence(1, ref_f0_curve)
-        n_in_buff = Sequence(1, ref_n)
+        stream = SlidingWindowStream(decoder_trsfm, sli_params, decoder_in_spec, audio_out_spec)
 
-        def trsfm(asr: torch.Tensor):
-            return pipeline.model.decoder.forward(
-                asr,
-                f0_curve_in_buff.read(asr.shape[-1] * 2),
-                n_in_buff.read(asr.shape[-1] * 2),
-                ref_s,
-            )
-
-        stream = SlidingWindowStream(
-            trsfm,
-            sli_params,
-            SeqSpec(1, 512, -1, device=device),
-            SeqSpec(1, 1, -1, device=device),
-        )
-
-        while asr_in_buff.size:
-            out = stream(asr_in_buff.read(100))
+        in_buff = decoder_in_spec.new_sequence_from_data(ref_asr, ref_f0_curve, ref_n)
+        while in_buff.size:
+            out = stream(in_buff.read(100))
             print(out.size)
-
-
-in_spec = SeqSpec(
-    (1, 512, -1),
-    (1, 1, -1),
-)
-out_spec = SeqSpec(1, 1, -1)
-in_buff = in_spec.new_from_data(ref_asr, ref_f0_curve, ref_n, ref_s)
-out_buff = out_spec.new_empty_arrays()
-
-while asr_in_buff.size:
-    out = stream(asr_in_buff.read(100))
-    print(out.size)

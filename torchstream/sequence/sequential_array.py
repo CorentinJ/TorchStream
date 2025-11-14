@@ -130,7 +130,7 @@ def get_shape_for_seq_size(shape: Tuple[int, ...], seq_size: int) -> Tuple[int, 
     -1, the absolute value of that integer is used as a multiplier for the sequence size. If there is no sequence
     dimension, the shape is returned as-is.
     """
-    seq_dim = next(i for i, dim_size in enumerate(shape) if dim_size == -1)
+    seq_dim = next(i for i, dim_size in enumerate(shape) if dim_size < 0)
     shape = list(shape)
     shape[seq_dim] = seq_size * (-shape[seq_dim])
     return tuple(shape)
