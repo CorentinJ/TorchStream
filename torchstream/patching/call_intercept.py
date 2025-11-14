@@ -132,22 +132,26 @@ class intercept_calls:
 
 
 # TODO: offer to return on the exit of the the target function, rather than on the start
-def early_exit(fn: Callable, exit_on_target: str, out_proc_fn: Callable | None = None) -> Callable:
-    class DummyException(Exception):
+def early_exit(fn: Callable, target_to_exit_on: str, out_proc_fn: Callable | None = None) -> Callable:
+    """
+    TODO: doc
+    """
+
+    class EarlyExit(BaseException):
         pass
 
     def raiser(*args, **kwargs):
-        raise DummyException((args, kwargs))
+        raise EarlyExit((args, kwargs))
 
     def wrapped_fn_with_early_exit(*args, **kwargs):
-        with intercept_calls(exit_on_target, raiser):
+        with intercept_calls(target_to_exit_on, raiser):
             try:
                 fn(*args, **kwargs)
                 raise RuntimeError(
-                    f"Function {fn} was succesfully called but did not trigger {exit_on_target}, "
+                    f"Function {fn} was succesfully called but did not trigger {target_to_exit_on}, "
                     "ensure the target name is set correctly."
                 )
-            except DummyException as e:
+            except EarlyExit as e:
                 ret_args, ret_kwargs = e.args[0]
                 if out_proc_fn is not None:
                     return out_proc_fn(*ret_args, **ret_kwargs)

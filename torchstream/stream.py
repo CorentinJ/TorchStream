@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, overload
+from typing import Iterator, Optional, Tuple, overload
 
 from torchstream.sequence.dtype import SeqArrayLike
 from torchstream.sequence.sequence import SeqSpec, Sequence
@@ -83,6 +83,42 @@ class Stream:
         stepping again...
         """
         raise NotImplementedError()
+
+    # TODO: offer options to specify variable chunk sizes
+    @overload
+    def forward_chunks_iter(self, input: Sequence, chunk_size: int) -> Iterator[Sequence]: ...
+    @overload
+    def forward_chunks_iter(self, *in_arrs: SeqArrayLike, chunk_size: int) -> Iterator[Sequence]: ...
+    def forward_chunks_iter(self, *inputs, chunk_size: int) -> Iterator[Sequence]:
+        """
+        Convenience method to forward an input sequence in chunks of fixed size through the stream. The stream will
+        be closed on the last step automatically. If the input is provided as a Sequence, its data will be consumed
+        at each step.
+        """
+        if isinstance(inputs[0], Sequence):
+            ext_in_buff = inputs[0]
+        else:
+            ext_in_buff = self.in_spec.new_sequence_from_data(*inputs)
+
+        while ext_in_buff.size:
+            yield self(ext_in_buff.read(chunk_size), is_last_input=not ext_in_buff.size)
+
+    # TODO: offer options to specify variable chunk sizes
+    @overload
+    def forward_all_chunks(self, input: Sequence, chunk_size: int) -> Sequence: ...
+    @overload
+    def forward_all_chunks(self, *in_arrs: SeqArrayLike, chunk_size: int) -> Sequence: ...
+    def forward_all_chunks(self, *inputs, chunk_size: int) -> Sequence:
+        """
+        Convenience method to forward an input sequence in chunks of fixed size through the stream and return the
+        full output sequence. This is typically used for testing a stream, given that it defeats the purpose of
+        streaming. The stream will be closed on the last step automatically. If the input is provided as a Sequence,
+        its data will be consumed at each step.
+        """
+        out_buff = self.out_spec.new_empty_sequence()
+        for out_chunk in self.forward_chunks_iter(*inputs, chunk_size=chunk_size):
+            out_buff.feed(out_chunk)
+        return out_buff
 
 
 class NotEnoughInputError(Exception):

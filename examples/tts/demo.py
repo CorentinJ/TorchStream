@@ -79,23 +79,17 @@ with intercept_calls("torch.nn.functional.instance_norm", instancenorm_patch_noo
 
         # sli_params = find_sliding_window_params(decoder_trsfm, decoder_in_spec, audio_out_spec)[0]
 
-sli_params = SlidingWindowParams(
-    kernel_size_in=28,
-    stride_in=1,
-    left_pad=14,
-    right_pad=14,
-    kernel_size_out=675,
-    stride_out=600,
-    left_out_trim=185,
-    right_out_trim=490,
-)
+        sli_params = SlidingWindowParams(
+            kernel_size_in=28,
+            stride_in=1,
+            left_pad=14,
+            right_pad=14,
+            kernel_size_out=675,
+            stride_out=600,
+            left_out_trim=185,
+            right_out_trim=490,
+        )
 
-stream = SlidingWindowStream(decoder_trsfm, sli_params, decoder_in_spec, audio_out_spec)
-
-in_buff = decoder_in_spec.new_sequence_from_data(ref_asr, ref_f0_curve, ref_n)
-out_buff = audio_out_spec.new_empty_sequence()
-while in_buff.size:
-    out_buff.feed(stream(in_buff.read(100)))
-
-audio = out_buff.data[0]
-sf.write("demo_audio_streamed.wav", audio[0, 0], 24000)
+        stream = SlidingWindowStream(decoder_trsfm, sli_params, decoder_in_spec, audio_out_spec)
+        audio = stream.forward_all_chunks(ref_asr, ref_f0_curve, ref_n, chunk_size=100).data[0]
+        sf.write("demo_audio_streamed.wav", audio[0, 0], 24000)
