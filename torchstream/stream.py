@@ -92,11 +92,10 @@ class Stream:
     def forward_chunks_iter(self, *inputs, chunk_size: int) -> Iterator[Sequence]:
         """
         Convenience method to forward an input sequence in chunks of fixed size through the stream. The stream will
-        be closed on the last step automatically. If the input is provided as a Sequence, its data will be consumed
-        at each step.
+        be closed on the last step automatically. If the input is provided as a Sequence, its data will not be consumed.
         """
         if isinstance(inputs[0], Sequence):
-            ext_in_buff = inputs[0]
+            ext_in_buff = inputs[0].copy()
         else:
             ext_in_buff = self.in_spec.new_sequence_from_data(*inputs)
 
@@ -105,15 +104,15 @@ class Stream:
 
     # TODO: offer options to specify variable chunk sizes
     @overload
-    def forward_all_chunks(self, input: Sequence, chunk_size: int) -> Sequence: ...
+    def forward_chunks(self, input: Sequence, chunk_size: int) -> Sequence: ...
     @overload
-    def forward_all_chunks(self, *in_arrs: SeqArrayLike, chunk_size: int) -> Sequence: ...
-    def forward_all_chunks(self, *inputs, chunk_size: int) -> Sequence:
+    def forward_chunks(self, *in_arrs: SeqArrayLike, chunk_size: int) -> Sequence: ...
+    def forward_chunks(self, *inputs, chunk_size: int) -> Sequence:
         """
         Convenience method to forward an input sequence in chunks of fixed size through the stream and return the
         full output sequence. This is typically used for testing a stream, given that it defeats the purpose of
         streaming. The stream will be closed on the last step automatically. If the input is provided as a Sequence,
-        its data will be consumed at each step.
+        its data will not be consumed.
         """
         out_buff = self.out_spec.new_empty_sequence()
         for out_chunk in self.forward_chunks_iter(*inputs, chunk_size=chunk_size):

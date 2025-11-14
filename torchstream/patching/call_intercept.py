@@ -1,4 +1,5 @@
 import importlib
+from copy import deepcopy
 from typing import Callable
 
 from torchstream.patching.call_identification import (
@@ -84,7 +85,7 @@ class intercept_calls:
         self._original_fn = None
 
     @property
-    def call_in_outs(self) -> list[tuple[tuple, dict, object]]:
+    def calls_in_out(self) -> list[tuple[tuple, dict, object]]:
         """
         Returns the stored call inputs and outputs as a list of tuples (in_args, in_kwargs, out).
         """
@@ -132,7 +133,7 @@ class intercept_calls:
 
 
 # TODO: offer to return on the exit of the the target function, rather than on the start
-def early_exit(fn: Callable, target_to_exit_on: str, out_proc_fn: Callable | None = None) -> Callable:
+def exit_early(fn: Callable, target_to_exit_on: str, out_proc_fn: Callable | None = None) -> Callable:
     """
     TODO: doc
     """
@@ -144,17 +145,18 @@ def early_exit(fn: Callable, target_to_exit_on: str, out_proc_fn: Callable | Non
         raise EarlyExit((args, kwargs))
 
     def wrapped_fn_with_early_exit(*args, **kwargs):
-        with intercept_calls(target_to_exit_on, raiser):
-            try:
+        try:
+            # FIXME!! Verify the function is properly unpatched
+            with intercept_calls(target_to_exit_on, raiser):
                 fn(*args, **kwargs)
-                raise RuntimeError(
-                    f"Function {fn} was succesfully called but did not trigger {target_to_exit_on}, "
-                    "ensure the target name is set correctly."
-                )
-            except EarlyExit as e:
-                ret_args, ret_kwargs = e.args[0]
-                if out_proc_fn is not None:
-                    return out_proc_fn(*ret_args, **ret_kwargs)
-                return ret_args, ret_kwargs
+            raise RuntimeError(
+                f"Function {fn} was succesfully called but did not trigger {target_to_exit_on}, "
+                "ensure the target name is set correctly."
+            )
+        except EarlyExit as e:
+            ret_args, ret_kwargs = e.args[0]
+            if out_proc_fn is not None:
+                return out_proc_fn(*ret_args, **ret_kwargs)
+            return ret_args, ret_kwargs
 
     return wrapped_fn_with_early_exit
