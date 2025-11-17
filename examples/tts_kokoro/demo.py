@@ -101,9 +101,9 @@ with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
 
 # We see that we get larger inputs in streaming, because we provide the past context at each step. This is definitely
 # something to take into consideration if we want to reproduce the same values as non-streaming inference.
-# You'll notice this context size is a constant 56. It's easy to figure out why.
+# You'll notice this context size is a constant 56. It's easy to demonstrate why.
 # Let's make the decoder's forward pass exit right before cumsum. Search for the sliding window parameters of this
-# operation to understand the input to cumsum mapping.
+# operation to obtain the mapping to the cumsum input.
 dec_trsfm_cumsum_exit = exit_early(decoder_trsfm, target_to_exit_on="torch.cumsum", out_proc_fn=lambda x, dim: x)
 cumsum_in_spec = SeqSpec(1, -1, 9, device=device)
 with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
