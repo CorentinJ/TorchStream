@@ -79,7 +79,7 @@ sli_params = SlidingWindowParams(
 # will lead to noticeable artifacts at chunk boundaries.
 decoder_input = decoder_in_spec.new_sequence_from_data(ref_asr, ref_f0_curve, ref_n)
 stream = SlidingWindowStream(decoder_trsfm, sli_params, decoder_in_spec, decoder_out_spec)
-audio = stream.forward_chunks(decoder_input, chunk_size=100).data[0]
+audio = stream.forward_in_chunks(decoder_input, chunk_size=100).data[0]
 sf.write("demo_audio_streamed.wav", audio[0, 0], 24000)
 
 
@@ -94,7 +94,7 @@ with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
 
         # And what it gets when streaming like earlier
         stream = SlidingWindowStream(decoder_trsfm, sli_params, decoder_in_spec, decoder_out_spec)
-        stream.forward_chunks(decoder_input, chunk_size=120)
+        stream.forward_in_chunks(decoder_input, chunk_size=120)
         stream_cumsum_ins = [args[0] for args, kwargs, out in interceptor.calls_in_out[1:]]
         print("Streaming cumsum input shapes:\n\t" + "\n\t".join(map(str, [tuple(x.shape) for x in stream_cumsum_ins])))
         print("Total cumsum input size seen in streaming:", str(sum(x.shape[1] for x in stream_cumsum_ins)))

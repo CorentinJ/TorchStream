@@ -1,5 +1,5 @@
 import logging
-from typing import Callable, Iterable, Optional, Tuple, overload
+from typing import Callable, Iterable, Iterator, Optional, Tuple, overload
 from typing import Sequence as _Sequence
 
 import numpy as np
@@ -9,6 +9,7 @@ from opentelemetry import trace
 from torchstream.exception_signature import DEFAULT_ZERO_SIZE_EXCEPTIONS, ExceptionWithSubstring
 from torchstream.sequence.dtype import DeviceLike, SeqArrayLike, SeqDTypeLike
 from torchstream.sequence.seq_spec import SeqSpec
+from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -310,6 +311,34 @@ class Sequence:
         )
 
         return out_spec.new_sequence_from_data(*out_arrs)
+
+    # TODO: naive equivalents
+
+    def stream_apply_iter(
+        self,
+        trsfm: Callable,
+        sli_params: SlidingWindowParams,
+        chunk_size: int,
+        out_spec: "SeqSpec | None" = None,
+    ) -> Iterator["Sequence"]:
+        # TODO! doc
+        from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
+
+        stream = SlidingWindowStream(trsfm, sli_params, self.spec, out_spec)
+        yield from stream.forward_in_chunks_iter(self, chunk_size=chunk_size)
+
+    def stream_apply(
+        self,
+        trsfm: Callable,
+        sli_params: SlidingWindowParams,
+        chunk_size: int,
+        out_spec: "SeqSpec | None" = None,
+    ) -> "Sequence":
+        # TODO! doc
+        from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
+
+        stream = SlidingWindowStream(trsfm, sli_params, self.spec, out_spec)
+        return stream.forward_in_chunks(self, chunk_size=chunk_size)
 
     def __repr__(self) -> str:
         return f"Sequence of size {self.size} with {self.spec}"

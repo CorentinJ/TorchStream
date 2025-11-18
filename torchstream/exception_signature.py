@@ -17,11 +17,14 @@ TORCH_REFLECT_PADDING_LARGER_THAN_INPUT = (
     RuntimeError,
     "Padding size should be less than the corresponding input dimension",
 )
+# Using instance norm with a single input
+TORCH_INSTANCENORM_SINGLE_ELEMENT = (ValueError, "Expected more than 1 spatial element when training")
 
 DEFAULT_ZERO_SIZE_EXCEPTIONS = [
     TORCH_CONV_INPUT_SMALLER_THAN_KERNEL,
     TORCH_TCONV_TRIMMING_TOO_LARGE,
     TORCH_REFLECT_PADDING_LARGER_THAN_INPUT,
+    TORCH_INSTANCENORM_SINGLE_ELEMENT,
 ]
 
 

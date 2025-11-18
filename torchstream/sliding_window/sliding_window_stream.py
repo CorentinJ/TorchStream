@@ -14,6 +14,10 @@ class IncorrectSlidingWindowParametersError(Exception):
 
 
 class SlidingWindowStream(Stream):
+    """
+    TODO!: doc!
+    """
+
     def __init__(
         self,
         transform: Callable,
