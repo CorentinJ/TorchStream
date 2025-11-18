@@ -65,8 +65,8 @@ def test_conv_transpose_1d(sli_params: SlidingWindowParams, dilation: int):
         # "padding" is poorly explained in https://pytorch.org/docs/stable/generated/torch.nn.ConvTranspose1d.html
         # A better explanation of the parameter is that it trims the output on both sides by the given amount.
         padding=sli_params.left_out_trim,
-        # "output_padding" increases the output size on the right by the given amount, hence it's the inverse of 
-        # right_out_trim. However we already trim on both sides by "padding=sli_params.left_out_trim" (see above), 
+        # "output_padding" increases the output size on the right by the given amount, hence it's the inverse of
+        # right_out_trim. However we already trim on both sides by "padding=sli_params.left_out_trim" (see above),
         # so we need to counterbalance by re-adding left_out_trim.
         output_padding=sli_params.left_out_trim - sli_params.right_out_trim,
         dilation=dilation,
@@ -76,21 +76,6 @@ def test_conv_transpose_1d(sli_params: SlidingWindowParams, dilation: int):
     _find_in_out_size(conv, SeqSpec(1, 1, -1), sli_params)
 
 
-# NOTE: our solver has the following modeling limitation: on any layer with an input stride > 1, the current combined
-# stride of the model must be expressible as either 1 / x or x / 1. A couple of examples:
-#   - L1: transposed conv with output stride = 3, L2: conv with input stride = 6
-#       -> after L1 our combined stride is 3 (3 / 1 -> OK) and after L2 it's 3 / 6 = 1 / 2 -> OK. We can model this.
-#   - L1: conv with input stride = 2, L2: conv with input stride = 3
-#       -> after L1 our combined stride is 1 / 2, and after L2 it's 1 / 6. All OK
-#   - L1: transposed conv with output stride = 3, L2: conv with input stride = 2
-#       -> after L1 our combined stride is 3 (3 / 1 -> OK) and after L2 it's 3 / 2 -> NOT OK. The solver will fail.
-#   - L1: conv with input stride = 2, L2: transposed conv with output stride = 3
-#       -> After L1 our combined stride is 1 / 2, and after L2 it's 3 / 2 BUT the check only needs to hold on layers
-#       with an input stride > 1. E.g. adding another conv with input stride = 2 as L3 will fail the solver.
-# Note that in practice, models will almost always meet this requirement. Indeed, most models either only upsample,
-# downsample, or downsample first before upsampling. Only in the case where a model upsamples before downsampling
-# could we have this issue (provided the strides do not meet the condition) - and I don't know yet of such a model.
-# TODO! This should be a comment within the solver
 @pytest.mark.parametrize(
     "conv_params",
     [

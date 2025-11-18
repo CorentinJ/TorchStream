@@ -70,15 +70,107 @@ class _SliHypothesis:
 
 
 class SlidingWindowParamsSolver:
+    """
+    This class takes a sequence-to-sequence transform (neural net, signal processing function, time series analysis
+    function, ...) and a specification of its input and output formats. It then generates inputs of varying sizes
+    with NaNs in specific locations, analyzing the outputs to determine whether the transform is a sliding window
+    operation. If it is, it will find these sliding window parameters (or functionally equivalent ones (*)) and return
+    them.
+
+    Knowing the sliding window parameters of a transform allows for deriving a precise and exact input to output
+    mapping, which in turn makes the transform trivially streamable without approximations (see SlidingWindowStream).
+    It also allows for deriving core streaming metrics: time to first output, latency, context size, optimal chunk
+    size, ...
+
+    The majority of sequence-to-sequence neural networks are, fully or in part (**), acting as a sliding window
+    operation. Convolutions, padding, pooling, upsampling, element-wise operations, and many other layers are
+    cases of sliding window operations, and chained together they act as a single sliding window transform (***) with
+    compound parameters. Leveraging this property allows streaming even complex architectures exactly without
+    resorting to a challenging implementation. Determining these compound parameters manually is however tedious
+    and error-prone, hence the need for this solver.
+
+    The transform must meet some constraints:
+    - It must accept NaNs as input and appropriately propagate them to output elements that depend on them. The vast
+    majority of pure python, numpy, scipy and torch operations behave this way. If using a third-party library that
+    raises an error on NaNs (e.g. librosa), consider patching the underlying functions using torchstream's
+    intercept_calls context manager for the duration of the solver run. Only the nan input and output positions matter
+    to the solver, not the values of the other elements.
+    - It must take and output sequential data only. If there are multiple inputs, they must share a time resolution
+    expressible as a ratio of integers. The same applies to multiple outputs. If your transform has an input that
+    is constant for the duration of the sequence, provide instead a wrapper that takes only the sequential input and
+    injects the constant input internally. If your transform has an input that changes based on the sequence position,
+    it is sequential data by definition. Consider passing it as such or making it internal to the transform.
+    - Evidently, it must behave as a sliding window operations. It is frequent for neural networks not initially
+    designed for streaming to feature sequence-global operation such as a mean or a norm over the sequence dimension.
+    Such operations technically have an infinite input kernel size and cannot be streamed exactly. They may be
+    approximated for streaming with success, but you will have to mitigate their NaN propagation effect for the
+    duration of the solver run, e.g. using the intercept_calls context manager to patch them into no-ops. Auto
+    regressive operations are not sliding window operations and will also need to be patched. In either case, the
+    solver is able to detect these transforms and raise an appropriate error. Layers with a variable receptive field
+    (e.g. some attention layers) are not modeled by this solver and will need an adhoc implementation. Layers that
+    cannot operate without seeing the entire input sequence (e.g. most attention layers) are inherently not
+    streamable without serious approximations nor do they behave as sliding window operations. If your model features
+    such layers, unfortunately the only recourse might be to redesign and to retrain it.
+
+    Note that the transform does NOT need to be deterministic for the solver to work, as it operates solely on the
+    NaN propagation behaviour.
+
+    This solver emits logging information at the INFO level, and tracing spans using OpenTelemetry. Ensure you have
+    a logging handler setup at the INFO level or lower to analyze its progress.
+
+    (*) Different sliding window parameters are considered to be functionally equivalent if they all produce the exact
+    same input to output mapping. For instance, Conv1d(kernel_size=2, stride=1, padding=1) and
+    ConvTranspose1d(kernel_size=2, stride=1) produce the exact same input to output mappings. They technically
+    only differ by their kernel.
+
+    (**) If your end goal is latency reduction by streaming your model's output when all the input is available,
+    you can afford to run eventual non-streamable operations on the full input before streaming the rest of the model.
+
+    (***) The solver models transforms with an input to output size relationship of the form:
+    {
+        output_size = ((input_size + a) // b) * c + d, if input_size >= e
+        output_size = 0, otherwise
+    }
+    This covers the vast majority of composition of sliding window operations. For a neural network, on any layer
+    with an input stride > 1, the current combined stride of the model must be expressible as either 1 / x or x / 1.
+    A couple of examples:
+      - Layer 11: transposed conv with output stride = 3, Layer 2: conv with input stride = 6
+          -> after Layer 1 our combined stride is 3 (3 / 1 -> OK) and after Layer 2 it's 3 / 6 = 1 / 2 -> OK.
+      - Layer 1: conv with input stride = 2, Layer 2: conv with input stride = 3
+          -> after Layer 1 our combined stride is 1 / 2, and after Layer 2 it's 1 / 6. All OK
+      - Layer 1: transposed conv with output stride = 3, Layer 2: conv with input stride = 2
+          -> after Layer 1 our combined stride is 3 (3 / 1 -> OK) and after Layer 2 it's 3 / 2 -> NOT OK. The solver
+          will fail.
+      - Layer 1: conv with input stride = 2, Layer 2: transposed conv with output stride = 3
+          -> After Layer 1 our combined stride is 1 / 2, and after Layer 2 it's 3 / 2 BUT the check only needs to hold
+          on layers with an input stride > 1. E.g. adding another conv with input stride = 2 as Layer 3 will fail
+          the solver.
+    Note that in practice, models will almost always meet this requirement. Indeed, most models either only upsample,
+    downsample, or downsample first before upsampling. Only in the case where a model upsamples before downsampling
+    could we have this issue (provided the strides do not meet the condition) - and I don't know yet of such a model.
+
+    :param trsfm: a callable transform taking sequential data as input and outputting sequential data.
+    :param in_spec: specification for the input format of the transform, as positional arguments.
+    :param out_spec: specification for the output format of the transform. If omitted, assumed to be identical to the
+    input spec.
+    :param init_seq_size: initial input sequence size to try when probing the transform. You can increase this if your
+    model has a high minimum input size, but the solver should quickly converge to it anyway.
+    :param max_in_out_seq_size: maximum input and output sequence size to try when probing the transform. If the solver
+    reaches this size without being able to determine the sliding window parameters, it will assume there is no
+    solution and raise a RuntimeError.
+    :param zero_size_exception_signatures: an iterable of exception types or tuples (exception_type, substring) that
+    indicate that the transform cannot produce an output because the input size is too small.
+    :param debug_ref_params: if provided, the solver will compare its hypotheses to these reference parameters in the
+    logs and will raise an exception if these parameters become incompatible with the solver.
+    """
+
     def __init__(
         self,
         trsfm: Callable,
         in_spec: SeqSpec,
         out_spec: SeqSpec | None = None,
         init_seq_size: int = 30,
-        max_in_seq_size: int = 10_000,
-        atol: float = 1e-5,
-        max_equivalent_sols: int = 1,
+        max_in_out_seq_size: int = 100_000,
         zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
         debug_ref_params: SlidingWindowParams | None = None,
     ):
@@ -86,13 +178,12 @@ class SlidingWindowParamsSolver:
         self.in_spec = in_spec
         self.out_spec = out_spec or in_spec
         self.init_seq_size = init_seq_size
-        self.max_in_seq_size = max_in_seq_size
-        self.atol = atol
-        self.max_equivalent_sols = max_equivalent_sols
+        # TODO!! implement
+        self.max_in_seq_size = max_in_out_seq_size
         self.zero_size_exception_signatures = zero_size_exception_signatures
 
         self.in_out_rel_params = None
-        self.min_in_size_bounds = [1, max_in_seq_size]
+        self.min_in_size_bounds = [1, max_in_out_seq_size]
         self.nan_trick_history = []
 
         self.debug_ref_params = debug_ref_params
@@ -156,6 +247,11 @@ class SlidingWindowParamsSolver:
         # NOTE: this does not take into account the input nan range
         if in_seq_size == self.max_in_seq_size and len(out_nan_idx) == out_seq.size:
             # TODO: offer a course of action
+            # frac: upsample, interpolate
+            # left: ?
+            # full: mean, batchnorm, any reduction, non-monotonic attention ...
+            # right: autoregressive, cumsum, ...
+
             raise RuntimeError(
                 f"Your transform outputs NaNs covering the entire output (size={out_seq.size}) given the "
                 f"maximum input size (={self.max_in_seq_size}) and NaNs at {in_nan_range}. This likely means that "
@@ -371,7 +467,7 @@ class SlidingWindowParamsSolver:
 
     # TODO (major): split further into two steps: one for streaming params (out delay + ctx) using stride based
     # constraints, and a last step for kernel sizes by embedding the kernel sparsity solver
-    def find_sliding_window_params(self):
+    def find_sliding_window_params(self, max_equivalent_sols: int = 1):
         # Start by determining the input/output size relationship, it will heavily simplify the param search to
         # know it in advance
         in_out_rel_params = self.find_in_out_size_params()
@@ -384,7 +480,7 @@ class SlidingWindowParamsSolver:
 
         n_hyps = 0
         out_sols = []
-        while len(out_sols) < self.max_equivalent_sols:
+        while len(out_sols) < max_equivalent_sols:
             # Sample new sliding window parameters
             params = sampler.get_new_solution(same_family_as=(out_sols[0].params if out_sols else None))
             if params is None:
@@ -430,37 +526,18 @@ def find_sliding_window_params(
     in_spec: SeqSpec,
     out_spec: SeqSpec | None = None,
     init_seq_size: int = 30,
-    max_in_seq_size: int = 10_000,
-    atol: float = 1e-5,
+    max_in_out_seq_size: int = 100_000,
     max_equivalent_sols: int = 1,
     zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
     debug_ref_params: SlidingWindowParams | None = None,
 ) -> List[SlidingWindowParams]:
-    """
-    Given a sequence-to-sequence transform (neural net, single layer, time series analysis function, ...),
-    this function will empirically determine sliding window parameters that correspond to the transform. That is, if
-    the transform can be decomposed into a sliding window and a kernel applied to each window. This allows for
-    deriving metrics for the transform (time to first output, latency, context size, chunk size needed for
-    streaming, ...) as well as making the transform trivially streamable without approximations.
-
-    This is only possible if the transform can be assimilated to a sliding window operation TODO: describe properties
-    of this operation
-
-    :param input_spec: specification for the input format of the transform. The transform must accept the data format
-    described in the input spec as positional arguments.
-    :param output_spec: same as input_spec but for the output of the transform. If the transform has multiple
-    sequential outputs, they must be returned as an iterable matching the output spec. If the output spec is
-    identical to the input spec, it can be omitted, and the input spec will be used instead.
-    TODO!: rewrite docs
-    """
+    """ """
     return SlidingWindowParamsSolver(
         trsfm=trsfm,
         in_spec=in_spec,
         out_spec=out_spec,
         init_seq_size=init_seq_size,
-        max_in_seq_size=max_in_seq_size,
-        atol=atol,
-        max_equivalent_sols=max_equivalent_sols,
+        max_in_out_seq_size=max_in_out_seq_size,
         zero_size_exception_signatures=zero_size_exception_signatures,
         debug_ref_params=debug_ref_params,
-    ).find_sliding_window_params()
+    ).find_sliding_window_params(max_equivalent_sols)

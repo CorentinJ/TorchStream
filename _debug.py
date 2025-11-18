@@ -1,23 +1,19 @@
-import torch
+import logging
 
-from torchstream.patching.call_intercept import intercept_calls
+from opentelemetry import trace
+from torch import nn
+
+from torchstream.sequence.seq_spec import SeqSpec
+from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
+
+logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
+
+logging.basicConfig(level=logging.INFO)
+
+trsfm = nn.ConvTranspose1d(1, 1, kernel_size=2, stride=1)
+find_sliding_window_params(trsfm, SeqSpec(1, 1, -1), max_equivalent_sols=10)
 
 
-def work_fn():
-    a = torch.arange(5)
-    b = torch.cumsum(a, dim=0)
-    c = b // 3
-    d = torch.cumsum(c, dim=0)
-    return d - a
-
-
-if __name__ == "__main__":
-
-    def handler(*args, original_fn, callstack_locs, **kwargs):
-        print(f"Intercepted {original_fn} call from {hash(tuple(callstack_locs))}")
-        return original_fn(*args, **kwargs)
-
-    with intercept_calls("torch.cumsum", handler, pass_original_fn=True, pass_callstack_locs=True):
-        for _ in range(2):
-            result = work_fn()
-            print("Result:", result)
+# (ki=1, si=1, lp=0, rp=0, ko=2, so=1, lt=0, rt=0)
+# (ki=2, si=1, lp=1, rp=1, ko=1, so=1, lt=0, rt=0)
