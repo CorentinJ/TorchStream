@@ -89,7 +89,7 @@ with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
     with intercept_calls("torch.cumsum", store_in_out=True) as interceptor:
         # Let's see what the cumsum input looks like in the non-streaming case
         decoder_trsfm(*decoder_input.data)
-        ref_cumsum_in = interceptor.calls_in_out[0][0][0]
+        (ref_cumsum_in,), _, ref_cumsum_out = interceptor.calls_in_out[0]
         print("Non-streaming cumsum input shape:", tuple(ref_cumsum_in.shape))
 
         # And what it gets when streaming like earlier
@@ -126,15 +126,34 @@ print(
 )
 
 
-# # And now we can trivially implement a stateful cumsum for streaming
-# def get_streaming_cumsum():
-#     accum_value = 0.0
-#     step = 0
+# And now we can trivially implement a stateful function specific to this model's cumsum
+def get_streaming_cumsum():
+    accum_value = 0.0
 
-#     def streaming_cumsum(x, dim):
-#         nonlocal accum_value, step
-#         out = torch.cumsum(x, dim=dim) + accum_value
-#         accum_value = out[:, -1]
-#         return out
+    def streaming_cumsum(x, dim, original_fn):
+        nonlocal accum_value
+        out = original_fn(x, dim=dim) + accum_value
 
-#     return streaming_cumsum
+        assert dim == 1
+        accum_value = out[:, -2 * sli_params.streaming_context_size - 1, :]
+
+        return out
+
+    return streaming_cumsum
+
+
+with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
+    with intercept_calls(
+        "torch.cumsum", handler_fn=get_streaming_cumsum(), store_in_out=True, pass_original_fn=True
+    ) as interceptor:
+        # NOTE: you can vary the chunk size (set at least 28) to see that the implementation still holds
+        chunk_size = 120
+        decoder_input.stream_apply(decoder_trsfm, sli_params, chunk_size=chunk_size, out_spec=decoder_out_spec)
+
+        # Compare our cumsum outputs in stream vs non-streaming
+        print("Max difference between streaming & sync cumsum output with the stateful cumsum:")
+        for i, (call_in, _, call_out) in enumerate(interceptor.calls_in_out):
+            end_idx = min((i + 1) * chunk_size * 2, ref_cumsum_out.shape[1])
+            start_idx = end_idx - call_out.shape[1]
+            abs_diff = ref_cumsum_out[:, start_idx:end_idx, :] - call_out
+            print(f"Output chunk #{i} at indices [{start_idx}:{end_idx}] max abs diff: {abs_diff.abs().max().item()}")

@@ -46,15 +46,17 @@ decoder_trsfm = partial(decoder, s=torch.randn(1, 128))
 decoder_input = decoder_in_spec.new_randn_sequence(830)
 
 
-# And now we can trivially implement a stateful cumsum for streaming
+# And now we can trivially implement a stateful function specific to this model's cumsum
 def get_streaming_cumsum():
     accum_value = 0.0
-    step = 0
 
-    def streaming_cumsum(x, dim):
-        nonlocal accum_value, step
-        out = torch.cumsum(x, dim=dim) + accum_value
-        accum_value = out[:, -1]
+    def streaming_cumsum(x, dim, original_fn):
+        nonlocal accum_value
+        out = original_fn(x, dim=dim) + accum_value
+
+        assert dim == 1
+        accum_value = out[:, -2 * sli_params.streaming_context_size - 1, :]
+
         return out
 
     return streaming_cumsum
@@ -64,8 +66,16 @@ with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
     with intercept_calls("torch.cumsum", store_in_out=True) as interceptor:
         decoder_trsfm(*decoder_input.data)
         ref_cumsum_in = interceptor.calls_in_out[0][0][0]
-        ref_cumsum_out = interceptor.calls_in_out[0][1]
+        ref_cumsum_out = interceptor.calls_in_out[0][2]
 
-    with intercept_calls("torch.cumsum", handler_fn=get_streaming_cumsum(), store_in_out=True) as interceptor:
+    with intercept_calls(
+        "torch.cumsum", handler_fn=get_streaming_cumsum(), store_in_out=True, pass_original_fn=True
+    ) as interceptor:
         # Changing the chunk size here to show it'll still work
-        decoder_input.stream_apply(decoder_trsfm, sli_params, chunk_size=93, out_spec=decoder_out_spec)
+        decoder_input.stream_apply(decoder_trsfm, sli_params, chunk_size=120, out_spec=decoder_out_spec)
+
+        for i, (call_in, _, call_out) in enumerate(interceptor.calls_in_out):
+            end_idx = min((i + 1) * 120 * 2, ref_cumsum_out.shape[1])
+            start_idx = end_idx - call_out.shape[1]
+            abs_diff = ref_cumsum_out[:, start_idx:end_idx, :] - call_out
+            print(f"Output chunk #{i} at indices [{start_idx}:{end_idx}] max abs diff: {abs_diff.abs().max().item()}")
