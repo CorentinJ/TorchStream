@@ -54,6 +54,11 @@ decoder_in_spec = SeqSpec(
 )
 # Audio is 1-dimensional, but is output with the batch & channel dimensions
 decoder_out_spec = SeqSpec(1, 1, -1, device=device)
+
+
+# TODO: demonstrate the need for sliding window params solving by showing wrong results without it
+
+
 # We'll wrap the forward pass to have a function that only takes sequential inputs, in the order above
 decoder_trsfm = partial(pipeline.model.decoder.forward, s=ref_s)
 
@@ -79,8 +84,9 @@ sli_params = SlidingWindowParams(
 # will lead to noticeable artifacts at chunk boundaries.
 decoder_input = decoder_in_spec.new_sequence_from_data(ref_asr, ref_f0_curve, ref_n)
 stream = SlidingWindowStream(decoder_trsfm, sli_params, decoder_in_spec, decoder_out_spec)
-audio = stream.forward_in_chunks(decoder_input, chunk_size=100).data[0]
-sf.write("demo_audio_streamed.wav", audio[0, 0], 24000)
+audio = stream.forward_in_chunks(decoder_input, chunk_size=40).data[0]
+t = audio[0, 0]
+sf.write("demo_audio_streamed_v2.wav", audio[0, 0], 24000)
 
 
 # Let's improve. There are several dozen calls to instance_norm in the model but only one early call to cumsum, so
@@ -94,7 +100,7 @@ with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
 
         # And what it gets when streaming like earlier
         stream = SlidingWindowStream(decoder_trsfm, sli_params, decoder_in_spec, decoder_out_spec)
-        stream.forward_in_chunks(decoder_input, chunk_size=120)
+        stream.forward_in_chunks(decoder_input, chunk_size=40)
         stream_cumsum_ins = [args[0] for args, kwargs, out in interceptor.calls_in_out[1:]]
         print("Streaming cumsum input shapes:\n\t" + "\n\t".join(map(str, [tuple(x.shape) for x in stream_cumsum_ins])))
         print("Total cumsum input size seen in streaming:", str(sum(x.shape[1] for x in stream_cumsum_ins)))
@@ -147,7 +153,7 @@ with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
         "torch.cumsum", handler_fn=get_streaming_cumsum(), store_in_out=True, pass_original_fn=True
     ) as interceptor:
         # NOTE: you can vary the chunk size (set at least 28) to see that the implementation still holds
-        chunk_size = 120
+        chunk_size = 40
         decoder_input.stream_apply(decoder_trsfm, sli_params, chunk_size=chunk_size, out_spec=decoder_out_spec)
 
         # Compare our cumsum outputs in stream vs non-streaming
@@ -157,3 +163,9 @@ with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
             start_idx = end_idx - call_out.shape[1]
             abs_diff = ref_cumsum_out[:, start_idx:end_idx, :] - call_out
             print(f"Output chunk #{i} at indices [{start_idx}:{end_idx}] max abs diff: {abs_diff.abs().max().item()}")
+
+
+# Let's listen to see how we've improved
+audio = decoder_input.stream_apply(decoder_trsfm, sli_params, chunk_size=40, out_spec=decoder_out_spec)
+t2 = audio.data[0][0, 0]
+sf.write("demo_audio_streamed_v3.wav", audio.data[0][0, 0], 24000)

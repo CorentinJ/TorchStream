@@ -35,3 +35,6 @@ __*__/
 
 # pytest-profiling outputs
 prof/
+
+# Demos files
+*.wav
