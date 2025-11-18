@@ -2,6 +2,8 @@ import logging
 from functools import partial
 
 import torch
+from torch.nn import InstanceNorm1d
+from torch.nn import functional as F
 
 from torchstream.patching.call_intercept import exit_early, intercept_calls
 from torchstream.sequence.sequence import SeqSpec
@@ -9,8 +11,6 @@ from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 
-# Setup logging to see the solver's message
-logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 # Change the tensor repr to show the shape and device, which saves a lot of time for debugging
@@ -84,8 +84,7 @@ sli_params = SlidingWindowParams(
 # will lead to noticeable artifacts at chunk boundaries.
 decoder_input = decoder_in_spec.new_sequence_from_data(ref_asr, ref_f0_curve, ref_n)
 stream = SlidingWindowStream(decoder_trsfm, sli_params, decoder_in_spec, decoder_out_spec)
-audio = stream.forward_in_chunks(decoder_input, chunk_size=40).data[0]
-t = audio[0, 0]
+audio = stream.forward_in_chunks(decoder_input, chunk_size=40).data[0].cpu().numpy()
 sf.write("demo_audio_streamed_v2.wav", audio[0, 0], 24000)
 
 
@@ -165,7 +164,67 @@ with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
             print(f"Output chunk #{i} at indices [{start_idx}:{end_idx}] max abs diff: {abs_diff.abs().max().item()}")
 
 
+# Now let's tackle instance norm. It's impossible to exactly stream a norm over the time dimension because it requires
+# looking at the entire sequence to compute the mean and variance. We can however get a decent approximation with
+# running estimates.
+# There are multiple calls to InstanceNorm in the model, each with different learned parameters. The calls at each
+# location need to maintain their own running stats.
+def get_streaming_instance_norm():
+    running_stats_per_instnorm = {}
+
+    def streaming_instance_norm(instnorm_obj: InstanceNorm1d, x):
+        # Instantiate fresh running stats for each unique InstanceNorm1d object
+        if instnorm_obj not in running_stats_per_instnorm:
+            running_stats_per_instnorm[instnorm_obj] = (
+                # Mean
+                torch.zeros(instnorm_obj.num_features, device=x.device, dtype=x.dtype),
+                # Variance (NOTE: both could be initialized from the means & vars of a couple of inputs to be
+                # more accurate)
+                torch.ones(instnorm_obj.num_features, device=x.device, dtype=x.dtype),
+            )
+            # Use momentum=1.0 for the first call to just set the running stats to the stats of the first chunk
+            momentum = 1.0
+        else:
+            momentum = max(instnorm_obj.momentum if instnorm_obj.momentum is not None else 0.0, 0.1)
+
+        running_mean, running_var = running_stats_per_instnorm[instnorm_obj]
+
+        # This is a lazy implementation: we do a first pass of instance_norm just to compute the running mean/var
+        # (in place) and we discard the output
+        # This implementation has quite some flaws: it uses the unbiased variance whereas the non streaming version
+        # uses the biased one, and it abruptly shifts the running stats each chunk instead of smoothly updating them.
+        # But this is totally sufficient for a heuristic
+        F.instance_norm(
+            x,
+            running_mean,
+            running_var,
+            None,
+            None,
+            use_input_stats=True,
+            momentum=momentum,
+            eps=instnorm_obj.eps,
+        )
+
+        # Now we actually do the normalization
+        return F.instance_norm(
+            x,
+            running_mean,
+            running_var,
+            instnorm_obj.weight,
+            instnorm_obj.bias,
+            use_input_stats=False,
+            eps=instnorm_obj.eps,
+        )
+
+    return streaming_instance_norm
+
+
 # Let's listen to see how we've improved
-audio = decoder_input.stream_apply(decoder_trsfm, sli_params, chunk_size=40, out_spec=decoder_out_spec)
-t2 = audio.data[0][0, 0]
-sf.write("demo_audio_streamed_v3.wav", audio.data[0][0, 0], 24000)
+with intercept_calls("torch.cumsum", handler_fn=get_streaming_cumsum(), pass_original_fn=True):
+    with intercept_calls(
+        # NOTE: different target than before because we could not identify the calling instance with F.instance_norm()
+        "torch.nn.modules.instancenorm.InstanceNorm1d.forward",
+        get_streaming_instance_norm(),
+    ):
+        audio = decoder_input.stream_apply(decoder_trsfm, sli_params, chunk_size=40, out_spec=decoder_out_spec)
+        sf.write("demo_audio_streamed_v3.wav", audio.data[0][0, 0].cpu().numpy(), 24000)
