@@ -1,5 +1,4 @@
 import logging
-from itertools import zip_longest
 from typing import Callable, Iterable, List, Tuple
 
 from colorama import Fore as colors
@@ -59,6 +58,10 @@ def _compare_sli_params_str(params: SlidingWindowParams, real_params: SlidingWin
         f"\n\twith output delays ({_compare_params_str(params.output_delays, ref_delays)})"
         f"\n\twith context size {_compare_params_str((params.streaming_context_size,), ref_ctx)}"
     )
+
+
+class MaximumSequenceSizeReachedError(RuntimeError):
+    pass
 
 
 class _SliHypothesis:
@@ -233,33 +236,8 @@ class SlidingWindowParamsSolver:
         else:
             self.min_in_size_bounds[0] = max(self.min_in_size_bounds[0], in_seq.size + 1)
 
-        # Raise if we get no output with the maximum input size
-        if in_seq_size == self.max_in_out_seq_size and out_seq.size == 0:
-            raise RuntimeError(
-                f"Your transform gave an output of size 0 given the maximum input size (={self.max_in_out_seq_size}). "
-                f"Aborting.\n"
-                f"It's possible you have specified a too broad exception for the zero_size_exception_signatures "
-                f"argument."
-            )
-
-        # Raise if we get all NaNs in the output with the maximum input size (kernels with infinite output size)
-        if in_seq_size == self.max_in_out_seq_size and len(out_nan_idx) == out_seq.size:
-            # TODO: offer a course of action
-            # frac: upsample, interpolate
-            # left: ?
-            # full: mean, batchnorm, any reduction, non-monotonic attention ...
-            # right: autoregressive, cumsum, ...
-
-            raise RuntimeError(
-                f"Your transform outputs NaNs covering the entire output (size={out_seq.size}) given the "
-                f"maximum input size (={self.max_in_out_seq_size}) and NaNs at {in_nan_range}. This likely means that "
-                f"an operation in your transform broadcasts an input element to all output elements, like a mean, "
-                f"batchnorm, etc... If possible, patch any such operation using torchstream's intercept_calls context "
-                f"manager to be a no-op for the duration of the solver run, and approximate it later for streaming."
-            )
-
-        if max(in_seq_size, out_seq.size) >= self.max_in_out_seq_size:
-            raise RuntimeError(
+        if max(in_seq_size, out_seq.size) > self.max_in_out_seq_size:
+            raise MaximumSequenceSizeReachedError(
                 f"Reached maximum input/output sequence size ({self.max_in_out_seq_size:,}) "
                 f"with a {in_seq_size:,} -> {out_seq.size:,} forward pass. Aborting.\n"
                 f"If you believe a valid solution exists, consider increasing this limit."
@@ -267,26 +245,82 @@ class SlidingWindowParamsSolver:
 
         return record
 
-    @tracer.start_as_current_span("find_initial_input")
-    def find_initial_input(self):
+    @tracer.start_as_current_span("find_valid_input")
+    def find_valid_input(self):
+        """
+        This function tries increasing input sizes until it finds one that produces:
+        - A non zero output size
+        - With NaNs propagated in its output - transforms that consistently miss an input range are not modeled
+        by this solver (they are not considered useful)
+        - Without NaNs as its first or last elements, in order to detect non-finite kernels early on in the solver.
+        """
         if self.nan_trick_history:
             return
 
-        # TODO! doc
         # In the first part of the process, we'll forward inputs to the transform and stop as soon as we get a
         # output sequence of non-zero size
         while True:
             # Use sane defaults for the NaN trick
-            record = self.run_nan_trick(self.init_seq_size, (self.init_seq_size // 2, self.init_seq_size // 2 + 1))
-            if record["out_seq_size"]:
+            try:
+                record = self.run_nan_trick(self.init_seq_size, (self.init_seq_size // 2, self.init_seq_size // 2 + 1))
+            except MaximumSequenceSizeReachedError:
                 break
 
-            # As long as we haven't had a valid output, we'll increase the input size. We do this before involving
-            # the sampler, otherwise we may be stuck sampling for a while before getting decent candidates.
+            # Check whether the output is valid
+            if record["out_seq_size"] == 0:
+                fail_reason = "zero-sized output"
+            elif record["out_nan_range"] is None:
+                fail_reason = "no NaN propagation"
+            else:
+                if record["out_nan_range"] == (0, record["out_seq_size"]):
+                    fail_reason = "full NaN output"
+                elif record["out_nan_range"][0] == 0:
+                    fail_reason = "first output is NaN"
+                elif record["out_nan_range"][1] == record["out_seq_size"]:
+                    fail_reason = "last output is NaN"
+                else:
+                    return record
+
+            # As long as we haven't had a valid output, we'll increase the input size.
             self.init_seq_size = min(10 * self.init_seq_size, self.max_in_out_seq_size)
             logger.info(
-                f"[Init input] Step {self.step} - Transform failed with input size {record['in_seq_size']}. "
-                f"Increasing init sequence size to {self.init_seq_size}"
+                f"[Init input] Step {self.step} - Transform failed ({fail_reason}), "
+                f"increasing init sequence size to {self.init_seq_size}"
+            )
+
+        # At this point we assume the transform is not suitable, give a helpful error message to the user
+        if fail_reason == "zero-sized output":
+            raise RuntimeError(
+                f"Your transform gave an output of size 0 given the maximum input size (={self.max_in_out_seq_size}). "
+                f"Aborting.\n"
+                f"It's possible you have specified a too broad exception for the zero_size_exception_signatures "
+                f"argument."
+            )
+        elif fail_reason == "no NaN propagation":
+            raise RuntimeError("Your transform never propagated any NaNs from its input.")
+        elif fail_reason == "full NaN output":
+            raise RuntimeError(
+                f"Your transform outputs NaNs covering the entire output (in_size={record['in_seq_size']}, "
+                f"out_size={record['out_seq_size']}). This likely means that an operation in your transform "
+                f"broadcasts an input element to all output elements, like a mean, batchnorm, etc... One solution "
+                f"might be to patch any such operation using torchstream's intercept_calls context manager to be a "
+                f"no-op for the duration of the solver run, and approximate it later for streaming."
+            )
+        elif fail_reason == "first output is NaN":
+            raise RuntimeError(
+                f"Your transform outputs NaNs at the start of the output sequence (in_size={record['in_seq_size']}, "
+                f"out_size={record['out_seq_size']}, out_nan_range={record['out_nan_range']}). Check your model for "
+                f"an operation that behaves this way. If this is a critical operation, your model may not be "
+                f"streamable."
+            )
+        else:
+            raise RuntimeError(
+                f"Your transform outputs NaNs at the end of the output sequence (in_size={record['in_seq_size']}, "
+                f"out_size={record['out_seq_size']}, out_nan_range={record['out_nan_range']}). This likely means that "
+                f"you have an autoregressive operation in your model (e.g. LSTM, cumsum, ...) that keeps producing "
+                f"NaNs onces it has seen one. These operations are usually trivially streamable, but you'll need to "
+                f"prevent their NaN propagation for the duration of the solver run, e.g. by patching them into no-ops "
+                f"using torchstream's intercept_calls context manager."
             )
 
     @tracer.start_as_current_span("find_in_out_rel_params")
@@ -296,7 +330,7 @@ class SlidingWindowParamsSolver:
             return self.in_out_rel_params
 
         # Ensure we have at least one example input before starting
-        self.find_initial_input()
+        self.find_valid_input()
 
         # Integrate the history from the initial input runs in the solver
         sampler = SlidingWindowInOutRelSampler()
@@ -313,9 +347,7 @@ class SlidingWindowParamsSolver:
                 # Params uniquely determined, let's update our state and our lower bound for the input size based
                 # on them
                 self.in_out_rel_params = shape_params
-                self.min_in_size_bounds[0] = max(
-                    self.min_in_size_bounds[0], get_canonical_min_in_size(*shape_params)
-                )
+                self.min_in_size_bounds[0] = max(self.min_in_size_bounds[0], get_canonical_min_in_size(*shape_params))
                 logger.info(
                     f"[In/out rel] Step {self.step} - Converged to in/out size relation:"
                     f"\n\t{in_out_rel_repr(*shape_params)}"
@@ -350,7 +382,7 @@ class SlidingWindowParamsSolver:
     def find_min_input_size(self) -> int:
         # TODO! doc
         # Ensure we have at least one example input before starting
-        self.find_initial_input()
+        self.find_valid_input()
 
         while self.min_in_size_bounds[0] < self.min_in_size_bounds[1]:
             # Heuristic: if the canonical min input size hasn't been tested, we'll test it. Most often that will be
