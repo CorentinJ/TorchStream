@@ -170,7 +170,7 @@ class SlidingWindowParamsSolver:
         in_spec: SeqSpec,
         out_spec: SeqSpec | None = None,
         init_seq_size: int = 30,
-        max_in_out_seq_size: int = 100_000,
+        max_in_out_seq_size: int = 1_000_000,
         zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
         debug_ref_params: SlidingWindowParams | None = None,
     ):
@@ -178,8 +178,7 @@ class SlidingWindowParamsSolver:
         self.in_spec = in_spec
         self.out_spec = out_spec or in_spec
         self.init_seq_size = init_seq_size
-        # TODO!! implement
-        self.max_in_seq_size = max_in_out_seq_size
+        self.max_in_out_seq_size = max_in_out_seq_size
         self.zero_size_exception_signatures = zero_size_exception_signatures
 
         self.in_out_rel_params = None
@@ -193,13 +192,14 @@ class SlidingWindowParamsSolver:
     @property
     def step(self) -> int:
         """
-        Solver step = number of times the transform has been
+        Solver step = number of times the transform has been run
         """
         return len(self.nan_trick_history)
 
     def run_nan_trick(self, in_seq_size: int, in_nan_range: Tuple[int, int] | None) -> dict:
         """
-        Runs the nan trick once on the transform, updating the sampler and history in the process.
+        Forwards an input of size `in_seq_size` with NaNs in the range `in_nan_range` through the transform, storing
+        the inputs and outputs NaN positions. The function will raise if the transform does not behave as expected.
         """
         if in_nan_range and not (0 <= in_nan_range[0] < in_nan_range[1] <= in_seq_size):
             raise ValueError(f"Nan range must be positive and within the input sequence size, got {in_nan_range}")
@@ -235,17 +235,16 @@ class SlidingWindowParamsSolver:
             self.min_in_size_bounds[0] = max(self.min_in_size_bounds[0], in_seq.size + 1)
 
         # Raise if we get no output with the maximum input size
-        if in_seq_size == self.max_in_seq_size and out_seq.size == 0:
+        if in_seq_size == self.max_in_out_seq_size and out_seq.size == 0:
             raise RuntimeError(
-                f"Your transform gave an output of size 0 given the maximum input size (={self.max_in_seq_size}). "
+                f"Your transform gave an output of size 0 given the maximum input size (={self.max_in_out_seq_size}). "
                 f"Aborting.\n"
                 f"It's possible you have specified a too broad exception for the zero_size_exception_signatures "
                 f"argument."
             )
 
         # Raise if we get all NaNs in the output with the maximum input size (kernels with infinite output size)
-        # NOTE: this does not take into account the input nan range
-        if in_seq_size == self.max_in_seq_size and len(out_nan_idx) == out_seq.size:
+        if in_seq_size == self.max_in_out_seq_size and len(out_nan_idx) == out_seq.size:
             # TODO: offer a course of action
             # frac: upsample, interpolate
             # left: ?
@@ -254,20 +253,30 @@ class SlidingWindowParamsSolver:
 
             raise RuntimeError(
                 f"Your transform outputs NaNs covering the entire output (size={out_seq.size}) given the "
-                f"maximum input size (={self.max_in_seq_size}) and NaNs at {in_nan_range}. This likely means that "
+                f"maximum input size (={self.max_in_out_seq_size}) and NaNs at {in_nan_range}. This likely means that "
                 f"an operation in your transform broadcasts an input element to all output elements, like a mean, "
-                f"batchnorm, etc... We can't determine sliding window parameters nor stream exactly these types "
-                f"of transforms as their output kernel size is technically infinite."
+                f"batchnorm, etc... If possible, patch any such operation using torchstream's intercept_calls context "
+                f"manager to be a no-op for the duration of the solver run, and approximate it later for streaming."
+            )
+
+        if max(in_seq_size, out_seq.size) >= self.max_in_out_seq_size:
+            raise RuntimeError(
+                f"Reached maximum input/output sequence size ({self.max_in_out_seq_size:,}) "
+                f"with a {in_seq_size:,} -> {out_seq.size:,} forward pass. Aborting.\n"
+                f"If you believe a valid solution exists, consider increasing this limit."
             )
 
         return record
 
     @tracer.start_as_current_span("find_initial_input")
-    def run_initial_input(self) -> dict:
+    def find_initial_input(self):
+        if self.nan_trick_history:
+            return
+
         # TODO! doc
         # In the first part of the process, we'll forward inputs to the transform and stop as soon as we get a
         # output sequence of non-zero size
-        while not any(record["out_seq_size"] for record in self.nan_trick_history):
+        while True:
             # Use sane defaults for the NaN trick
             record = self.run_nan_trick(self.init_seq_size, (self.init_seq_size // 2, self.init_seq_size // 2 + 1))
             if record["out_seq_size"]:
@@ -275,13 +284,11 @@ class SlidingWindowParamsSolver:
 
             # As long as we haven't had a valid output, we'll increase the input size. We do this before involving
             # the sampler, otherwise we may be stuck sampling for a while before getting decent candidates.
-            self.init_seq_size = min(10 * self.init_seq_size, self.max_in_seq_size)
+            self.init_seq_size = min(10 * self.init_seq_size, self.max_in_out_seq_size)
             logger.info(
                 f"[Init input] Step {self.step} - Transform failed with input size {record['in_seq_size']}. "
                 f"Increasing init sequence size to {self.init_seq_size}"
             )
-
-        return self.nan_trick_history[0]
 
     @tracer.start_as_current_span("find_in_out_rel_params")
     def find_in_out_size_params(self) -> Tuple[int, int, int, int]:
@@ -290,7 +297,7 @@ class SlidingWindowParamsSolver:
             return self.in_out_rel_params
 
         # Ensure we have at least one example input before starting
-        self.run_initial_input()
+        self.find_initial_input()
 
         # Integrate the history from the initial input runs in the solver
         sampler = SlidingWindowInOutRelSampler()
@@ -298,7 +305,7 @@ class SlidingWindowParamsSolver:
             sampler.add_in_out_size(record["in_seq_size"], record["out_seq_size"])
 
         while True:
-            shape_params, next_in_size = sampler.solve(self.min_in_size_bounds[0], self.max_in_seq_size)
+            shape_params, next_in_size = sampler.solve(self.min_in_size_bounds[0], self.max_in_out_seq_size)
             if shape_params:
                 # Params uniquely determined, let's update our state and our lower bound for the input size based
                 # on them
@@ -340,7 +347,7 @@ class SlidingWindowParamsSolver:
     def find_min_input_size(self) -> int:
         # TODO! doc
         # Ensure we have at least one example input before starting
-        self.run_initial_input()
+        self.find_initial_input()
 
         while self.min_in_size_bounds[0] < self.min_in_size_bounds[1]:
             # Heuristic: if the canonical min input size hasn't been tested, we'll test it. Most often that will be
@@ -359,7 +366,7 @@ class SlidingWindowParamsSolver:
                 )
                 upper_bound = min(
                     (record["in_seq_size"] for record in self.nan_trick_history if record["out_seq_size"] > 0),
-                    default=self.max_in_seq_size + 1,
+                    default=self.max_in_out_seq_size + 1,
                 )
                 in_size = (lower_bound + upper_bound) // 2
 
@@ -526,7 +533,7 @@ def find_sliding_window_params(
     in_spec: SeqSpec,
     out_spec: SeqSpec | None = None,
     init_seq_size: int = 30,
-    max_in_out_seq_size: int = 100_000,
+    max_in_out_seq_size: int = 1_000_000,
     max_equivalent_sols: int = 1,
     zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
     debug_ref_params: SlidingWindowParams | None = None,
