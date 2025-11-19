@@ -2,7 +2,6 @@ import logging
 from itertools import zip_longest
 from typing import Callable, Iterable, List, Tuple
 
-import torch
 from colorama import Fore as colors
 from opentelemetry import trace
 
@@ -15,7 +14,7 @@ from torchstream.sliding_window.sliding_window_in_out_rel_sampler import (
 )
 from torchstream.sliding_window.sliding_window_params import (
     SlidingWindowParams,
-    get_canonicalized_min_in_size,
+    get_canonical_min_in_size,
     get_output_delay_bounds,
     in_out_rel_repr,
 )
@@ -47,13 +46,13 @@ def _compare_params_str(params: tuple, real_params: tuple | None, names: Iterabl
 def _compare_sli_params_str(params: SlidingWindowParams, real_params: SlidingWindowParams | None = None) -> str:
     if real_params:
         ref_params = real_params.as_tuple(with_min_in_size=False)
-        ref_size_rel = (real_params.canonicalized_in_out_shape_params) + (real_params.min_input_size,)
+        ref_size_rel = (real_params.canonical_in_out_size_params) + (real_params.min_input_size,)
         ref_delays = real_params.output_delays
         ref_ctx = (real_params.streaming_context_size,)
     else:
         ref_params, ref_size_rel, ref_delays, ref_ctx = None, None, None, None
 
-    params_size_rel = params.canonicalized_in_out_shape_params + (params.min_input_size,)
+    params_size_rel = params.canonical_in_out_size_params + (params.min_input_size,)
     return (
         f"\n\tparameters ({_compare_params_str(params.as_tuple(with_min_in_size=False), ref_params, 'ki,si,lp,rp,ko,so,lt,rt'.split(','))})"
         f"\n\twith shape ({_compare_params_str(params_size_rel, ref_size_rel, 's_i,s_o,isbc,osbc,mis'.split(','))})"
@@ -315,7 +314,7 @@ class SlidingWindowParamsSolver:
                 # on them
                 self.in_out_rel_params = shape_params
                 self.min_in_size_bounds[0] = max(
-                    self.min_in_size_bounds[0], get_canonicalized_min_in_size(*shape_params)
+                    self.min_in_size_bounds[0], get_canonical_min_in_size(*shape_params)
                 )
                 logger.info(
                     f"[In/out rel] Step {self.step} - Converged to in/out size relation:"
@@ -358,7 +357,7 @@ class SlidingWindowParamsSolver:
             # the actual minimum input size. Otherwise we'll bisect
             canon_min_in_size = None
             if self.in_out_rel_params is not None:
-                canon_min_in_size = get_canonicalized_min_in_size(*self.in_out_rel_params)
+                canon_min_in_size = get_canonical_min_in_size(*self.in_out_rel_params)
             if canon_min_in_size is not None and not any(
                 record["in_seq_size"] == canon_min_in_size for record in self.nan_trick_history
             ):
@@ -555,7 +554,6 @@ class SlidingWindowParamsSolver:
         return [hyp.params for hyp in out_sols]
 
 
-@torch.no_grad()
 def find_sliding_window_params(
     trsfm: Callable,
     in_spec: SeqSpec,
@@ -563,10 +561,14 @@ def find_sliding_window_params(
     init_seq_size: int = 30,
     max_in_out_seq_size: int = 1_000_000,
     max_equivalent_sols: int = 1,
+    hyp_test_upsize_factor: int = 3,
     zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
     debug_ref_params: SlidingWindowParams | None = None,
 ) -> List[SlidingWindowParams]:
-    """ """
+    """
+    Convenience wrapper around SlidingWindowParamsSolver.find_sliding_window_params. Refer to the class constructor
+    and method for parameter documentation.
+    """
     return SlidingWindowParamsSolver(
         trsfm=trsfm,
         in_spec=in_spec,
@@ -575,4 +577,4 @@ def find_sliding_window_params(
         max_in_out_seq_size=max_in_out_seq_size,
         zero_size_exception_signatures=zero_size_exception_signatures,
         debug_ref_params=debug_ref_params,
-    ).find_sliding_window_params(max_equivalent_sols)
+    ).find_sliding_window_params(max_equivalent_sols, hyp_test_upsize_factor)

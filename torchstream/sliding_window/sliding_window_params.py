@@ -8,7 +8,34 @@ from torchstream.sliding_window.z3_utils import IntLike, z3_ceil_div, z3_divmod,
 
 class SlidingWindowParams:
     """
-    This class represents the parameters of a sliding window transform (e.g. a convolution, a moving average, ...).
+    This class represents the parameters of a sliding window transform (e.g. a convolution, a moving average, an stft,
+    ...). It is generalized to represent both an input and an output kernel with left/right padding and trimming
+    respectively.
+
+    The nature of the transform's padding (constant, reflect, ...) is not modeled by this class. The sparsity of the
+    kernels (e.g. dilated convolutions) is modeled by torchstream.sliding_window.kernel_sparsity and not by this class.
+
+    :param kernel_size_in: The kernel size of the input. If the kernel has gaps (i.e. omits elements in its span, like
+    dilated convolutions do), this is the full span of the kernel. For instance, Conv1d(kernel_size=3, dilation=2) is
+    modeled as having a kernel_size_in of 5.
+    :param stride_in: The number of elements the input window is offset by on each new window.
+    :param left_pad: The static number of elements to pad on the left side of the input.
+    :param right_pad: The number of elements to pad on the right side of the input. Due to windows not necessarily
+    lining up with the input size with stride_in > 1, the effective right padding for a given input might be less than
+    this value.
+    :param kernel_size_out: The kernel size of the output. For each window computed in the input, this number of output
+    elements is produced, offset by stride_out on each new window. Overlaps between output windows are resolved by a
+    pointwise operation (e.g. summation for transposed convolutions) not modeled by this class.
+    :param stride_out: The number of elements the output window is offset by on each new window.
+    :param left_out_trim: The number of elements to trim from the left of the output. It is uncommon to trim the
+    output in practice, typically it's for getting rid of non-fully overlapping windows of the output when the
+    output kernel size is larger than 1. Transposed convolutions expose this parameter through the "padding"
+    parameter for example.
+    :param right_out_trim: The number of elements to trim from the right of the output. Transposed convolutions
+    allow different trimming values with their "output_padding" parameter.
+    :param min_input_size: If provided, allows setting a higher bound on the minimum input size necessary to have
+    any output element. This is useful for transforms that have a hard minimum input size requirement, such as
+    reflect padding. Note that the minimum input size is always at least 1.
     """
 
     def __init__(
@@ -23,25 +50,6 @@ class SlidingWindowParams:
         right_out_trim: int = 0,
         min_input_size: int | None = None,
     ):
-        """
-        :param kernel_size_in: The kernel size of the input. For dilated (à trous) convolutions, this is the span of
-        the entire kernel.
-        :param left_pad: The static number of elements to pad on the left side of the input.
-        :param right_pad: The maximum number of elements to pad on the right side of the input. Due to windows not
-        necessarily lining up with the input size with stride_in > 1, the effective right padding might be less than
-        this value.
-        :param kernel_size_out: The kernel size of the output. It is 1 for normal convolutions, but can be larger for
-        transposed convolutions.
-        :param left_out_trim: The number of elements to trim from the left of the output. It is uncommon to trim the
-        output in practice, typically it's for getting rid of non-fully overlapping windows of the output when the
-        output kernel size is larger than 1. Transposed convolutions expose this parameter through the "padding"
-        parameter for example.
-        :param right_out_trim: The number of elements to trim from the right of the output. Transposed convolutions
-        allow different trimming values with their "output_padding" parameter.
-        :param min_input_size: If provided, allows setting a higher bound on the minimum input size necessary to have
-        any output element. This is useful for transforms that have a hard minimum input size requirement, such as
-        reflect padding.
-        """
         self.kernel_size_in = int(kernel_size_in)
         self.kernel_size_out = int(kernel_size_out)
         self.stride_in = int(stride_in)
@@ -77,19 +85,50 @@ class SlidingWindowParams:
         self.min_input_size = max(min_input_size or 1, native_min_input_size)
 
     @property
-    def canonicalized_in_out_shape_params(self) -> Tuple[int, int, int, int]:
-        return get_canonicalized_in_out_shape_params(self)
+    def canonical_in_out_size_params(self) -> Tuple[int, int, int, int]:
+        """
+        The input to output size relation of a sliding window transform is of the form:
+            out_size = ((in_size + in_size_bias) // stride_in) * stride_out + out_size_bias
+
+        This relationship can be made unique by enforcing in_size_bias to be in [0, stride_in[, the parameters are then
+        said to be canonical.
+
+        :return: The canonical (stride_in, stride_out, in_size_bias_canonical, out_size_bias_canonical) tuple.
+        """
+        return get_canonical_in_out_size_params(self)
 
     @property
     def output_delay_bounds(self) -> Tuple[int, int]:
+        """
+        Computes the minimum and maximum values of the streaming output delay. Given an input sequence, the output
+        delay is the number of elements at the end of its output sequence that will no longer be correct if more
+        output is to be produced with new input elements, i.e. if we're doing streaming.
+
+        The output delay can take a maximum of two different values depending on the input size.
+
+        :return: A tuple of (min_output_delay, max_output_delay).
+        """
         return get_output_delay_bounds(self)
 
     @property
     def output_delays(self) -> Tuple[int, ...]:
+        """
+        Returns all possible output delay values for these parameters. A tuple of s_i values is returned, and there
+        are at most two unique values possible. Delays are returned in order of increasing phase. For any given input
+        size, its output delay can be found at index (p_l + input_size - k_i) % s_i.
+        """
         return get_all_output_delays(self)
 
     @property
     def streaming_context_size(self) -> int:
+        """
+        Get the input context size necessary for streaming a transform with these sliding window parameters.
+
+        When streaming a transform, we continuously discard seen input in order to limit the compute cost of the
+        transform. However, there is a certain minimum number of input elements on the right that need not to be
+        discarded in order for the output to be equivalent from its non-streamed version. This value is the context
+        size and we can derive it from the sliding window parameters.
+        """
         return get_streaming_context_size(self)
 
     # TODO: test this function with a bunch of edge cases
@@ -97,7 +136,8 @@ class SlidingWindowParams:
     def native_min_input_size(self) -> int:
         """
         Returns the minimum input size necessary to have any output element (i.e. length>0). The returned value is
-        always at least one.
+        always at least one. If you have provided a min_input_size parameter to the constructor, this value might be
+        lower than that parameter.
         """
         out_needed = 1 + self.left_out_trim + self.right_out_trim
         num_wins_needed = int(math.ceil(max(0, out_needed - self.kernel_size_out) / self.stride_out)) + 1
@@ -106,7 +146,8 @@ class SlidingWindowParams:
 
     def get_min_input_size_for_num_wins(self, num_wins: int) -> int:
         """
-        Returns the minimum input size necessary to have a given number of output windows.
+        Returns the minimum input size necessary to have a given number of output windows. The value is always at
+        least self.min_input_size.
         """
         non_padded_min_input_size = (num_wins - 1) * self.stride_in + self.kernel_size_in
         return max(self.min_input_size, non_padded_min_input_size - self.left_pad - self.right_pad)
@@ -297,12 +338,21 @@ def _get_sli_args(args) -> Tuple[IntLike, IntLike, IntLike, IntLike, IntLike, In
 
 
 @overload
-def get_canonicalized_in_out_shape_params(sli_params: SlidingWindowParams, /) -> Tuple[int, int, int, int]: ...
+def get_canonical_in_out_size_params(sli_params: SlidingWindowParams, /) -> Tuple[int, int, int, int]: ...
 @overload
-def get_canonicalized_in_out_shape_params(
+def get_canonical_in_out_size_params(
     k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_l: IntLike, t_r: IntLike, /
 ) -> Tuple[IntLike, IntLike, IntLike, IntLike]: ...
-def get_canonicalized_in_out_shape_params(*args) -> Tuple[IntLike, IntLike, IntLike, IntLike]:
+def get_canonical_in_out_size_params(*args) -> Tuple[IntLike, IntLike, IntLike, IntLike]:
+    """
+    The input to output size relation of a sliding window transform is of the form:
+        out_size = ((in_size + in_size_bias) // stride_in) * stride_out + out_size_bias
+
+    This relationship can be made unique by enforcing in_size_bias to be in [0, stride_in[, the parameters are then
+    said to be canonical.
+
+    This function computes these in/out size parameters from the sliding window parameters.
+    """
     k_i, s_i, p_l, p_r, k_o, s_o, t_l, t_r = _get_sli_args(args)
 
     in_size_bias = p_l + p_r - k_i
@@ -310,17 +360,24 @@ def get_canonicalized_in_out_shape_params(*args) -> Tuple[IntLike, IntLike, IntL
 
     # Make the biases canonical so size relations are uniquely determined by a set of parameters
     if isinstance(s_i, int) and isinstance(in_size_bias, int):
-        quotient_bias, in_size_bias_canon = divmod(in_size_bias, s_i)
+        quotient_bias, in_size_bias_canonical = divmod(in_size_bias, s_i)
     else:
         quotient_bias = Int("quotient_bias")
-        in_size_bias_canon = in_size_bias - quotient_bias * s_i
+        in_size_bias_canonical = in_size_bias - quotient_bias * s_i
 
-    out_size_bias_canon = out_size_bias + quotient_bias * s_o
+    out_size_bias_canonical = out_size_bias + quotient_bias * s_o
 
-    return s_i, s_o, in_size_bias_canon, out_size_bias_canon
+    return s_i, s_o, in_size_bias_canonical, out_size_bias_canonical
 
 
-def get_canonicalized_min_in_size(s_i: IntLike, s_o: IntLike, isbc: IntLike, osbc: IntLike) -> IntLike:
+def get_canonical_min_in_size(s_i: IntLike, s_o: IntLike, isbc: IntLike, osbc: IntLike) -> IntLike:
+    """
+    Given a canonical input to output size relation parameters i.e.:
+        out_size = ((in_size + in_size_bias_canonical) // stride_in) * stride_out + out_size_bias_canonical
+
+    Returns the minimum input size necessary to have any output element. Note that a transform's minimum input size
+    can be strictly higher than its canonical minimum input size.
+    """
     return z3_max((z3_floor_div(-osbc, s_o) + 1) * s_i - isbc, 1)
 
 
@@ -349,9 +406,8 @@ def get_output_delay(*args, as_phase=False) -> IntLike:
 
     Therefore when streaming, we keep outputs up to out_len - output_delay and discard the rest.
 
-    The output delay is constant for parameters right padding=0, but with right padding>0 it can take two different
-    values depending on the phase (i.e. on the input size).
-
+    The output delay is constant for parameters with right padding=0, but with right padding>0 it can take two
+    different values depending on the phase, i.e. on the input size.
     """
     (k_i, s_i, p_l, p_r, k_o, s_o, t_l, t_r), input_size = _get_sli_args(args[:-1]), args[-1]
 
@@ -376,7 +432,11 @@ def get_output_delay_bounds(
     k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_l: IntLike, t_r: IntLike, /
 ) -> Tuple[IntLike, IntLike]: ...
 def get_output_delay_bounds(*args) -> Tuple[IntLike, IntLike]:
-    # TODO: doc
+    """
+    Returns the minimum and maximum values of the output delay for the given sliding window parameters. Keep in mind
+    that all sliding window parameters only have up to two possible output delay values, so the output delay can never
+    be different than either of these bounds.
+    """
     k_i, s_i, p_l, p_r, k_o, s_o, t_l, t_r = _get_sli_args(args)
     return (
         get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_l, t_r, 0, as_phase=True),
@@ -391,7 +451,11 @@ def get_all_output_delays(
     k_i: IntLike, s_i: int, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_l: IntLike, t_r: IntLike, /
 ) -> Tuple[IntLike, ...]: ...
 def get_all_output_delays(*args) -> Tuple[IntLike, ...]:
-    # TODO: doc
+    """
+    Returns all possible output delay values for the given sliding window parameters. A tuple of s_i values is
+    returned, and there are at most two unique values possible. Delays are returned in order of increasing phase.
+    For any given input size, its output delay can be found at index (p_l + input_size - k_i) % s_i.
+    """
     k_i, s_i, p_l, p_r, k_o, s_o, t_l, t_r = _get_sli_args(args)
     # NOTE: can be computed more efficiently for very large strides if necessary
     return tuple(get_output_delay(k_i, s_i, p_l, p_r, k_o, s_o, t_l, t_r, phase, as_phase=True) for phase in range(s_i))
