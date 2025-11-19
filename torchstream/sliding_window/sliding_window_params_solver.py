@@ -305,7 +305,11 @@ class SlidingWindowParamsSolver:
             sampler.add_in_out_size(record["in_seq_size"], record["out_seq_size"])
 
         while True:
-            shape_params, next_in_size = sampler.solve(self.min_in_size_bounds[0], self.max_in_out_seq_size)
+            max_in_size = min(
+                10 * max((record["in_seq_size"] for record in self.nan_trick_history)),
+                self.max_in_out_seq_size,
+            )
+            shape_params, next_in_size = sampler.solve(self.min_in_size_bounds[0], max_in_size)
             if shape_params:
                 # Params uniquely determined, let's update our state and our lower bound for the input size based
                 # on them
@@ -384,7 +388,10 @@ class SlidingWindowParamsSolver:
 
         return self.min_in_size_bounds[0]
 
-    def _iter_nan_trick_params_for_hypothesis(self, params: SlidingWindowParams):
+    def _iter_nan_trick_params_for_hypothesis(self, params: SlidingWindowParams, upsize_factor: int):
+        if upsize_factor < 1:
+            raise ValueError(f"Upsize factor must be >= 1, got {upsize_factor}")
+
         # As specified in the sampler, for any given set of parameters, picking a nan range larger than the input
         # kernel size and ensuring that the pre-nan out size is larger than the output kernel size will let us
         # know with certainty whether the parameters' delays are matching the transform.
@@ -411,19 +418,17 @@ class SlidingWindowParamsSolver:
                 nan_start_phases.discard(record["in_nan_range"][0] % params.stride_in)
                 nan_end_phases.discard(record["in_nan_range"][1] % params.stride_in)
 
-        # TODO
-        size_factor = 3
         for nan_start_phase, nan_end_phase in zip_longest(nan_start_phases, nan_end_phases, fillvalue=0):
             # Align the nan start on the given phase while ensuring the pre-nan in size is large enough
-            pre_nan_in_size = min_non_nan_in_size * size_factor
+            pre_nan_in_size = min_non_nan_in_size * upsize_factor
             pre_nan_in_size = pre_nan_in_size + ((nan_start_phase - pre_nan_in_size) % params.stride_in)
 
             # Then the nan end, ensuring the nan range is large enough
-            post_nan_in_size = pre_nan_in_size + min_nan_in_size * size_factor
+            post_nan_in_size = pre_nan_in_size + min_nan_in_size * upsize_factor
             post_nan_in_size = post_nan_in_size + ((nan_end_phase - post_nan_in_size) % params.stride_in)
 
             # The post-nan segment must also be large enough, but doesn't need to be phase aligned
-            full_in_size = post_nan_in_size + min_non_nan_in_size * size_factor
+            full_in_size = post_nan_in_size + min_non_nan_in_size * upsize_factor
 
             yield (full_in_size, (pre_nan_in_size, post_nan_in_size))
 
@@ -474,7 +479,28 @@ class SlidingWindowParamsSolver:
 
     # TODO (major): split further into two steps: one for streaming params (out delay + ctx) using stride based
     # constraints, and a last step for kernel sizes by embedding the kernel sparsity solver
-    def find_sliding_window_params(self, max_equivalent_sols: int = 1):
+    def find_sliding_window_params(
+        self, max_equivalent_sols: int = 1, hyp_test_upsize_factor: int = 3
+    ) -> List[SlidingWindowParams]:
+        """
+        Performs the sliding window parameter search
+
+        :param max_equivalent_sols: maximum number of functionally equivalent solutions to find before returning. All
+        solutions will share the same stride, size relation, and the same optimal streaming parameters (output delays,
+        context size). This parameter exists to explore the different kernel size, padding & trimming combinations that
+        can yield the same input to output mapping. With a finite maximum number of solutions, there is no guarantee
+        that the solver will return precisely the sliding window parameters of the given transform, only functionally
+        equivalent ones.
+        TODO: offer to fully determine the kernel sparsity
+        :param hyp_test_upsize_factor: when a hypothesis is found, inputs are generated with sizes based on the
+        hypothesis' parameters, and upscaled by this factor. In case the hypothesis is incorrect, the upscaling allows
+        for pruning similar hypotheses with slightly higher parameters ahead of time, reducing the total number of
+        steps necessary to converge. The tradeoff is that larger input sizes will take more time for the model to
+        process.
+
+        :return: a list of SlidingWindowParams instances, each functionally equivalent to the transform's actual
+        sliding window parameters.
+        """
         # Start by determining the input/output size relationship, it will heavily simplify the param search to
         # know it in advance
         in_out_rel_params = self.find_in_out_size_params()
@@ -513,7 +539,9 @@ class SlidingWindowParamsSolver:
             else:
                 out_sols.append(hypothesis)
 
-            for nan_trick_params in self._iter_nan_trick_params_for_hypothesis(hypothesis.params):
+            for nan_trick_params in self._iter_nan_trick_params_for_hypothesis(
+                hypothesis.params, hyp_test_upsize_factor
+            ):
                 record = self.run_nan_trick(*nan_trick_params)
                 out_sols = self._sli_search_integrate_nan_trick_record(sampler, out_sols, record)
                 checks_passed &= hypothesis in out_sols
