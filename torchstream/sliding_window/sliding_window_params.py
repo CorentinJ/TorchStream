@@ -1,5 +1,5 @@
 import math
-from typing import Iterator, Tuple, overload
+from typing import Iterator, List, Tuple, overload
 
 from z3 import If, Int
 
@@ -205,11 +205,15 @@ class SlidingWindowParams:
         num_wins = self.get_num_wins_for_in_size(in_size)
         return self.get_out_size_for_num_wins(num_wins)
 
+    @overload
+    def iter_kernel_map(self, *, in_len: int) -> Iterator[Tuple[Tuple[int, int], Tuple[int, int]]]: ...
+    @overload
+    def iter_kernel_map(self, *, num_wins: int) -> Iterator[Tuple[Tuple[int, int], Tuple[int, int]]]: ...
     def iter_kernel_map(
         self, *, in_len: int | None = None, num_wins: int | None = None
     ) -> Iterator[Tuple[Tuple[int, int], Tuple[int, int]]]:
         """
-        Iterates over the regions of input and output mapped by the sliding window transform.
+        Iterates over the regions of input and output mapped by the sliding window parameters.
 
         Note:
         - Both input and output windows may overlap.
@@ -247,7 +251,8 @@ class SlidingWindowParams:
         self, in_len: int, bound_input: bool = True, bound_output: bool = True
     ) -> Iterator[Tuple[Tuple[int, int], Tuple[int, int]]]:
         """
-        Wrapper around get_kernel_map() that bounds the input and output windows between 0 and their respective sizes.
+        Wrapper around get_kernel_map() that bounds the input and output windows between 0 and the in/out lengths
+        respectively.
         """
         out_len = self.get_out_size_for_in_size(in_len)
 
@@ -261,13 +266,26 @@ class SlidingWindowParams:
 
             yield (in_start, in_stop), (out_start, out_stop)
 
-    def get_inverse_kernel_map(self, in_len: int):
-        # TODO: doc
+    def get_inverse_kernel_map(self, in_len: int) -> List[Tuple[int, int, List[Tuple[int, int, int]]]]:
+        """
+        Given an input length, returns a partition of the output based on which input windows contributed to each
+        region.
+
+        The output format is the following:
+        [(out_start, out_end, [(win_idx, kernel_out_start, kernel_out_end), ...]), ...]
+
+        For instance, the given inverse map
+        [
+            (0, 2, [(0, 0, 2)]),
+            (2, 3, [(0, 2, 3), (1, 0, 1)])
+        ]
+        means that output elements [0, 2[ are produced by the slice [0, 2[ of the output kernel of window 0,
+        and the output element at index 2 is produced by the slice [2, 3[ of the output kernel of window 0 and
+        the slice [0, 1[ of the output kernel of window 1.
+        """
         num_wins = self.get_num_wins_for_in_size(in_len)
         out_len = self.get_out_size_for_num_wins(num_wins)
 
-        # Compute the overlapping output windows with the following output format:
-        #   [(out_start, out_end, [(win_idx, kernel_out_start, kernel_out_end), ...]), ...]
         # TODO: this is O(n^2) when it can be done in O(n)
         win_out_map = [
             (win_idx, out_start, out_stop)

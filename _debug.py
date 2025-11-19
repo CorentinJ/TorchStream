@@ -10,5 +10,6 @@ tracer = trace.get_tracer(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
-s = SlidingWindowParams(5, 3, right_pad=2)
-print(s.output_delays)
+s = SlidingWindowParams(kernel_size_in=5, stride_in=3, kernel_size_out=3, stride_out=2)
+for c in s.get_inverse_kernel_map(in_len=20):
+    print(c)
