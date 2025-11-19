@@ -286,7 +286,7 @@ class SlidingWindowParams:
         )
 
 
-def _get_sli_args(args):
+def _get_sli_args(args) -> Tuple[IntLike, IntLike, IntLike, IntLike, IntLike, IntLike, IntLike, IntLike]:
     if len(args) == 1 and isinstance(args[0], SlidingWindowParams):
         p = args[0]
         return p.as_tuple(with_min_in_size=False)
@@ -297,12 +297,10 @@ def _get_sli_args(args):
 
 
 @overload
-def get_canonicalized_in_out_shape_params(
-    sli_params: SlidingWindowParams,
-) -> Tuple[int, int, int, int]: ...
+def get_canonicalized_in_out_shape_params(sli_params: SlidingWindowParams, /) -> Tuple[int, int, int, int]: ...
 @overload
 def get_canonicalized_in_out_shape_params(
-    k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_l: IntLike, t_r: IntLike
+    k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_l: IntLike, t_r: IntLike, /
 ) -> Tuple[IntLike, IntLike, IntLike, IntLike]: ...
 def get_canonicalized_in_out_shape_params(*args) -> Tuple[IntLike, IntLike, IntLike, IntLike]:
     k_i, s_i, p_l, p_r, k_o, s_o, t_l, t_r = _get_sli_args(args)
@@ -327,7 +325,7 @@ def get_canonicalized_min_in_size(s_i: IntLike, s_o: IntLike, isbc: IntLike, osb
 
 
 @overload
-def get_output_delay(sli_params: SlidingWindowParams, input_size: int, as_phase=False) -> int: ...
+def get_output_delay(sli_params: SlidingWindowParams, input_size: int, /, *, as_phase=False) -> int: ...
 @overload
 def get_output_delay(
     k_i: IntLike,
@@ -338,7 +336,9 @@ def get_output_delay(
     s_o: IntLike,
     t_l: IntLike,
     t_r: IntLike,
-    input_size: int,
+    input_size: IntLike,
+    /,
+    *,
     as_phase=False,
 ) -> IntLike: ...
 def get_output_delay(*args, as_phase=False) -> IntLike:
@@ -370,10 +370,10 @@ def get_output_delay(*args, as_phase=False) -> IntLike:
 
 
 @overload
-def get_output_delay_bounds(sli_params: SlidingWindowParams) -> Tuple[int, int]: ...
+def get_output_delay_bounds(sli_params: SlidingWindowParams, /) -> Tuple[int, int]: ...
 @overload
 def get_output_delay_bounds(
-    k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_l: IntLike, t_r: IntLike
+    k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_l: IntLike, t_r: IntLike, /
 ) -> Tuple[IntLike, IntLike]: ...
 def get_output_delay_bounds(*args) -> Tuple[IntLike, IntLike]:
     # TODO: doc
@@ -385,10 +385,10 @@ def get_output_delay_bounds(*args) -> Tuple[IntLike, IntLike]:
 
 
 @overload
-def get_all_output_delays(sli_params: SlidingWindowParams) -> Tuple[int, ...]: ...
+def get_all_output_delays(sli_params: SlidingWindowParams, /) -> Tuple[int, ...]: ...
 @overload
 def get_all_output_delays(
-    k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_l: IntLike, t_r: IntLike
+    k_i: IntLike, s_i: int, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_l: IntLike, t_r: IntLike, /
 ) -> Tuple[IntLike, ...]: ...
 def get_all_output_delays(*args) -> Tuple[IntLike, ...]:
     # TODO: doc
@@ -398,12 +398,10 @@ def get_all_output_delays(*args) -> Tuple[IntLike, ...]:
 
 
 @overload
-def get_streaming_context_size(
-    sli_params: SlidingWindowParams,
-) -> int: ...
+def get_streaming_context_size(sli_params: SlidingWindowParams, /) -> int: ...
 @overload
 def get_streaming_context_size(
-    k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_l: IntLike, t_r: IntLike
+    k_i: IntLike, s_i: IntLike, p_l: IntLike, p_r: IntLike, k_o: IntLike, s_o: IntLike, t_l: IntLike, t_r: IntLike, /
 ) -> IntLike: ...
 def get_streaming_context_size(*args) -> IntLike:
     """
@@ -446,7 +444,9 @@ def get_streaming_context_size(*args) -> IntLike:
 
 
 def in_out_rel_repr(s_i: int, s_o: int, isb: int, osb: int) -> str:
-    # I didn't want to use sympy for this...
+    """
+    Returns a string representation of symbolic expression of input size to output size relationship.
+    """
     out_str = "x"
     if isb > 0:
         out_str = f"(x + {isb})"
