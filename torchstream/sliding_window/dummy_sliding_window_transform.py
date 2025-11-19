@@ -14,9 +14,7 @@ class DummySlidingWindowTransform:
         self.params = params
 
     def __call__(self, x: np.ndarray):
-        (left_pad, right_pad), num_wins, out_size = self.params.get_metrics_for_input(x.shape[-1])
-
-        out = np.zeros(out_size)
+        out = np.zeros(self.params.get_out_size_for_in_size(x.shape[-1]))
         for (in_start, in_stop), (out_start, out_stop) in self.params.iter_bounded_kernel_map(x.shape[-1]):
             # NOTE: not weighing in the padding, but this is just a dummy transform so it's fine
             out[out_start:out_stop] += np.mean(x[in_start:in_stop])

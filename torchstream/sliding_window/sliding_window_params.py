@@ -160,52 +160,50 @@ class SlidingWindowParams:
         num_wins_needed = int(math.ceil(max(0, pre_trim_out_size - self.kernel_size_out) / self.stride_out)) + 1
         return self.get_min_input_size_for_num_wins(num_wins_needed)
 
-    # TODO! refactor, terrible name & mechanics
-    def get_metrics_for_input(self, in_len: int) -> Tuple[Tuple[int, int], int, int]:
+    def get_num_wins_for_in_size(self, in_size: int) -> int:
         """
-        Computes the padding, number of windows and output length for an input to the transform with a given length.
-
-        :param in_len: The length of the input tensor, without the sliding window padding applied.
-        :return:
-            - (left_pad, right_pad): A tuple of integers of the padding that is applied to the input tensor before
-            applying the sliding window transform. Because sliding windows with input stride > 1 might not line up
-            exactly with the end of the padded input, the right padding for a given input length might be effectively
-            less than <self.right_pad>. There are also cases where inputs on the right go unused, and therefore the
-            effective right padding returned will be negative. This is to ensure that the padded input always lines
-            up with the last window.
-            - num_wins: The number of windows that are computed for the given input length.
-            - out_len: The length of the output tensor.
+        Returns the number of windows computed for a given input size.
+        :param in_size: The length of the input tensor, without the sliding window padding applied.
         """
-        # Number of windows
-        if in_len < self.min_input_size:
-            num_wins = 0
+        if in_size < self.min_input_size:
+            return 0
         else:
-            num_wins = (self.left_pad + in_len + self.right_pad - self.kernel_size_in) // self.stride_in + 1
-            assert num_wins > 0
+            return (self.left_pad + in_size + self.right_pad - self.kernel_size_in) // self.stride_in + 1
 
-        # Padding
+    def get_effective_padding_for_in_size(self, in_size: int) -> Tuple[int, int]:
+        """
+        Returns the effective (left_pad, right_pad) applied to an input of given size. When stride_in > 1, the
+        input windows might not line up exactly with the end of the padded input. Therefore the right padding for a
+        given input length might be effectively less than self.right_pad. There are also cases where inputs on the right
+        go unused, and therefore the effective right padding returned will be negative. This is to ensure that the
+        padded input always lines up with the last window.
+
+        :param in_size: The length of the input. Must be at least self.min_input_size, or the function raises a
+        ValueError.
+        """
+        num_wins = self.get_num_wins_for_in_size(in_size)
         if num_wins == 0:
-            # TODO: check if this really makes sense
-            #   -> Maybe return negative right padding??
-            padding = (0, 0)
-        else:
-            padded_input_size = (num_wins - 1) * self.stride_in + self.kernel_size_in
-            right_pad = padded_input_size - in_len - self.left_pad
-            assert -self.stride_in < right_pad, (
-                "Internal error: trimming on the right should be smaller than the stride"
-            )
-            assert right_pad <= self.kernel_size_in, (
-                "Internal error: padding on either side should not exceed kernel size"
-            )
-            padding = (self.left_pad, right_pad)
+            raise ValueError("Input size is smaller than the minimum input size necessary to have any output element.")
 
-        if num_wins == 0:
-            out_len = 0
-        else:
-            out_len = (num_wins - 1) * self.stride_out + self.kernel_size_out - self.left_out_trim - self.right_out_trim
-            assert out_len > 0
+        padded_input_size = (num_wins - 1) * self.stride_in + self.kernel_size_in
+        right_pad = padded_input_size - in_size - self.left_pad
+        return self.left_pad, right_pad
 
-        return padding, num_wins, out_len
+    def get_out_size_for_num_wins(self, num_wins: int) -> int:
+        """
+        Returns the output size for a given number of windows.
+        """
+        return (num_wins - 1) * self.stride_out + self.kernel_size_out - self.left_out_trim - self.right_out_trim
+
+    def get_out_size_for_in_size(self, in_size: int) -> int:
+        """
+        Returns the output size for a given input size.
+        :param in_size: The length of the input tensor, without the sliding window padding applied.
+        """
+        if in_size < self.min_input_size:
+            return 0
+        num_wins = self.get_num_wins_for_in_size(in_size)
+        return self.get_out_size_for_num_wins(num_wins)
 
     def iter_kernel_map(
         self, *, in_len: int | None = None, num_wins: int | None = None
@@ -227,7 +225,7 @@ class SlidingWindowParams:
         if in_len is not None:
             if num_wins is not None:
                 raise ValueError("Only one of in_len and num_wins should be provided.")
-            _, num_wins, _ = self.get_metrics_for_input(in_len)
+            num_wins = self.get_num_wins_for_in_size(in_len)
         elif num_wins is None:
             num_wins = int(1e10)
         else:
@@ -251,7 +249,7 @@ class SlidingWindowParams:
         """
         Wrapper around get_kernel_map() that bounds the input and output windows between 0 and their respective sizes.
         """
-        _, _, out_len = self.get_metrics_for_input(in_len)
+        out_len = self.get_out_size_for_in_size(in_len)
 
         for (in_start, in_stop), (out_start, out_stop) in self.iter_kernel_map(in_len=in_len):
             if bound_input:
@@ -265,7 +263,8 @@ class SlidingWindowParams:
 
     def get_inverse_kernel_map(self, in_len: int):
         # TODO: doc
-        _, num_wins, out_len = self.get_metrics_for_input(in_len)
+        num_wins = self.get_num_wins_for_in_size(in_len)
+        out_len = self.get_out_size_for_num_wins(num_wins)
 
         # Compute the overlapping output windows with the following output format:
         #   [(out_start, out_end, [(win_idx, kernel_out_start, kernel_out_end), ...]), ...]

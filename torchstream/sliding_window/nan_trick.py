@@ -96,7 +96,7 @@ def get_context_size_empirically(
         # We'll mimick the streaming. We begin by saying that the stream has already performed a step with the given
         # input size, and see where the output position of the stream is.
         in_size = base_in_size + phase_offset
-        *_, out_size = params.get_metrics_for_input(in_size)
+        out_size = params.get_out_size_for_in_size(in_size)
         out_delay = get_output_delay(params, in_size)
         stream_out_pos = out_size - out_delay
         assert stream_out_pos > 0, "Input size is not sufficient"

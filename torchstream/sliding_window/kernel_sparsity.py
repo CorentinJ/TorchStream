@@ -60,7 +60,7 @@ def get_nan_map(
     in_vec = np.zeros(in_len, dtype=int)
     if in_nan_range is not None:
         in_vec[in_nan_range[0] : in_nan_range[1]] = 1
-    (left_pad, right_pad), _, out_len = params.get_metrics_for_input(in_len)
+    left_pad, right_pad = params.get_effective_padding_for_in_size(in_len)
     padded_in_vec = np.pad(in_vec, (left_pad, max(0, right_pad)))
     if right_pad < 0:
         padded_in_vec = padded_in_vec[:right_pad]
@@ -80,7 +80,6 @@ def get_nan_map(
     out_vec = out_vec[params.left_out_trim :]
     if params.right_out_trim > 0:
         out_vec = out_vec[: -params.right_out_trim]
-    assert out_vec.shape == (out_len,)
 
     return out_vec
 

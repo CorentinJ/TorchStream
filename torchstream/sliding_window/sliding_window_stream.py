@@ -40,18 +40,15 @@ class SlidingWindowStream(Stream):
         self._prev_trimmed_output = None
 
     def _step(self, in_buff: Sequence) -> Sequence:
-        # Compute the actual output size we'll get from the transform
-        (_, right_pad), num_wins, out_size = self.params.get_metrics_for_input(in_buff.size)
-        sufficient_input = in_buff.size and out_size
-
         # See where the output should be trimmed
+        out_size = self.params.get_out_size_for_in_size(in_buff.size)
         if self.input_closed:
             out_trim_end = out_size
         else:
             out_delay = get_output_delay(self.params, in_buff.size)
             out_trim_end = max(out_size - out_delay, 0)
 
-        if not sufficient_input or self.tsfm_out_pos + out_trim_end <= self.stream_out_pos:
+        if not out_size or self.tsfm_out_pos + out_trim_end <= self.stream_out_pos:
             if self.input_closed and self._prev_trimmed_output is not None:
                 return self._prev_trimmed_output
 
