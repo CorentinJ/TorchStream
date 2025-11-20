@@ -165,8 +165,8 @@ def test_no_receptive_field():
     def transform(x: np.ndarray):
         return np.full_like(x, fill_value=3.0)
 
-    sols = find_sliding_window_params(transform, SeqSpec(-1, dtype=float))
-    assert not sols
+    with pytest.raises(RuntimeError):
+        find_sliding_window_params(transform, SeqSpec(-1, dtype=float))
 
 
 @pytest.mark.parametrize("variant", ["mean", "prefix_mean", "suffix_mean", "mod7"])

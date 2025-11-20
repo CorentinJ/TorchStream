@@ -1,4 +1,5 @@
 import logging
+import math
 from itertools import zip_longest
 from typing import Callable, Iterable, List, Tuple
 
@@ -263,7 +264,9 @@ class SlidingWindowParamsSolver:
         while True:
             # Use sane defaults for the NaN trick
             try:
-                record = self.run_nan_trick(self.init_seq_size, (self.init_seq_size // 2, self.init_seq_size // 2 + 1))
+                nan_start = self.init_seq_size // 2 - self.init_seq_size // 20
+                nan_end = self.init_seq_size // 2 + int(math.ceil(self.init_seq_size / 20))
+                record = self.run_nan_trick(self.init_seq_size, (nan_start, nan_end))
             except MaximumSequenceSizeReachedError:
                 break
 
