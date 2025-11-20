@@ -5,6 +5,10 @@ from torchstream.sequence.sequence import SeqSpec, Sequence
 
 
 class Stream:
+    """
+    TODO!: doc
+    """
+
     def __init__(
         self,
         input_spec: SeqSpec,
@@ -16,8 +20,7 @@ class Stream:
         self._total_in_fed = 0
         self._total_out_produced = 0
 
-        self._input_closed = False
-        self._output_closed = False
+        self._closed = False
 
         self._in_buff = Sequence(self.in_spec)
 
@@ -30,51 +33,52 @@ class Stream:
         return self._total_out_produced
 
     @property
-    def input_closed(self) -> bool:
-        return self._input_closed
-
-    @property
-    def output_closed(self) -> bool:
-        return self._output_closed
-
-    def close_input(self):
-        self._input_closed = True
+    def is_closed(self) -> bool:
+        return self._closed
 
     @overload
-    def __call__(self, input: Sequence, is_last_input: bool = False, on_starve="raise") -> Sequence: ...
+    def __call__(
+        self, input: Sequence, /, *, is_last_input: bool = False, raise_on_starve: bool = False
+    ) -> Sequence: ...
     @overload
-    def __call__(self, *in_arrs: SeqArrayLike, is_last_input: bool = False, on_starve="raise") -> Sequence: ...
-    def __call__(self, *inputs, is_last_input: bool = False, on_starve="raise") -> Sequence:
-        # FIXME!! In/out closing is broken here
-        if self.output_closed:
-            raise RuntimeError("Cannot step with stream: output is already closed")
+    def __call__(
+        self, *in_arrs: SeqArrayLike, is_last_input: bool = False, raise_on_starve: bool = False
+    ) -> Sequence: ...
+    def __call__(
+        self, *inputs: Sequence | SeqArrayLike, is_last_input: bool = False, raise_on_starve: bool = False
+    ) -> Sequence:
+        if self.is_closed:
+            raise RuntimeError("Cannot step with stream: it is closed")
+
         if is_last_input:
-            self.close_input()
+            self._closed = True
 
-        prev_size = self._in_buff.size
-        self._in_buff.feed(*inputs)
-        self._total_in_fed += self._in_buff.size - prev_size
+        if len(inputs):
+            prev_size = self._in_buff.size
+            self._in_buff.feed(*inputs)
+            self._total_in_fed += self._in_buff.size - prev_size
 
         try:
             out_seq = self._step(self._in_buff)
             if not isinstance(out_seq, Sequence):
-                out_seq = self.out_spec.new_sequence_from_data(*out_seq)
+                if isinstance(out_seq, tuple):
+                    out_seq = self.out_spec.new_sequence_from_data(*out_seq)
+                else:
+                    out_seq = self.out_spec.new_sequence_from_data(out_seq)
         except NotEnoughInputError:
-            if on_starve == "raise":
+            if raise_on_starve:
                 raise
-            elif on_starve == "empty":
+            else:
                 out_seq = self.out_spec.new_empty_sequence()
-        except:
-            raise
-        finally:
-            if self.input_closed:
-                self._output_closed = True
 
         self._total_out_produced += out_seq.size
 
         return out_seq
 
-    def _step(self, in_buff: Sequence) -> Sequence | Tuple[SeqArrayLike, ...]:
+    def close_input(self) -> Sequence:
+        return self(is_last_input=True)
+
+    def _step(self, in_buff: Sequence, is_last_input: bool) -> Sequence | Tuple[SeqArrayLike, ...] | SeqArrayLike:
         """
         TODO! instruct how to override
 

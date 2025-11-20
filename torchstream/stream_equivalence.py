@@ -52,7 +52,7 @@ def test_stream_equivalent(
 
     step_size_iter = iter(itertools.cycle(in_step_sizes))
     i = 0
-    while not stream.output_closed:
+    while not stream.is_closed:
         # Read the next input chunk
         step_size = next(step_size_iter)
         in_stream_i = in_seq.read(step_size)
@@ -74,7 +74,7 @@ def test_stream_equivalent(
                     )
 
         # Check throughput with the NaN trick
-        if throughput_check_max_delay is not None and not stream.output_closed:
+        if throughput_check_max_delay is not None and not stream.is_closed:
             in_nan_trick_seq_i = in_nan_trick_seq.copy()
             in_nan_trick_seq_i[stream.total_in_fed :] = float("nan")
             out_nan_trick_seq_i = in_nan_trick_seq_i.apply(sync_fn, stream.out_spec)

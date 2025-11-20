@@ -16,6 +16,8 @@ class IncorrectSlidingWindowParametersError(Exception):
 class SlidingWindowStream(Stream):
     """
     TODO!: doc!
+
+    TODO: create_from_kernel vs create from sliding window transform with known parameters
     """
 
     def __init__(
@@ -39,17 +41,17 @@ class SlidingWindowStream(Stream):
         # being requested to compute any new window, and some previous output has not been returned yet.
         self._prev_trimmed_output = None
 
-    def _step(self, in_buff: Sequence) -> Sequence:
+    def _step(self, in_buff: Sequence, is_last_input: bool) -> Sequence:
         # See where the output should be trimmed
         out_size = self.params.get_out_size_for_in_size(in_buff.size)
-        if self.input_closed:
+        if is_last_input:
             out_trim_end = out_size
         else:
             out_delay = get_output_delay(self.params, in_buff.size)
             out_trim_end = max(out_size - out_delay, 0)
 
         if not out_size or self.tsfm_out_pos + out_trim_end <= self.stream_out_pos:
-            if self.input_closed and self._prev_trimmed_output is not None:
+            if is_last_input and self._prev_trimmed_output is not None:
                 return self._prev_trimmed_output
 
             # TODO: breakdown current state & display how much more data is needed
