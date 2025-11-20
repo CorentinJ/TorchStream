@@ -269,6 +269,12 @@ class Sequence:
         """
         return self.drop(max(self.size - n, 0))
 
+    def clear(self) -> int:
+        """
+        Clears the buffer entirely, returning the number of elements dropped.
+        """
+        return self.drop()
+
     def read(self, n: Optional[int] = None) -> "Sequence":
         """
         Reads a sequence of size up to n from the start of buffer while dropping it from the buffer. If the
