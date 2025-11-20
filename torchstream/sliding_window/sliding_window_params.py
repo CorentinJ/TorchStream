@@ -524,7 +524,7 @@ def get_streaming_context_size(*args) -> IntLike:
     return in_context_size
 
 
-def in_out_rel_repr(s_i: int, s_o: int, isb: int, osb: int) -> str:
+def in_out_size_rel_repr(s_i: int, s_o: int, isb: int, osb: int) -> str:
     """
     Returns a string representation of symbolic expression of input size to output size relationship.
     """

@@ -10,11 +10,11 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 
-class SlidingWindowInOutRelSampler:
+class SlidingWindowInOutSizeSampler:
     def __init__(self):
         self.obs = np.ndarray(shape=(0, 2), dtype=int)
 
-    @tracer.start_as_current_span("in_out_rel_sampler.add_in_out_size")
+    @tracer.start_as_current_span("in_out_size_sampler.add_in_out_size")
     def add_in_out_size(self, in_len: int, out_len: int):
         """
         TODO: doc
@@ -106,7 +106,7 @@ class SlidingWindowInOutRelSampler:
         max_infogain_input_size = input_size_by_max_infogain(in_to_out_sizes[:, min_in_size:]) + min_in_size
         return None, max_infogain_input_size
 
-    @tracer.start_as_current_span("in_out_rel_sampler.solve")
+    @tracer.start_as_current_span("in_out_size_sampler.solve")
     def solve(self, min_in_size: int, max_in_size: int) -> Tuple[Tuple[int, int, int, int] | None, int | None]:
         s_o, next_in_size = self._solve_so()
         if next_in_size:
@@ -120,13 +120,13 @@ class SlidingWindowInOutRelSampler:
 
 
 def compute_in_to_out_sizes(
-    shape_params: List[tuple],
+    in_out_size_params: List[tuple],
     max_input_size=10_000,
 ) -> np.ndarray:
     # TODO: doc
-    si, so, isbc, osbc = [np.array(param_group)[..., None] for param_group in zip(*shape_params)]
+    si, so, isbc, osbc = [np.array(param_group)[..., None] for param_group in zip(*in_out_size_params)]
 
-    out_sizes = np.stack([np.arange(0, max_input_size)] * len(shape_params))
+    out_sizes = np.stack([np.arange(0, max_input_size)] * len(in_out_size_params))
     out_sizes = np.maximum(((out_sizes + isbc) // si) * so + osbc, 0)
 
     return out_sizes
