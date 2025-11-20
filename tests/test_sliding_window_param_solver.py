@@ -156,18 +156,6 @@ def test_edge_cases(sli_params: SlidingWindowParams, dilation: int):
     _find_solution_or_equivalent(transform, SeqSpec(-1, dtype=float), sli_params)
 
 
-def test_infinite_receptive_field():
-    """
-    Tests that the solver does not find a solution for a transform that has an infinite receptive field.
-    """
-
-    def transform(x: np.ndarray):
-        return np.full_like(x, fill_value=np.mean(x))
-
-    sols = find_sliding_window_params(transform, SeqSpec(-1, dtype=float))
-    assert not sols
-
-
 def test_no_receptive_field():
     """
     Tests that the solver does not find a solution for a transform that has no receptive field (output is not
@@ -181,19 +169,19 @@ def test_no_receptive_field():
     assert not sols
 
 
-@pytest.mark.parametrize("variant", ["prefix_mean", "suffix_mean", "mod7"])
+@pytest.mark.parametrize("variant", ["mean", "prefix_mean", "suffix_mean", "mod7"])
 def test_variable_receptive_field(variant: str):
     """
-    Tests that the solver does not find a solution for a transform that has a receptive field of variable size.
+    Tests that the solver does not find a solution for a transform that has a non finite receptive field or a receptive
+    field of variable size.
     """
-    # TODO!!
-    if variant in ("prefix_mean", "suffix_mean"):
-        pytest.skip("These cases are not properly handled yet")
 
     def transform(x: np.ndarray):
         y = np.zeros_like(x)
 
-        if variant == "prefix_mean":
+        if variant == "mean":
+            y[:] = np.mean(x)
+        elif variant == "prefix_mean":
             for i in range(len(x)):
                 y[i] = np.mean(x[: i + 1])
         elif variant == "suffix_mean":
@@ -206,5 +194,8 @@ def test_variable_receptive_field(variant: str):
 
         return y
 
-    sols = find_sliding_window_params(transform, SeqSpec(-1, dtype=float))
+    try:
+        sols = find_sliding_window_params(transform, SeqSpec(-1, dtype=float), max_in_out_seq_size=10_000)
+    except RuntimeError:
+        sols = []
     assert not sols

@@ -64,7 +64,13 @@ decoder_trsfm = partial(pipeline.model.decoder.forward, s=ref_s)
 
 with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
     with intercept_calls("torch.cumsum", lambda x, dim: x):
-        sli_params = find_sliding_window_params(decoder_trsfm, decoder_in_spec, decoder_out_spec)[0]
+        sli_params = find_sliding_window_params(
+            decoder_trsfm,
+            decoder_in_spec,
+            decoder_out_spec,
+            # We'll be dealing with long sequences, bump up the limit
+            max_in_out_seq_size=1_000_000,
+        )[0]
 
 # In subsequent runs we won't need to run the solver again, we can reuse the found parameters. We'll only need to
 # call the solver again if we change hyperparameters or the model's architecture.

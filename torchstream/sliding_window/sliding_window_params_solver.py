@@ -1,4 +1,5 @@
 import logging
+from itertools import zip_longest
 from typing import Callable, Iterable, List, Tuple
 
 from colorama import Fore as colors
@@ -172,7 +173,7 @@ class SlidingWindowParamsSolver:
         in_spec: SeqSpec,
         out_spec: SeqSpec | None = None,
         init_seq_size: int = 30,
-        max_in_out_seq_size: int = 1_000_000,
+        max_in_out_seq_size: int = 100_000,
         zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
         debug_ref_params: SlidingWindowParams | None = None,
     ):
@@ -236,7 +237,7 @@ class SlidingWindowParamsSolver:
         else:
             self.min_in_size_bounds[0] = max(self.min_in_size_bounds[0], in_seq.size + 1)
 
-        if max(in_seq_size, out_seq.size) > self.max_in_out_seq_size:
+        if max(in_seq_size, out_seq.size) >= self.max_in_out_seq_size:
             raise MaximumSequenceSizeReachedError(
                 f"Reached maximum input/output sequence size ({self.max_in_out_seq_size:,}) "
                 f"with a {in_seq_size:,} -> {out_seq.size:,} forward pass. Aborting.\n"
@@ -511,7 +512,7 @@ class SlidingWindowParamsSolver:
     # TODO (major): split further into two steps: one for streaming params (out delay + ctx) using stride based
     # constraints, and a last step for kernel sizes by embedding the kernel sparsity solver
     def find_sliding_window_params(
-        self, max_equivalent_sols: int = 1, hyp_test_upsize_factor: int = 3
+        self, max_equivalent_sols: int = 1, hyp_test_upsize_factor: int = 3, max_hypotheses: int = 300
     ) -> List[SlidingWindowParams]:
         """
         Performs the sliding window parameter search
@@ -528,6 +529,9 @@ class SlidingWindowParamsSolver:
         for pruning similar hypotheses with slightly higher parameters ahead of time, reducing the total number of
         steps necessary to converge. The tradeoff is that larger input sizes will take more time for the model to
         process.
+        :param max_hypotheses: maximum number of hypotheses to consider before raising a RuntimeError. The majority
+        of transforms should be solved before reaching 10 hypotheses, this is a limit for dealing with edge cases,
+        namely transforms with a receptive field of varying size.
 
         :return: a list of SlidingWindowParams instances, each functionally equivalent to the transform's actual
         sliding window parameters.
@@ -583,6 +587,14 @@ class SlidingWindowParamsSolver:
             if checks_passed:
                 logger.info(f"Hypothesis #{hypothesis.id} ACCEPTED as solution - all checks passed")
 
+            if n_hyps >= max_hypotheses:
+                raise RuntimeError(
+                    f"Reached maximum number of hypotheses ({max_hypotheses}) without converging to a solution. "
+                    f"Aborting.\n"
+                    f"This likely means that your transform has a receptive field of varying size, which is not "
+                    f"modeled by this solver."
+                )
+
         return [hyp.params for hyp in out_sols]
 
 
@@ -591,8 +603,9 @@ def find_sliding_window_params(
     in_spec: SeqSpec,
     out_spec: SeqSpec | None = None,
     init_seq_size: int = 30,
-    max_in_out_seq_size: int = 1_000_000,
+    max_in_out_seq_size: int = 100_000,
     max_equivalent_sols: int = 1,
+    max_hypotheses: int = 300,
     hyp_test_upsize_factor: int = 3,
     zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
     debug_ref_params: SlidingWindowParams | None = None,
@@ -609,4 +622,4 @@ def find_sliding_window_params(
         max_in_out_seq_size=max_in_out_seq_size,
         zero_size_exception_signatures=zero_size_exception_signatures,
         debug_ref_params=debug_ref_params,
-    ).find_sliding_window_params(max_equivalent_sols, hyp_test_upsize_factor)
+    ).find_sliding_window_params(max_equivalent_sols, hyp_test_upsize_factor, max_hypotheses)
