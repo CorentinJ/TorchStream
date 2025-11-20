@@ -58,7 +58,7 @@ def test_stream_equivalent(
         in_stream_i = in_seq.read(step_size)
 
         # Forward through the stream to get an output chunk
-        out_seq_stream_i = stream(in_stream_i, is_last_input=not in_seq.size, on_starve="empty")
+        out_seq_stream_i = stream(in_stream_i, is_last_input=not in_seq.size, allow_zero_size_outputs=True)
 
         # Read the corresponding output chunk from the sync output
         out_sync_i = out_ref_seq.read(out_seq_stream_i.size)

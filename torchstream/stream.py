@@ -38,14 +38,14 @@ class Stream:
 
     @overload
     def __call__(
-        self, input: Sequence, /, *, is_last_input: bool = False, raise_on_starve: bool = False
+        self, input: Sequence, /, *, is_last_input: bool = False, allow_zero_size_outputs: bool = False
     ) -> Sequence: ...
     @overload
     def __call__(
-        self, *in_arrs: SeqArrayLike, is_last_input: bool = False, raise_on_starve: bool = False
+        self, *in_arrs: SeqArrayLike, is_last_input: bool = False, allow_zero_size_outputs: bool = False
     ) -> Sequence: ...
     def __call__(
-        self, *inputs: Sequence | SeqArrayLike, is_last_input: bool = False, raise_on_starve: bool = False
+        self, *inputs: Sequence | SeqArrayLike, is_last_input: bool = False, allow_zero_size_outputs: bool = False
     ) -> Sequence:
         if self.is_closed:
             raise RuntimeError("Cannot step with stream: it is closed")
@@ -59,14 +59,14 @@ class Stream:
             self._total_in_fed += self._in_buff.size - prev_size
 
         try:
-            out_seq = self._step(self._in_buff)
+            out_seq = self._step(self._in_buff, is_last_input=is_last_input)
             if not isinstance(out_seq, Sequence):
                 if isinstance(out_seq, tuple):
                     out_seq = self.out_spec.new_sequence_from_data(*out_seq)
                 else:
                     out_seq = self.out_spec.new_sequence_from_data(out_seq)
         except NotEnoughInputError:
-            if raise_on_starve:
+            if not allow_zero_size_outputs:
                 raise
             else:
                 out_seq = self.out_spec.new_empty_sequence()
