@@ -2,7 +2,7 @@ import logging
 
 from opentelemetry import trace
 
-from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+from torchstream import SlidingWindowParams
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)

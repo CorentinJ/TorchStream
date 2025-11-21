@@ -108,8 +108,8 @@ class SlidingWindowParamsSolver:
     designed for streaming to feature sequence-global operation such as a mean or a norm over the sequence dimension.
     Such operations technically have an infinite input kernel size and cannot be streamed exactly. They may be
     approximated for streaming with success, but you will have to mitigate their NaN propagation effect for the
-    duration of the solver run, e.g. using the intercept_calls context manager to patch them into no-ops. Auto
-    regressive operations are not sliding window operations and will also need to be patched. In either case, the
+    duration of the solver run, e.g. using the intercept_calls context manager to patch them into identity functions.
+    Autoregressive operations are not sliding window operations and will also need to be patched. In either case, the
     solver is able to detect these transforms and raise an appropriate error. Layers with a variable receptive field
     (e.g. some attention layers) are not modeled by this solver and will need an adhoc implementation. Layers that
     cannot operate without seeing the entire input sequence (e.g. most attention layers) are inherently not
@@ -307,8 +307,8 @@ class SlidingWindowParamsSolver:
                 f"Your transform outputs NaNs covering the entire output (in_size={record['in_seq_size']}, "
                 f"out_size={record['out_seq_size']}). This likely means that an operation in your transform "
                 f"broadcasts an input element to all output elements, like a mean, batchnorm, etc... One solution "
-                f"might be to patch any such operation using torchstream's intercept_calls context manager to be a "
-                f"no-op for the duration of the solver run, and approximate it later for streaming."
+                f"might be to patch any such operation using torchstream's intercept_calls context manager to be an "
+                f"identity function for the duration of the solver run, and approximate it later for streaming."
             )
         elif fail_reason == "first output is NaN":
             raise RuntimeError(
@@ -323,8 +323,8 @@ class SlidingWindowParamsSolver:
                 f"out_size={record['out_seq_size']}, out_nan_range={record['out_nan_range']}). This likely means that "
                 f"you have an autoregressive operation in your model (e.g. LSTM, cumsum, ...) that keeps producing "
                 f"NaNs onces it has seen one. These operations are usually trivially streamable, but you'll need to "
-                f"prevent their NaN propagation for the duration of the solver run, e.g. by patching them into no-ops "
-                f"using torchstream's intercept_calls context manager."
+                f"prevent their NaN propagation for the duration of the solver run, e.g. by patching them into "
+                f"identity functions using torchstream's intercept_calls context manager."
             )
 
     @tracer.start_as_current_span("find_in_out_size_params")
@@ -364,15 +364,8 @@ class SlidingWindowParamsSolver:
             # If we have no solution, the transform is not a sliding window.
             if not next_in_size:
                 raise RuntimeError(
-                    "Could not determine input/output size relationship for your transform. This means that your "
-                    "transform does not behave like a sliding window. "
-                    # TODO: this is rarely going to be the case for the users that get this message... Adapt
-                    "\nIf your transform is a model that is indeed a succession of sliding window "
-                    "operations, you must avoid upsampling operations (e.g. conv transposed) followed by a "
-                    "downsampling operation (e.g. conv, pool) with respective strides that cannot be expressed as "
-                    "a 1/x or x/1 ratio of integers."
-                    "\nEither way, or if you believe this is a bug, opening an issue on the TorchStream repo would be "
-                    "greatly appreciated: https://github.com/CorentinJ/TorchStream/issues"
+                    "Could not determine input/output size relationship for your transform. This likely means that "
+                    "your transform does not behave like a sliding window with a kernel of fixed size."
                 )
 
             # TODO? should we try different nan idx values here already?
