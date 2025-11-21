@@ -1,5 +1,7 @@
 import numpy as np
 
+# TODO: docs for all functions
+
 
 def view_as_windows(arr: np.ndarray, kernel_size: int, stride: int) -> np.ndarray:
     if arr.ndim != 1:
