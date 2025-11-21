@@ -24,6 +24,50 @@ tracer = trace.get_tracer(__name__)
 
 
 class SeqSpec:
+    """
+    A SeqSpec (sequence specification) describes the data format of one or multiple arrays (torch tensors or numpy
+    arrays) that each hold sequential data along a specified dimension (the sequence dimension).
+
+    For instance, this SeqSpec could represent the format for stereo audio (encoded as floating-point) and a
+    per-sample Voice Activity Detection flag.
+    >>> SeqSpec((2, -1, np.float32), (-1, bool))
+    SeqSpec(
+        Array #0: (2, -1) np.float32
+        Array #1: (-1,) np.bool
+    )
+
+    A SeqSpec dictates the shape, type and device (for torch) of array data. It also exposes data validation, data
+    manipulation methods and data constructors to work with sequential arrays.
+
+    In the sequence specification required in the constructor, shapes must have a negative value that represents the
+    sequence dimension. Arrays can match the SeqSpec's format with varying sizes along the sequence dimension, but
+    must match exactly along the other dimensions. The sequence dimension can take different scales, indicated
+    by its absolute value.
+
+    For instance, this SeqSpec could represent the data format for a 60fps video feed (encoded as uint8 RGB images)
+    along with 48kHz mono audio:
+    >>> SeqSpec((-1, 1080, 1920, 3, torch.uint8, "cuda"), (-800, "cuda"))
+    SeqSpec(
+        Tensor #0: (-1, 1080, 1920, 3) cuda torch.uint8
+        Tensor #1: (-800,) cuda torch.float32
+    )
+    The scale of the audio array is 800, since for each video frame (1/60s), there are 800 audio samples (1/48000s).
+
+    :param specs: the arguments can take the following forms:
+    - A shape expressed with multiple integers or as a single tuple of integers, with optional dtype and device
+    arguments (their order is interchangeable). The shape must contain exactly one negative integer representing the
+    sequence dimension and its scale.
+    - A single array (torch tensor or numpy array) with an optional seq_dim argument to specify the sequence dimension.
+    Note that it is not possible to specify a sequence scale other than 1 with this argument.
+    - Multiple of the aboves, each provided as a tuple. Keyword arguments cannot be used in this case.
+
+    Examples:
+    >>> SeqSpec(3, -1, torch.float32, "cpu")
+    >>> SeqSpec((3, -1), torch.float32, "cpu")
+    >>> SeqSpec(torch.randn(3, 10, 12), seq_dim=1)
+    >>> SeqSpec((torch.randn(3, 10, 12), 1), (torch.randn(10), 0))
+    """
+
     @overload
     def __init__(self, *shape: int, dtype: SeqDTypeLike = torch.float32, device: DeviceLike = "cpu") -> None: ...
     @overload
@@ -35,9 +79,6 @@ class SeqSpec:
     @overload
     def __init__(self, *specs: Tuple) -> None: ...
     def __init__(self, *specs, **kwargs) -> None:
-        """
-        TODO: doc
-        """
         if all(isinstance(spec, tuple) for spec in specs) and not kwargs:
             self.specs = [get_shape_and_array_interface(*spec) for spec in specs]
         else:
@@ -82,6 +123,9 @@ class SeqSpec:
             negative integer)
 
         The arrays must be provided in the same order as the specification.
+
+        :return: A tuple (matches, reason). If matches is False, reason contains a human-readable explanation of
+        why the arrays do not match the specification.
         """
         if len(arrs) != len(self.specs):
             try:
@@ -205,6 +249,9 @@ class SeqSpec:
         return Sequence.new_randn(self, seq_size=seq_size)
 
     def new_sequence_from_data(self, *arrs: SeqArrayLike) -> Sequence:
+        """
+        Creates a new Sequence with the given specification, feeding it the given arrays.
+        """
         from torchstream.sequence.sequence import Sequence
 
         seq = Sequence(self)

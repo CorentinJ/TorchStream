@@ -49,12 +49,14 @@ class Sequence:
     )
     The scale of the audio array is 800, since for each video frame (1/60s), there are 800 audio samples (1/48000s).
 
-    :param specs: same argument specification as SeqSpec's constructor. Can also be a single SeqSpec directly.
+    :param specs: same argument specification as SeqSpec's constructor. Can also be a single SeqSpec directly. If all
+    array specifications are given using existing arrays, they will be used to initialize the Sequence's buffers.
 
     Examples:
     >>> Sequence(3, -1, torch.float32, "cpu")
     >>> Sequence((3, -1), torch.float32, "cpu")
-    >>> Sequence((torch.randn(3, 10, 12), seq_dim=1), (torch.randn(10), seq_dim=0))
+    >>> Sequence(torch.randn(3, 10, 12), seq_dim=1)
+    >>> Sequence((torch.randn(3, 10, 12), 1), (torch.randn(10), 0))
     >>> Sequence(SeqSpec(3, -1, torch.float32, "cpu"))
     """
 
