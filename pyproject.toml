@@ -35,6 +35,7 @@ demos = [
     # FIXME
     # "kokoro>=0.9.2",
     "soundfile",
+    "streamlit>=1.40.1",
     "torchaudio>=2.5.1",
     "webrtcvad>=2.0.10",
 ]
