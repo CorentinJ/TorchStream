@@ -20,20 +20,42 @@ tracer = trace.get_tracer(__name__)
 
 class Sequence:
     """
-    FIXME! rewrite this doc
-    Tensor-like class for buffering multidimensional sequential data. Supports both torch tensors and numpy arrays.
+    A Sequence is a container for one or multiple arrays (torch tensors or numpy arrays) that each hold sequential data
+    along a specified dimension (the sequence dimension).
 
-    >>> buff = Sequence(spec=SeqSpec(seq_dim=1))
-    >>> buff.feed(torch.arange(6).reshape((3, 2)))
-    >>> buff.feed(torch.arange(9).reshape((3, 3)))
-    >>> buff.read(4)
-    tensor([[0, 1, 0, 1],
-            [2, 3, 3, 4],
-            [4, 5, 6, 7]])
+    For instance, this Sequence could represent stereo audio (encoded as floating-point) and a per-sample Voice
+    Activity Detection flag.
+    >>> Sequence((2, -1, np.float32), (-1, bool))
+    Sequence of size 0 with SeqSpec(
+        Array #0: (2, -1) np.float32
+        Array #1: (-1,) np.bool
+    )
 
-    This class simplifies a great deal of sliding window operations.
+    A Sequence acts as a convenient wrapper around arrays to expose methods relevant to streaming. It does so
+    independently of the underlying array type or device, so that implementation of streaming logic can be agnostic
+    of these details.
 
-    TODO: transform asserts into exceptions
+    In the sequence specification required in the constructor, shapes must have a negative value that represents the
+    sequence dimension. The dimension can grow and shrink as data is fed and dropped from the Sequence, while the
+    sizes of the other dimensions will remain fixed. Array in the specification can take different scales, indicated
+    by the absolute value of the negative dimension.
+
+    For instance, this Sequence could represent a 60fps video feed (encoded as uint8 RGB images) along with 48kHz
+    mono audio:
+    >>> Sequence((-1, 1080, 1920, 3, torch.uint8, "cuda"), (-800, "cuda"))
+    Sequence of size 0 with SeqSpec(
+        Tensor #0: (-1, 1080, 1920, 3) cuda torch.uint8
+        Tensor #1: (-800,) cuda torch.float32
+    )
+    The scale of the audio array is 800, since for each video frame (1/60s), there are 800 audio samples (1/48000s).
+
+    :param specs: same argument specification as SeqSpec's constructor. Can also be a single SeqSpec directly.
+
+    Examples:
+    >>> Sequence(3, -1, torch.float32, "cpu")
+    >>> Sequence((3, -1), torch.float32, "cpu")
+    >>> Sequence((torch.randn(3, 10, 12), seq_dim=1), (torch.randn(10), seq_dim=0))
+    >>> Sequence(SeqSpec(3, -1, torch.float32, "cpu"))
     """
 
     @overload
@@ -69,7 +91,7 @@ class Sequence:
     @classmethod
     def new_zeros(cls, *cons_args, seq_size: int, **cons_kwargs) -> "Sequence":
         """
-        Returns a Sequence of the given size, filled with zeros.
+        Returns a Sequence of the given size, filled with zeros. Arguments must match the constructor's signature.
         """
         seq = cls(*cons_args, **cons_kwargs)
         seq.feed(*seq.spec.new_zeros_arrays(seq_size))
@@ -78,7 +100,8 @@ class Sequence:
     @classmethod
     def new_randn(cls, *cons_args, seq_size: int, **cons_kwargs) -> "Sequence":
         """
-        Sample a Sequence of the given size from a normal distribution (discretized for integer types).
+        Sample a Sequence of the given size from a normal distribution (discretized for integer types). Arguments must
+        match the constructor's signature.
         """
         seq = cls(*cons_args, **cons_kwargs)
         seq.feed(*seq.spec.new_randn_arrays(seq_size))
@@ -86,7 +109,7 @@ class Sequence:
 
     def copy(self) -> "Sequence":
         """
-        Returns a copy of this Sequence with its own data.
+        Returns a new Sequence of the same specification with all buffers copied.
         """
         buff = Sequence(self.spec)
         if self._buffs is not None:
@@ -96,7 +119,8 @@ class Sequence:
     @property
     def shapes(self) -> Tuple[Tuple[int, ...], ...]:
         """
-        The current shapes of the buffers
+        The current shapes of the buffers. Note that this always returns a tuple of shapes, even if there is only
+        one array in the specification.
         """
         if self._buffs is None:
             return self.spec.get_shapes_for_seq_size(0)
@@ -105,14 +129,16 @@ class Sequence:
     @property
     def seq_shapes(self) -> Tuple[Tuple[int, ...], ...]:
         """
-        Returns the sequence shapes of the specification.
+        Returns the sequence shapes of the specification i.e. the shapes with the sequence dimension set to a
+        negative value. Note that this always returns a tuple of shapes, even if there is only one array in the
+        specification.
         """
         return self._seq_shapes
 
     @property
     def seq_dims(self) -> Tuple[int, ...]:
         """
-        The dimension along which the buffers are concatenating or reading from tensors or arrays
+        The indices of the sequence dimensions for each buffer.
         """
         return self.spec.seq_dims
 
@@ -127,7 +153,9 @@ class Sequence:
     @property
     def size(self) -> int:
         """
-        The available size of the sequence
+        The available size of the sequence. For arrays with a sequence scale greater than 1, the sequence size is
+        exactly their original size divided by their sequence scale. All arrays in the sequence have the same
+        sequence size.
         """
         if self._buffs is None:
             return 0
@@ -142,16 +170,9 @@ class Sequence:
         return size
 
     @property
-    def ndim(self) -> int:
-        """
-        Number of dimensions, i.e. len(self.shape)
-        """
-        return len(self.spec)
-
-    @property
     def data(self) -> Tuple[SeqArrayLike, ...]:
         """
-        The data currently in the buffer. Returns empty arrays if no data has been fed
+        The data currently in the buffer. Returns zero-sized arrays if no data has been fed
         """
         if self._buffs is None:
             return self.spec.new_empty_arrays()
@@ -163,23 +184,39 @@ class Sequence:
     def __getitem__(self, sli: slice) -> "Sequence": ...
     def __getitem__(self, sli: int | slice) -> "Sequence":
         """
-        TODO: doc
-        Reads a sequence of size up to n from the start of buffer without consuming it. If the buffer does not have
-        enough elements, the entire sequence is returned.
+        Reads from the sequence without consuming it, returning a new Sequence with a copy of the sliced data. The
+        indexing is done across the sequence dimension, and across this dimension only (multi indexing is not allowed).
 
-        :param n: Number of elements to peek at. If None, peeks at the entire buffers.
-        :return: A sequence with the n first elements of the buffers.
+        Note that unlike in torch and numpy, indexing a single element does not squeeze the dimension. Indeed the
+        sliced arrays must still conform to the SeqSpec of the Sequence.
+
+        If the specification has a sequence scale greater than 1, slice indices are scaled accordingly.
+
+        Negative indices are supported.
+
+        >>> seq = Sequence.new_zeros(3, -1, 12, seq_size=20)
+        >>> seq[5:10]
+        Sequence of size 5 with SeqSpec(
+            Tensor #0: (3, -1, 12) cpu torch.float32
+        )
+        >>> seq[3]
+        Sequence of size 1 with SeqSpec(
+            Tensor #0: (3, -1, 12) cpu torch.float32
+        )
+        >>> seq = Sequence.new_zeros(3, -2, 12, seq_size=20)
+        >>> seq[2].data[0].shape
+        (3, 2, 12)
         """
+        if isinstance(sli, tuple):
+            raise ValueError(
+                "Multi-dimensional indexing is not supported. "
+                "Sequences can only be indexed along the sequence dimension. Retrieve the sequence's data to index "
+                "across other dimensions."
+            )
+
         if not isinstance(sli, slice):
             sli = slice(sli, sli + 1)
         sli = slice(*sli.indices(self.size))
-        assert sli.stop >= sli.start, (
-            f"Trying to read {sli.stop - sli.start} elements from {self._name}, n must be positive"
-        )
-
-        # If we're reading the entire buffer, just return self
-        if sli.stop - sli.start >= self.size:
-            return self.copy()
 
         # Slice the buffer to make a copy of the elements, so as not to hold a view containing the ones we don't need
         out = []
@@ -189,7 +226,8 @@ class Sequence:
                 sli.stop * scale if sli.stop is not None else None,
             )
             sliced_array = arr_if.get_along_dim(buff, scaled_sli, seq_dim)
-            out.append(arr_if.copy(sliced_array))
+            # NOTE: no need to copy, copy is done in the constructor below
+            out.append(sliced_array)
         return self.spec.new_sequence_from_data(*out)
 
     @overload
@@ -197,7 +235,6 @@ class Sequence:
     @overload
     def __setitem__(self, sli: slice, value: SeqArrayLike) -> None: ...
     def __setitem__(self, sli: int | slice, value: SeqArrayLike) -> None:
-        """ """
         if not isinstance(sli, slice):
             sli = slice(sli, sli + 1)
         sli = slice(*sli.indices(self.size))
@@ -218,7 +255,7 @@ class Sequence:
     def feed(self, x: "Sequence") -> None: ...
     def feed(self, *x):
         """
-        TODO
+        Concatenates arrays at the end of the buffers. The given input must match the sequence specification.
         """
         if len(x) == 1 and isinstance(x[0], Sequence):
             x = x[0].data
@@ -238,8 +275,8 @@ class Sequence:
 
     def drop(self, n: Optional[int] = None) -> int:
         """
-        Removes the first n elements from the buffer. If the buffer does not have enough elements, the entire buffer
-        is dropped.
+        Removes the first n elements from the buffers. For sequence specifications with sequence scales greater than 1,
+        n is scaled accordingly.
 
         :param n: Positive number of elements to drop. If None, drops all elements.
         :return: The number of elements dropped
@@ -265,7 +302,7 @@ class Sequence:
 
     def drop_to(self, n: int) -> int:
         """
-        Removes elements from all buffers until they are of size n. No op if less than n are remaining
+        Removes elements from the buffers until the sequence is of size n. No op if less than n are remaining
         """
         return self.drop(max(self.size - n, 0))
 
@@ -293,8 +330,8 @@ class Sequence:
         """
         Forwards the sequence's data (without consuming it) through the given transform while:
             - Using torch's inference_mode
-            - Checking that the output arrays match the given output specification (or this specification if none is
-            given), raising otherwise
+            - Checking that the output arrays match the given output specification (or this sequence's specification
+            if none is provided), raising otherwise
             - Catching zero-size exceptions raised by the transform to return empty arrays instead
 
         :param trsfm: A transform that takes in arrays matching exactly this sequence's specification (as positional
@@ -319,7 +356,7 @@ class Sequence:
         return out_spec.new_sequence_from_data(*out_arrs)
 
     # TODO: naive equivalents
-
+    # TODO! settle on whether these methods should exist
     def stream_apply_iter(
         self,
         trsfm: Callable,
