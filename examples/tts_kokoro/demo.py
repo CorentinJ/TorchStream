@@ -5,7 +5,7 @@ import torch
 from torch.nn import InstanceNorm1d
 from torch.nn import functional as F
 
-from torchstream.patching.call_intercept import exit_early, intercept_calls
+from torchstream.patching.call_intercept import make_exit_early, intercept_calls
 from torchstream.sequence.sequence import SeqSpec
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
@@ -115,7 +115,7 @@ with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
 # You'll notice this context size is a constant 56. It's easy to demonstrate why.
 # Let's make the decoder's forward pass exit right before cumsum. Search for the sliding window parameters of this
 # operation to obtain the mapping to the cumsum input.
-dec_trsfm_cumsum_exit = exit_early(decoder_trsfm, target_to_exit_on="torch.cumsum", out_proc_fn=lambda x, dim: x)
+dec_trsfm_cumsum_exit = make_exit_early(decoder_trsfm, target_to_exit_on="torch.cumsum", out_proc_fn=lambda x, dim: x)
 cumsum_in_spec = SeqSpec(1, -1, 9, device=device)
 with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
     find_sliding_window_params(dec_trsfm_cumsum_exit, decoder_in_spec, cumsum_in_spec)

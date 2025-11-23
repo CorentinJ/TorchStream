@@ -2,7 +2,7 @@ from torchstream.exception_signature import (
     DEFAULT_ZERO_SIZE_EXCEPTIONS,
     matches_any_exception,
 )
-from torchstream.patching.call_intercept import exit_early, intercept_calls
+from torchstream.patching.call_intercept import make_exit_early, intercept_calls
 from torchstream.sequence.array_interface import ArrayInterface, NumpyArrayInterface, SeqArray, TensorInterface
 from torchstream.sequence.dtype import DeviceLike, SeqArrayLike, SeqDTypeLike, dtypes_compatible, seqdtype, to_seqdtype
 from torchstream.sequence.seq_spec import SeqSpec
@@ -28,7 +28,7 @@ __all__ = [
     "SeqSpec",
     "SlidingWindowStream",
     "intercept_calls",
-    "exit_early",
+    "make_exit_early",
     "ArrayInterface",
     "TensorInterface",
     "NumpyArrayInterface",
