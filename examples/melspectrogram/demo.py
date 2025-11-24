@@ -93,7 +93,6 @@
 #     app()
 
 
-
 import numpy as np
 import streamlit as st
 import torchaudio
@@ -107,36 +106,16 @@ from torchstream.stream import NotEnoughInputError
 
 plasma_cmap = cm.get_cmap("plasma")
 
+st.set_page_config(layout="wide")
+
 radio_url = st.text_input(
     "Radio stream URL",
     value="https://icecast.radiofrance.fr/fip-midfi.mp3",
     help="Any ffmpeg-compatible stream (Icecast/HTTP).",
 )
 
-audio_stream = streamlit_ensure_web_radio_stream(radio_url, chunk_duration_ms=10)
-
-st.sidebar.write(f"Decoded at {audio_stream.sample_rate} Hz")
+audio_stream = streamlit_ensure_web_radio_stream(radio_url)
 st.audio(radio_url)
-
-height_factor = st.sidebar.slider(
-    "Spectrogram height (×)",
-    min_value=1,
-    max_value=10,
-    value=1,
-)
-spectrogram_height = 200 * height_factor
-st.markdown(
-    f"""
-    <style>
-        .st-key-spectrogram img {{
-            height: {spectrogram_height}px !important;
-            width: 100% !important;
-            object-fit: contain;
-        }}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
 
 n_fft = 512
 hop_length = 64
@@ -165,12 +144,11 @@ mel_stream = SlidingWindowStream(transform, params, SeqSpec(-1), SeqSpec(n_mels,
 
 
 n_timesteps = 2500
-image_buff = SeqSpec(n_mels, -1, dtype=float).new_zero_sequence(n_timesteps)
-spectrogram_container = st.container(key="spectrogram", height="content")
-with spectrogram_container:
-    st.caption("Live spectrogram (frequency bins x frames).")
-    placeholder = st.empty()
-    placeholder.image(image_buff.data[0])
+vertical_stretch = 4
+image_buff = SeqSpec(n_mels * vertical_stretch, -1, dtype=float).new_zero_sequence(n_timesteps)
+st.caption("Live spectrogram (frequency bins x frames).")
+placeholder = st.empty()
+placeholder.image(image_buff.data[0], width="stretch")
 
 plot_max_value = 1e-6
 
@@ -182,10 +160,9 @@ while True:
 
     spec = np.log1p(spec)
     plot_max_value = max(plot_max_value, float(spec.max()))
-    image_buff.feed(spec)
+    image_buff.feed(spec.repeat(vertical_stretch, axis=0))
     image_buff.drop_to(n_timesteps)
 
     normalized = image_buff.data[0] / plot_max_value
-    normalized = np.clip(normalized, 0.0, 1.0)
     colored = plasma_cmap(normalized)[..., :3]
-    placeholder.image(colored)
+    placeholder.image(colored, width="stretch")

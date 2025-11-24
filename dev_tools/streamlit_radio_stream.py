@@ -1,4 +1,6 @@
 import subprocess
+import threading
+from queue import Queue
 
 import numpy as np
 import streamlit as st
@@ -16,13 +18,9 @@ class WebRadioStream:
         self,
         url: str = "https://icecast.radiofrance.fr/fip-midfi.mp3",
         sample_rate: int = 48000,
-        chunk_duration_ms: int = 50,
     ) -> None:
         self.url = url
         self.sample_rate = sample_rate
-        self.chunk_duration_ms = chunk_duration_ms
-        self.channels = 1
-        self.samples_per_chunk = max(1, int(sample_rate * chunk_duration_ms / 1000))
         cmd = [
             "ffmpeg",
             "-loglevel",
@@ -34,44 +32,53 @@ class WebRadioStream:
             "-acodec",
             "pcm_s16le",
             "-ac",
-            str(self.channels),
+            "1",
             "-ar",
             str(sample_rate),
             "-",
         ]
-        self.proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            bufsize=self.samples_per_chunk * self.channels * 2,
-        )
+        try:
+            self.proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                bufsize=0,
+            )
+        except FileNotFoundError:
+            st.error("ffmpeg executable not found. Install ffmpeg to decode the radio stream.")
+            st.stop()
+
         if self.proc.stdout is None:
             raise RuntimeError("Could not open ffmpeg stdout for radio stream.")
 
+        self.thread = threading.Thread(target=self._reader_loop, daemon=True)
+        self.thread.start()
+        self.buffer = Queue()
+
+    def _reader_loop(self) -> None:
+        while True:
+            data = self.proc.stdout.read(4096)
+            if not data:
+                break
+            audio = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+            self.buffer.put(audio)
+
     def read(self) -> torch.Tensor:
-        if self.proc.poll() is not None:
-            raise StopIteration("Radio process terminated.")
-
-        bytes_needed = self.samples_per_chunk * self.channels * 2
-        data = self.proc.stdout.read(bytes_needed)
-        if not data or len(data) < bytes_needed:
-            raise StopIteration("Radio stream ended.")
-
-        audio = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
-        audio = torch.from_numpy(audio).view(-1, self.channels)
-        if self.channels > 1:
-            audio = audio.mean(dim=1)
-        else:
-            audio = audio.squeeze(1)
+        if not self.buffer.qsize():
+            return torch.empty(0, dtype=torch.float32)
+        audio = np.concatenate([self.buffer.get_nowait() for _ in range(self.buffer.qsize())])
+        audio = torch.from_numpy(audio)
         return audio
 
     def close(self) -> None:
-        if self.proc and self.proc.poll() is None:
+        if self.proc.poll() is None:
             self.proc.terminate()
             try:
                 self.proc.wait(timeout=1)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+
+        self.thread.join()
 
     def __del__(self) -> None:
         self.close()
@@ -80,27 +87,18 @@ class WebRadioStream:
 def streamlit_ensure_web_radio_stream(
     url: str = "https://icecast.radiofrance.fr/fip-midfi.mp3",
     sample_rate: int = 48000,
-    chunk_duration_ms: int = 50,
 ) -> WebRadioStream:
     """
     Instantiates or retrieves a WebRadioStream object stored in Streamlit's session state.
     """
     stream = st.session_state.get("_radio_stream")
     if stream is not None:
-        if stream.url != url or stream.sample_rate != sample_rate or stream.chunk_duration_ms != chunk_duration_ms:
+        if stream.url != url or stream.sample_rate != sample_rate:
             stream.close()
             stream = None
 
     if stream is None:
-        try:
-            stream = WebRadioStream(url, sample_rate, chunk_duration_ms)
-        except FileNotFoundError:
-            st.error("ffmpeg executable not found. Install ffmpeg to decode the radio stream.")
-            st.stop()
-        except RuntimeError as exc:
-            st.error(f"Could not open radio stream: {exc}")
-            st.stop()
-
+        stream = WebRadioStream(url, sample_rate)
         st.session_state["_radio_stream"] = stream
 
     return stream
