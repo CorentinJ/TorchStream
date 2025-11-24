@@ -93,12 +93,19 @@
 #     app()
 
 
+
 import numpy as np
 import streamlit as st
 import torchaudio
+from matplotlib import cm
 
 from dev_tools.streamlit_radio_stream import streamlit_ensure_web_radio_stream
-from torchstream.sequence.sequence import Sequence
+from torchstream.sequence.seq_spec import SeqSpec
+from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
+from torchstream.stream import NotEnoughInputError
+
+plasma_cmap = cm.get_cmap("plasma")
 
 radio_url = st.text_input(
     "Radio stream URL",
@@ -106,28 +113,79 @@ radio_url = st.text_input(
     help="Any ffmpeg-compatible stream (Icecast/HTTP).",
 )
 
-audio_stream = streamlit_ensure_web_radio_stream(radio_url)
+audio_stream = streamlit_ensure_web_radio_stream(radio_url, chunk_duration_ms=10)
 
 st.sidebar.write(f"Decoded at {audio_stream.sample_rate} Hz")
 st.audio(radio_url)
 
-transform = torchaudio.transforms.Spectrogram(n_fft=1024, hop_length=256)
-n_freq = transform.n_fft // 2 + 1
-n_timesteps = 700
-image_buff = Sequence(np.zeros((n_freq, n_timesteps)), seq_dim=1)
-placeholder = st.empty()
-st.caption("Live spectrogram (frequency bins x frames).")
-placeholder.image(image_buff.data[0])
+height_factor = st.sidebar.slider(
+    "Spectrogram height (×)",
+    min_value=1,
+    max_value=10,
+    value=1,
+)
+spectrogram_height = 200 * height_factor
+st.markdown(
+    f"""
+    <style>
+        .st-key-spectrogram img {{
+            height: {spectrogram_height}px !important;
+            width: 100% !important;
+            object-fit: contain;
+        }}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+n_fft = 512
+hop_length = 64
+n_mels = 80
+transform = torchaudio.transforms.MelSpectrogram(
+    sample_rate=48000,
+    n_fft=n_fft,
+    center=False,
+    hop_length=hop_length,
+    n_mels=n_mels,
+    f_min=50.0,
+    f_max=0.5 * 48000,
+)
+params = SlidingWindowParams(
+    kernel_size_in=64,
+    stride_in=64,
+    left_pad=0,
+    right_pad=0,
+    kernel_size_out=8,
+    stride_out=1,
+    left_out_trim=7,
+    right_out_trim=7,
+)
+
+mel_stream = SlidingWindowStream(transform, params, SeqSpec(-1), SeqSpec(n_mels, -1))
+
+
+n_timesteps = 2500
+image_buff = SeqSpec(n_mels, -1, dtype=float).new_zero_sequence(n_timesteps)
+spectrogram_container = st.container(key="spectrogram", height="content")
+with spectrogram_container:
+    st.caption("Live spectrogram (frequency bins x frames).")
+    placeholder = st.empty()
+    placeholder.image(image_buff.data[0])
 
 plot_max_value = 1e-6
 
 while True:
-    chunk = audio_stream.read()
+    try:
+        spec = mel_stream(audio_stream.read()).data[0].numpy()
+    except NotEnoughInputError:
+        continue
 
-    spec = transform(chunk).numpy()
+    spec = np.log1p(spec)
     plot_max_value = max(plot_max_value, float(spec.max()))
     image_buff.feed(spec)
     image_buff.drop_to(n_timesteps)
 
     normalized = image_buff.data[0] / plot_max_value
-    placeholder.image(normalized)
+    normalized = np.clip(normalized, 0.0, 1.0)
+    colored = plasma_cmap(normalized)[..., :3]
+    placeholder.image(colored)
