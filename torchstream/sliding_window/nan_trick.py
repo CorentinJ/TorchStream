@@ -22,7 +22,7 @@ def get_nan_idx(x: Sequence) -> np.ndarray:
         return np.empty(0, dtype=np.int64)
 
     common_nan_mask = None
-    for arr, seqdim, scale in zip(x.data, x.seq_dims, x.seq_scales):
+    for arr, seq_dim, scale in zip(x.data, x.seq_dims, x.seq_scales):
         if torch.is_tensor(arr):
             arr = arr.detach().cpu().numpy()
 
@@ -30,7 +30,7 @@ def get_nan_idx(x: Sequence) -> np.ndarray:
         arr_is_nan = np.isnan(arr)
 
         # Reduce along all non-sequence dimensions with an OR
-        nan_mask = np.any(arr_is_nan, axis=tuple(i for i in range(arr.ndim) if i != seqdim))
+        nan_mask = np.any(arr_is_nan, axis=tuple(i for i in range(arr.ndim) if i != seq_dim))
 
         # If the sequence scale is not 1, we need to check for any gaps before scaling down
         if scale > 1:

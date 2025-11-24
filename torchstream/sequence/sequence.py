@@ -7,7 +7,7 @@ import torch
 from opentelemetry import trace
 
 from torchstream.exception_signature import DEFAULT_ZERO_SIZE_EXCEPTIONS, ExceptionWithSubstring
-from torchstream.sequence.dtype import DeviceLike, SeqArrayLike, SeqDTypeLike
+from torchstream.sequence.dtype import DeviceLike, SeqArray, SeqArrayLike, SeqDTypeLike
 from torchstream.sequence.seq_spec import SeqSpec
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 
@@ -172,7 +172,7 @@ class Sequence:
         return size
 
     @property
-    def data(self) -> Tuple[SeqArrayLike, ...]:
+    def data(self) -> Tuple[SeqArray, ...]:
         """
         The data currently in the buffer. Returns zero-sized arrays if no data has been fed
         """
