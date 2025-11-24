@@ -1,13 +1,11 @@
 from abc import ABC
-from typing import Generic, Tuple, TypeVar
+from typing import Generic, Tuple
 
 import numpy as np
 import torch
 from numpy.typing import ArrayLike, DTypeLike
 
-from torchstream.sequence.dtype import SeqArrayLike, SeqDTypeLike, dtypes_compatible, seqdtype, to_seqdtype
-
-SeqArray = TypeVar("SeqArray", torch.Tensor, np.ndarray)
+from torchstream.sequence.dtype import SeqArray, SeqArrayLike, SeqDTypeLike, dtypes_compatible, seqdtype, to_seqdtype
 
 
 def _to_slice(idx):
@@ -101,11 +99,10 @@ class ArrayInterface(ABC, Generic[SeqArray]):
 
 class NumpyArrayInterface(ArrayInterface[np.ndarray]):
     def __init__(self, dtype_like: DTypeLike | ArrayLike, device=None):
-        # TODO: cleaner design
         assert not device
         # TODO: limit to numerical types (i.e. not strings)
         #   -> Why though? For the NaN trick?
-        self.dtype = np.dtype(dtype_like)
+        self.dtype = to_seqdtype(dtype_like)
 
     def get(self, arr: np.ndarray, *idx) -> np.ndarray:
         return arr.__getitem__(*idx)

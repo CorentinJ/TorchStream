@@ -1,4 +1,4 @@
-from typing import TypeAlias
+from typing import TypeAlias, TypeVar
 
 import numpy as np
 import torch
@@ -18,6 +18,7 @@ DeviceLike: TypeAlias = str | torch.device
 
 # Used for normalized types (e.g. class attributes)
 seqdtype: TypeAlias = torch.dtype | np.dtype
+SeqArray = TypeVar("SeqArray", torch.Tensor, np.ndarray)
 
 
 # TODO: clean overload for type vs array
