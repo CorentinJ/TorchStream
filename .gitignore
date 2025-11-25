@@ -38,3 +38,5 @@ prof/
 
 # Demos files
 *.wav
+*.mp3
+download_cache/
