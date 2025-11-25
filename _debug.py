@@ -32,9 +32,12 @@ def get_spectrogram(
     )(torch.from_numpy(wave))
 
 
-find_sliding_window_params(
-    lambda x: get_spectrogram(x, 1000, n_fft=256, center=True, hop_size=64),
-    SeqSpec(-1, dtype=np.float32),
-    SeqSpec(120, -1),
-    zero_size_exception_signatures=DEFAULT_ZERO_SIZE_EXCEPTIONS + [(RuntimeError, "expected 0 < n_fft <")],
+print(
+    find_sliding_window_params(
+        lambda x: get_spectrogram(x, 1000, n_fft=256, center=False, hop_size=16),
+        SeqSpec(-1, dtype=np.float32),
+        SeqSpec(120, -1),
+        zero_size_exception_signatures=DEFAULT_ZERO_SIZE_EXCEPTIONS + [(RuntimeError, "expected 0 < n_fft <")],
+        max_equivalent_sols=10,
+    )
 )

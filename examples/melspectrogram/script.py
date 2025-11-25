@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
-st.subheader("1. TorchStream Introduction using Mel-Spectrograms")
+st.subheader("1. Introduction to TorchStream")
 
 """
 A very common speech processing data transformation is the Mel-Spectrogram. ML models that generate or ingest speech 
@@ -79,6 +79,11 @@ st.code(inspect.getsource(get_spectrogram))
 """
 The output of that function is a (n_mels, n_frames) shaped tensor that we can view as a 2D image:
 """
+melspectrogram = get_spectrogram(wave, sample_rate)
+st.code(
+    f">>> melspectrogram = get_spectrogram(wave, sample_rate)\n"
+    f"{tuple(melspectrogram.shape)} shaped {melspectrogram.dtype} tensor"
+)
 
 
 def plot_melspec(ax, spec):
@@ -90,13 +95,14 @@ def plot_melspec(ax, spec):
 
 
 fig, ax = plt.subplots(figsize=(10, 2.5))
-plot_melspec(ax, get_spectrogram(wave, sample_rate))
+plot_melspec(ax, melspectrogram)
 st.pyplot(fig)
 
 """
 If you're a speech or DSP expert, you could tell from this image alone that this is indeed human speech, from a 
-single speaker, with normal prosody, recorded with little noise in the room at a high sample rate. But this is not 
-our concern here.
+single speaker, with normal prosody, recorded with little room noise at a high sample rate.
+
+But this is not our concern here.
 """
 
 st.markdown("### What TorchStream is for")
@@ -105,9 +111,9 @@ st.markdown("### What TorchStream is for")
 If you're working on an application involving a sequence-to-sequence transform such as this one, you might want to
 - **Explain which inputs produced which outputs** for analysis, debugging or interpretability of results
 - **Derive parameters of the transform** such as its input to output size relationship or its receptive field
-- **Stream the computation** on incoming live input or on static input, for low latency
+- **Stream the computation** on incoming live input, or on static input for low latency
 
-And you'd be stuck for a while. All the torch and numpy functions that make the backbone of modern Machine Learning 
+And you'd be stuck for a while. The torch and numpy functions that make the backbone of modern Machine Learning 
 and AI are **vectorized**, wrapped in **countless layers of abstractions** and implemented in **highly optimized 
 C/C++/CUDA** code. Trying to pick apart their inner workings or to change their batch mode of operation (=all input 
 is processed in one go) to streaming is a tedious feat of engineering.
@@ -132,8 +138,7 @@ with st.echo():
         try:
             spec_chunks.append(get_spectrogram(wave[i : i + 1500], sample_rate))
         except RuntimeError:
-            if not spec_chunks:
-                raise
+            pass  # the last chunk may be too small
     naive_spec = torch.cat(spec_chunks, dim=1)
 
 
@@ -147,17 +152,62 @@ plot_melspec(axs[1], original_spec)
 axs[0].set_xlim(0, max(naive_spec.shape[1], original_spec.shape[1]))
 st.pyplot(fig)
 """
-The outputs are not of the same size, there are frequency artifacts at the top and bottom of the naive spectrogram. 
+The outputs are not of the same size and there are frequency artifacts at the top and bottom of the naive spectrogram. 
 It's a mess.
 
+You might argue that by choosing an appropriate chunk size parameter and adding some overlap between chunks, you could 
+recover the correct output. _You'd be entirely right._
+
+But what are these parameters? How do we obtain them? How can we be sure they are correct and optimal? And how can 
+we stream not a mere spectrogram function but **real-world massive neural networks with hundreds of layers of data 
+transformation**?
+"""
+st.html('<div style="text-align: center">This is what TorchStream is for.</div>')
+
+st.markdown("### It's (almost) all sliding windows")
 
 """
-
+The Mel-Spectrogram transform is an example of a **sliding window algorithm**. 
+"""
+st.image("examples/_resources/sli_algo1.png")
 
 """
-The Mel-Spectrogram transform is an example of a **sliding window algorithm**. Machine learning engineers deal 
-with sliding window algorithms on a daily basis.
+You take a slice of fixed size of the input data (_a window_), apply a function (_a kernel_) on it and store the output 
+at a given position in the output vector. You then offset (_slide_) the input window and the output position by 
+fixed amounts (_the stride_) and repeat.
 """
+st.image("examples/_resources/sli_algo2.png")
+
+"""
+This is a textbook definition of a sliding window algorithm. **It's a limiting one**; machine learning engineers deal 
+with sliding window algorithms on a daily basis and they often don't realise it. Let's augment our model with
+- An output kernel size and stride that can be larger than 1
+- Padding on the left and right of the full input
+- Trimming on the left and right of the full output
+- Kernels that can skip over input elements
+"""
+st.image("examples/_resources/sli_algo3.png")
+
+"""
+And **almost everything becomes a sliding window**:
+- A dilated (à trous) convolution? That's a sliding window with a sparse kernel.
+- A transposed convolution? That's a sliding window with some output kernels, strides and trimming.
+- A pooling or upsampling layer? That's a sliding window with an input or output stride that's greater than 1.
+- Adding boundary tokens to a sequence? That's just a form of padding.
+- An element-wise operation? A special case of sliding window with kernel size 1.
+
+Any transform that falls under this model is **streamable**, and has a well-defined **input to output mapping**.
+"""
+
+with st.container(border=True, vertical_alignment="center", gap="medium"):
+    """
+    A core part of TorchStream is the `find_sliding_window_params` function. It will **automatically find for you** the 
+    sliding window parameters of the parts of your pipeline that behave as described above. For any remaining 
+    non sliding window transform, TorchStream aims to give you the **tools necessary** to implement their **streaming 
+    version**, an **approximation** of it, or if that is to be the case, to understand quickly why **streaming them 
+    is not possible**.
+    """
+
 quit()
 
 """
