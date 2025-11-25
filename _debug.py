@@ -1,15 +1,40 @@
 import logging
 
-from opentelemetry import trace
+import numpy as np
+import torch
+import torchaudio
 
-from torchstream import SlidingWindowParams
+from torchstream import (
+    SeqSpec,
+)
+from torchstream.exception_signature import DEFAULT_ZERO_SIZE_EXCEPTIONS
+from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
 
 logger = logging.getLogger(__name__)
-tracer = trace.get_tracer(__name__)
 
 logging.basicConfig(level=logging.INFO)
 
 
-s = SlidingWindowParams(kernel_size_in=5, stride_in=3, kernel_size_out=3, stride_out=2)
-for c in s.get_inverse_kernel_map(in_len=20):
-    print(c)
+def get_spectrogram(
+    wave: np.ndarray,
+    sample_rate: int,
+    n_mels=120,
+    n_fft=2048,
+    hop_size: int | None = None,
+    center: bool = True,
+):
+    return torchaudio.transforms.MelSpectrogram(
+        sample_rate=sample_rate,
+        n_fft=n_fft,
+        center=center,
+        n_mels=n_mels,
+        hop_length=hop_size,
+    )(torch.from_numpy(wave))
+
+
+find_sliding_window_params(
+    lambda x: get_spectrogram(x, 1000, n_fft=256, center=True, hop_size=64),
+    SeqSpec(-1, dtype=np.float32),
+    SeqSpec(120, -1),
+    zero_size_exception_signatures=DEFAULT_ZERO_SIZE_EXCEPTIONS + [(RuntimeError, "expected 0 < n_fft <")],
+)

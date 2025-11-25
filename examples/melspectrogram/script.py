@@ -81,9 +81,8 @@ The output of that function is a (n_mels, n_frames) shaped tensor that we can vi
 """
 
 
-def plot_melspec(ax, spec, title="MelSpectrogram"):
+def plot_melspec(ax, spec):
     ax.imshow(spec.log2().numpy(), aspect="auto", origin="lower")
-    ax.set_title(title)
     ax.set_xlabel("Frames")
     ax.set_ylabel("Mel Bin")
     ax.set_xlim(0, spec.shape[1])
@@ -95,11 +94,70 @@ plot_melspec(ax, get_spectrogram(wave, sample_rate))
 st.pyplot(fig)
 
 """
-And if you're a speech or DSP expert, you could tell from this image alone that this is indeed human speech, from a 
-single speaker, with normal prosody, recorded with little noise in the room at a high sample rate.
+If you're a speech or DSP expert, you could tell from this image alone that this is indeed human speech, from a 
+single speaker, with normal prosody, recorded with little noise in the room at a high sample rate. But this is not 
+our concern here.
+"""
+
+st.markdown("### What TorchStream is for")
+
+"""
+If you're working on an application involving a sequence-to-sequence transform such as this one, you might want to
+- **Explain which inputs produced which outputs** for analysis, debugging or interpretability of results
+- **Derive parameters of the transform** such as its input to output size relationship or its receptive field
+- **Stream the computation** on incoming live input or on static input, for low latency
+
+And you'd be stuck for a while. All the torch and numpy functions that make the backbone of modern Machine Learning 
+and AI are **vectorized**, wrapped in **countless layers of abstractions** and implemented in **highly optimized 
+C/C++/CUDA** code. Trying to pick apart their inner workings or to change their batch mode of operation (=all input 
+is processed in one go) to streaming is a tedious feat of engineering.
+"""
+
+"""
+For instance, the torchaudio docs do not document the output size of their Spectrogram transform:
+> Returns Dimension (…, freq, time), where freq is n_fft // 2 + 1 where n_fft is the number of Fourier bins, and time 
+is the number of window hops (n_frame).
+
+Nor does [librosa](https://librosa.org/doc/main/generated/librosa.feature.melspectrogram.html#librosa-feature-melspectrogram), 
+which also implements Mel-Spectrograms:
+> S: np.ndarray [shape=(…, n_mels, t)]
+
+And if you try to stream our function by naively forwarding chunks of your input data, you'll be disappointed with the 
+results:
+"""
+
+with st.echo():
+    spec_chunks = []
+    for i in range(0, wave.shape[0], 1500):
+        try:
+            spec_chunks.append(get_spectrogram(wave[i : i + 1500], sample_rate))
+        except RuntimeError:
+            if not spec_chunks:
+                raise
+    naive_spec = torch.cat(spec_chunks, dim=1)
+
+
+fig, axs = plt.subplots(figsize=(10, 5.5), nrows=2, sharex=True)
+fig.subplots_adjust(hspace=0.5)
+axs[0].set_title("Naively Streamed Mel-Spectrogram")
+plot_melspec(axs[0], naive_spec)
+axs[1].set_title("Original Mel-Spectrogram")
+original_spec = get_spectrogram(wave, sample_rate)
+plot_melspec(axs[1], original_spec)
+axs[0].set_xlim(0, max(naive_spec.shape[1], original_spec.shape[1]))
+st.pyplot(fig)
+"""
+The outputs are not of the same size, there are frequency artifacts at the top and bottom of the naive spectrogram. 
+It's a mess.
+
+
 """
 
 
+"""
+The Mel-Spectrogram transform is an example of a **sliding window algorithm**. Machine learning engineers deal 
+with sliding window algorithms on a daily basis.
+"""
 quit()
 
 """
