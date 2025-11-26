@@ -34,10 +34,9 @@ def get_spectrogram(
 
 print(
     find_sliding_window_params(
-        lambda x: get_spectrogram(x, 1000, n_fft=256, center=False, hop_size=16),
+        lambda x: get_spectrogram(x, 48000, n_fft=512, center=True),
         SeqSpec(-1, dtype=np.float32),
         SeqSpec(120, -1),
         zero_size_exception_signatures=DEFAULT_ZERO_SIZE_EXCEPTIONS + [(RuntimeError, "expected 0 < n_fft <")],
-        max_equivalent_sols=10,
     )
 )

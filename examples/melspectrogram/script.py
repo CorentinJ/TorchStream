@@ -6,15 +6,12 @@ import numpy as np
 import streamlit as st
 import torch
 import torchaudio
+from matplotlib.patches import ConnectionPatch, Rectangle
 
 from demo_tools.audio import load_audio
 from demo_tools.download import download_file_cached
-from torchstream import (
-    SeqSpec,
-    SlidingWindowParams,
-    SlidingWindowStream,
-    test_stream_equivalent,
-)
+from demo_tools.sliding_window_stream_with_history import SlidingWindowStreamWithHistory
+from torchstream import SeqSpec, Sequence, SlidingWindowParams
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -86,8 +83,8 @@ st.code(
 )
 
 
-def plot_melspec(ax, spec):
-    ax.imshow(spec.log2().numpy(), aspect="auto", origin="lower")
+def plot_melspec(ax, spec, aspect="auto"):
+    ax.imshow(spec.log2().numpy(), aspect=aspect, origin="lower")
     ax.set_xlabel("Frames")
     ax.set_ylabel("Mel Bin")
     ax.set_xlim(0, spec.shape[1])
@@ -208,20 +205,145 @@ with st.container(border=True, vertical_alignment="center", gap="medium"):
     is not possible**.
     """
 
+st.markdown("### Back to our example")
+
+wave = wave[sample_rate // 5 : sample_rate]
+
+
+trsfm = lambda x: get_spectrogram(x, sample_rate, n_fft=2048)
+
+params = SlidingWindowParams(
+    kernel_size_in=2048,
+    stride_in=1024,
+    left_pad=1024,
+    right_pad=1024,
+)
+
+
+n_steps = 5
+stream = SlidingWindowStreamWithHistory(
+    trsfm,
+    params,
+    SeqSpec(-1, dtype=np.float32),
+    SeqSpec(120, -1),
+)
+stream.forward_in_chunks(Sequence(wave, seq_dim=0), chunk_size=len(wave) // n_steps)
+
+fig, axs = plt.subplots(figsize=(10, 8.5), nrows=3)
+fig.subplots_adjust(hspace=0.5)
+
+# Input plot
+plot_audio(axs[0], wave, sample_rate)
+
+# Sync spectrogram plot
+plot_melspec(axs[2], trsfm(wave))
+
+
+# Streamed plot
+def plot_stream_step(
+    in_ax,
+    out_stream_ax,
+    out_sync_ax,
+    in_buff_start_pos: int,
+    in_new_start_pos: int,
+    in_buff_drop_pos: int,
+    in_end_pos: int,
+    out_start_pos: int,
+    out_size: int,
+    out_trim_start: int,
+    out_trim_end: int,
+    untrimmed_output: Sequence,
+):
+    in_ax.axvline(in_buff_start_pos / sample_rate, color="purple", linestyle="--")
+    in_ax.axvline(in_new_start_pos / sample_rate, color="blue", linestyle="--")
+    in_ax.axvline(in_end_pos / sample_rate, color="purple", linestyle="--")
+
+    out_stream_ax.imshow(untrimmed_output.data[0].log2().numpy(), aspect="auto", origin="lower")
+
+    # Align the middle plot with the input slice
+    to_fig = fig.transFigure.inverted()
+    start_fig_x = to_fig.transform(in_ax.transData.transform((in_buff_start_pos / sample_rate, 0)))[0]
+    end_fig_x = to_fig.transform(in_ax.transData.transform((in_end_pos / sample_rate, 0)))[0]
+    orig_pos = out_stream_ax.get_position()
+    out_stream_ax.set_position([start_fig_x, orig_pos.y0, end_fig_x - start_fig_x, orig_pos.height])
+
+    # Remove the ticks & border on the middle plot
+    out_stream_ax.set_xticks([])
+    out_stream_ax.set_yticks([])
+    for spine in out_stream_ax.spines.values():
+        spine.set_visible(False)
+
+    # Draw the trimming on the output
+    if out_size:
+
+        def add_trim_rect(start_frac: float, end_frac: float):
+            start = max(0.0, min(1.0, start_frac))
+            end = max(0.0, min(1.0, end_frac))
+            width = end - start
+            if width <= 0:
+                return
+            rect = Rectangle(
+                (start, 0),
+                width,
+                1,
+                transform=out_stream_ax.transAxes,
+                edgecolor="red",
+                facecolor=(1, 0, 0, 0.12),
+                hatch="///",
+                linewidth=1.2,
+                zorder=4,
+            )
+            out_stream_ax.add_patch(rect)
+
+        add_trim_rect(0.0, out_trim_start / out_size)
+        add_trim_rect(out_trim_end / out_size, 1.0)
+
+    # Connect the highlighted input boundaries to the top corners of the middle image
+    input_bottom = in_ax.get_ylim()[0]
+    connections = [
+        (in_buff_start_pos / sample_rate, (0, 1)),
+        (in_end_pos / sample_rate, (1, 1)),
+    ]
+    for x_value, corner in connections:
+        fig.add_artist(
+            ConnectionPatch(
+                xyA=(x_value, input_bottom),
+                xyB=corner,
+                coordsA="data",
+                coordsB="axes fraction",
+                axesA=in_ax,
+                axesB=out_stream_ax,
+                color="purple",
+                linestyle="--",
+            )
+        )
+    output_top = out_sync_ax.get_ylim()[1]
+    connections = [
+        (out_start_pos, (0, 0)),
+        (out_start_pos + out_size, (1, 0)),
+    ]
+    for x_value, corner in connections:
+        fig.add_artist(
+            ConnectionPatch(
+                xyA=(x_value, output_top),
+                xyB=corner,
+                coordsA="data",
+                coordsB="axes fraction",
+                axesA=out_sync_ax,
+                axesB=out_stream_ax,
+                color="red",
+                linestyle="--",
+            )
+        )
+
+
+plot_stream_step(*axs, **stream.step_history[1])
+
+
+st.pyplot(fig)
+
 quit()
 
-"""
-An audio file 
-"""
-# TODO! sharex
-
-st.code(f"{wave.shape} shaped {wave.dtype} numpy array\n{wave[sample_rate : sample_rate + 5]}...")
-fig, axs = plt.subplots(figsize=(10, 5.5), nrows=2)
-fig.subplots_adjust(hspace=0.5)
-axs[0].set_title("Audio")
-plot_audio(axs[0], wave, sample_rate)
-plot_melspec(axs[1], get_spectrogram(wave, sample_rate))
-st.pyplot(fig)
 
 in_spec = SeqSpec(-1)
 out_spec = SeqSpec(n_mels, -1)
@@ -233,21 +355,21 @@ out_spec = SeqSpec(n_mels, -1)
 # )
 # print(solutions)
 # params = solutions[0]
-params = SlidingWindowParams(
-    kernel_size_in=64,
-    stride_in=64,
-    left_pad=0,
-    right_pad=0,
-    kernel_size_out=8,
-    stride_out=1,
-    left_out_trim=7,
-    right_out_trim=7,
-)
+# params = SlidingWindowParams(
+#     kernel_size_in=64,
+#     stride_in=64,
+#     left_pad=0,
+#     right_pad=0,
+#     kernel_size_out=8,
+#     stride_out=1,
+#     left_out_trim=7,
+#     right_out_trim=7,
+# )
 
-test_stream_equivalent(
-    transform,
-    SlidingWindowStream(transform, params, in_spec, out_spec),
-    in_data=in_spec.new_randn_arrays(params.min_input_size * 2),
-    throughput_check_max_delay=params.right_out_trim,
-    atol=1e-3,
-)
+# test_stream_equivalent(
+#     transform,
+#     SlidingWindowStream(transform, params, in_spec, out_spec),
+#     in_data=in_spec.new_randn_arrays(params.min_input_size * 2),
+#     throughput_check_max_delay=params.right_out_trim,
+#     atol=1e-3,
+# )
