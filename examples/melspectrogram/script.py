@@ -6,7 +6,6 @@ import numpy as np
 import streamlit as st
 import torch
 import torchaudio
-from matplotlib.patches import ConnectionPatch, Rectangle
 
 from demo_tools.audio import load_audio
 from demo_tools.download import download_file_cached
@@ -35,12 +34,29 @@ st.caption("Source: https://global.oup.com/us/companion.websites/9780195300505/a
 
 
 def plot_audio(ax, wave: np.ndarray, sample_rate: int):
-    time_axis = np.arange(wave.shape[0]) / sample_rate
-    ax.plot(time_axis, wave)
+    ax.plot(wave)
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Amplitude")
-    ax.set_xlim(0, time_axis[-1])
+    ax.set_xlim(0, len(wave) - 1)
     ax.set_ylim(-1, 1)
+
+    total_seconds = len(wave) / sample_rate
+    if total_seconds >= 10:
+        increment = 2.0
+    elif total_seconds >= 5:
+        increment = 1.0
+    elif total_seconds >= 1:
+        increment = 0.2
+    else:
+        increment = 0.1
+    ticks_seconds = np.arange(0, total_seconds, increment)
+    ticks_seconds = np.append(ticks_seconds, round(total_seconds, 1))
+    ticks = (ticks_seconds * sample_rate).round().astype(int)
+    ax.set_xticks(ticks)
+    if total_seconds >= 5:
+        ax.set_xticklabels([f"{ts:.0f}" for ts in ticks_seconds])
+    else:
+        ax.set_xticklabels([f"{ts:.1f}" for ts in ticks_seconds])
 
 
 fig, ax = plt.subplots(figsize=(10, 2.5))
@@ -238,106 +254,7 @@ plot_audio(axs[0], wave, sample_rate)
 # Sync spectrogram plot
 plot_melspec(axs[2], trsfm(wave))
 
-
-# Streamed plot
-def plot_stream_step(
-    in_ax,
-    out_stream_ax,
-    out_sync_ax,
-    in_buff_start_pos: int,
-    in_new_start_pos: int,
-    in_buff_drop_pos: int,
-    in_end_pos: int,
-    out_start_pos: int,
-    out_size: int,
-    out_trim_start: int,
-    out_trim_end: int,
-    untrimmed_output: Sequence,
-):
-    in_ax.axvline(in_buff_start_pos / sample_rate, color="purple", linestyle="--")
-    in_ax.axvline(in_new_start_pos / sample_rate, color="blue", linestyle="--")
-    in_ax.axvline(in_end_pos / sample_rate, color="purple", linestyle="--")
-
-    out_stream_ax.imshow(untrimmed_output.data[0].log2().numpy(), aspect="auto", origin="lower")
-
-    # Align the middle plot with the input slice
-    to_fig = fig.transFigure.inverted()
-    start_fig_x = to_fig.transform(in_ax.transData.transform((in_buff_start_pos / sample_rate, 0)))[0]
-    end_fig_x = to_fig.transform(in_ax.transData.transform((in_end_pos / sample_rate, 0)))[0]
-    orig_pos = out_stream_ax.get_position()
-    out_stream_ax.set_position([start_fig_x, orig_pos.y0, end_fig_x - start_fig_x, orig_pos.height])
-
-    # Remove the ticks & border on the middle plot
-    out_stream_ax.set_xticks([])
-    out_stream_ax.set_yticks([])
-    for spine in out_stream_ax.spines.values():
-        spine.set_visible(False)
-
-    # Draw the trimming on the output
-    if out_size:
-
-        def add_trim_rect(start_frac: float, end_frac: float):
-            start = max(0.0, min(1.0, start_frac))
-            end = max(0.0, min(1.0, end_frac))
-            width = end - start
-            if width <= 0:
-                return
-            rect = Rectangle(
-                (start, 0),
-                width,
-                1,
-                transform=out_stream_ax.transAxes,
-                edgecolor="red",
-                facecolor=(1, 0, 0, 0.12),
-                hatch="///",
-                linewidth=1.2,
-                zorder=4,
-            )
-            out_stream_ax.add_patch(rect)
-
-        add_trim_rect(0.0, out_trim_start / out_size)
-        add_trim_rect(out_trim_end / out_size, 1.0)
-
-    # Connect the highlighted input boundaries to the top corners of the middle image
-    input_bottom = in_ax.get_ylim()[0]
-    connections = [
-        (in_buff_start_pos / sample_rate, (0, 1)),
-        (in_end_pos / sample_rate, (1, 1)),
-    ]
-    for x_value, corner in connections:
-        fig.add_artist(
-            ConnectionPatch(
-                xyA=(x_value, input_bottom),
-                xyB=corner,
-                coordsA="data",
-                coordsB="axes fraction",
-                axesA=in_ax,
-                axesB=out_stream_ax,
-                color="purple",
-                linestyle="--",
-            )
-        )
-    output_top = out_sync_ax.get_ylim()[1]
-    connections = [
-        (out_start_pos, (0, 0)),
-        (out_start_pos + out_size, (1, 0)),
-    ]
-    for x_value, corner in connections:
-        fig.add_artist(
-            ConnectionPatch(
-                xyA=(x_value, output_top),
-                xyB=corner,
-                coordsA="data",
-                coordsB="axes fraction",
-                axesA=out_sync_ax,
-                axesB=out_stream_ax,
-                color="red",
-                linestyle="--",
-            )
-        )
-
-
-plot_stream_step(*axs, **stream.step_history[1])
+stream.plot_step(2, *axs, out_plot_fn=plot_melspec)
 
 
 st.pyplot(fig)
