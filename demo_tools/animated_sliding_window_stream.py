@@ -6,10 +6,8 @@ from torchstream import SeqSpec, Sequence, SlidingWindowParams, SlidingWindowStr
 from torchstream.sliding_window.sliding_window_stream import IncorrectSlidingWindowParametersError
 from torchstream.stream import NotEnoughInputError
 
-# TODO: make this a feature of the base class?
 
-
-class SlidingWindowStreamWithHistory(SlidingWindowStream):
+class AnimatedSlidingWindowStream(SlidingWindowStream):
     def __init__(
         self,
         transform: Callable,

@@ -175,7 +175,8 @@ class Stream:
             ext_in_buff = self.in_spec.new_sequence_from_data(*inputs)
 
         while ext_in_buff.size:
-            yield self(ext_in_buff.read(chunk_size), is_last_input=not ext_in_buff.size)
+            # FIXME! expose allow_zero_size_outputs
+            yield self(ext_in_buff.read(chunk_size), is_last_input=not ext_in_buff.size, allow_zero_size_outputs=True)
 
     # TODO: offer options to specify variable chunk sizes
     @overload
