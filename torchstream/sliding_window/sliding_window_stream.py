@@ -35,7 +35,6 @@ class SlidingWindowStream(Stream):
         self.min_buffsize = max(sliding_window_params.streaming_context_size, sliding_window_params.min_input_size - 1)
 
         self.tsfm_out_pos = 0
-        self.stream_out_pos = 0
 
         # Buffer for held back output. This is only returned in the special case where the stream is closed without
         # being requested to compute any new window, and some previous output has not been returned yet.
@@ -55,10 +54,10 @@ class SlidingWindowStream(Stream):
             out_delay = get_output_delay(self.params, in_buff_size)
             out_trim_end = max(out_size - out_delay, 0)
 
-        if self.tsfm_out_pos + out_trim_end <= self.stream_out_pos:
+        if self.tsfm_out_pos + out_trim_end <= self.total_out_produced:
             out_size = None
 
-        out_trim_start = self.stream_out_pos - self.tsfm_out_pos
+        out_trim_start = self.total_out_produced - self.tsfm_out_pos
         assert (not out_size) or out_trim_end > out_trim_start >= 0, "Internal error"
 
         return out_size, out_trim_start, out_trim_end
@@ -87,8 +86,7 @@ class SlidingWindowStream(Stream):
         wins_to_drop = max(0, (in_buff.size - self.min_buffsize) // self.params.stride_in)
         in_buff.drop(wins_to_drop * self.params.stride_in)
 
-        # Update our positions
-        self.stream_out_pos = self.tsfm_out_pos + out_trim_end
+        # We've dropped past inputs, so the transform will now produce outputs starting further in the sequence
         self.tsfm_out_pos += wins_to_drop * self.params.stride_out
 
         # If we're trimming on the right, save the trim in case the stream closes before we can compute any
