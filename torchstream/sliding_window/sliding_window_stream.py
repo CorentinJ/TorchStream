@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, Tuple
 
 from torchstream.sequence.sequence import SeqSpec, Sequence
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams, get_output_delay
@@ -41,16 +41,33 @@ class SlidingWindowStream(Stream):
         # being requested to compute any new window, and some previous output has not been returned yet.
         self._prev_trimmed_output = None
 
-    def _step(self, in_buff: Sequence, is_last_input: bool) -> Sequence:
-        # See where the output should be trimmed
-        out_size = self.params.get_out_size_for_in_size(in_buff.size)
+    def get_next_output_slice(self, in_buff_size: int, is_last_input: bool) -> Tuple[int | None, int, int]:
+        """
+        Given an input buffer size and whether this is the last input, returns the output size and the start and end
+        indices of the next output to compute.
+        The function will return None in place of the output size if no new output can be computed from the given
+        input buffer, implying that the transform should not be run at this time.
+        """
+        out_size = self.params.get_out_size_for_in_size(in_buff_size)
         if is_last_input:
             out_trim_end = out_size
         else:
-            out_delay = get_output_delay(self.params, in_buff.size)
+            out_delay = get_output_delay(self.params, in_buff_size)
             out_trim_end = max(out_size - out_delay, 0)
 
-        if not out_size or self.tsfm_out_pos + out_trim_end <= self.stream_out_pos:
+        if self.tsfm_out_pos + out_trim_end <= self.stream_out_pos:
+            out_size = None
+
+        out_trim_start = self.stream_out_pos - self.tsfm_out_pos
+        assert (not out_size) or out_trim_end > out_trim_start >= 0, "Internal error"
+
+        return out_size, out_trim_start, out_trim_end
+
+    def _step(self, in_buff: Sequence, is_last_input: bool) -> Sequence:
+        # See where the output should be trimmed
+        out_size, out_trim_start, out_trim_end = self.get_next_output_slice(in_buff.size, is_last_input)
+
+        if not out_size:
             if is_last_input and self._prev_trimmed_output is not None:
                 return self._prev_trimmed_output
 
@@ -65,15 +82,13 @@ class SlidingWindowStream(Stream):
                 f"sequence instead of {out_size} for {in_buff.size} sized input."
             )
 
-        # Compute the slice of the output that we'll return and update the stream position
-        out_trim_start = self.stream_out_pos - self.tsfm_out_pos
-        assert out_trim_end > out_trim_start >= 0, "Internal error"
-        self.stream_out_pos = self.tsfm_out_pos + out_trim_end
-
         # Drop input that won't be necessary in the future. We retain only the context size rounded up to the nearest
         # multiple of the input stride.
         wins_to_drop = max(0, (in_buff.size - self.min_buffsize) // self.params.stride_in)
         in_buff.drop(wins_to_drop * self.params.stride_in)
+
+        # Update our positions
+        self.stream_out_pos = self.tsfm_out_pos + out_trim_end
         self.tsfm_out_pos += wins_to_drop * self.params.stride_out
 
         # If we're trimming on the right, save the trim in case the stream closes before we can compute any

@@ -220,6 +220,9 @@ class Sequence:
             sli = slice(sli, sli + 1)
         sli = slice(*sli.indices(self.size))
 
+        if self._buffs is None:
+            return Sequence(self.spec)
+
         # Slice the buffer to make a copy of the elements, so as not to hold a view containing the ones we don't need
         out = []
         for buff, seq_dim, scale, arr_if in zip(self._buffs, self.seq_dims, self.seq_scales, self._arr_ifs):
