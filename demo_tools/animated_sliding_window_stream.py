@@ -51,7 +51,7 @@ class AnimatedSlidingWindowStream(SlidingWindowStream):
 
         # Drop input that won't be necessary in the future. We retain only the context size rounded up to the nearest
         # multiple of the input stride.
-        wins_to_drop = max(0, (in_buff.size - self.min_buffsize) // self.params.stride_in)
+        wins_to_drop = max(0, (in_buff.size - self.params.streaming_context_size) // self.params.stride_in)
         in_buff.drop(wins_to_drop * self.params.stride_in)
         step_rec["in_buff_drop_pos"] = step_rec["in_buff_start_pos"] + wins_to_drop * self.params.stride_in
         self.step_history.append(step_rec)

@@ -11,7 +11,7 @@ from demo_tools.animated_sliding_window_stream import AnimatedSlidingWindowStrea
 from demo_tools.audio import load_audio
 from demo_tools.download import download_file_cached
 from torchstream import SeqSpec, Sequence, SlidingWindowParams
-from torchstream.sliding_window.sliding_window_params import in_out_size_rel_repr
+from torchstream.sliding_window.sliding_window_params import get_streaming_context_size, in_out_size_rel_repr
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 from torchstream.stream_equivalence import test_stream_equivalent
 
@@ -257,7 +257,7 @@ Args:
 )
 
 """
-This is rather straightforward. We can retrieve the function and derive its sliding window parameters this way
+This is rather straightforward. We can retrieve the function and derive its sliding window parameters:
 """
 
 with st.echo():
@@ -323,7 +323,7 @@ with st.container(border=True):
         "Select the audio segment",
         0.0,
         total_seconds,
-        (0.2, 0.9),
+        (0.25, 0.95),
         step=0.1,
         format="%.1fs",
     )
@@ -368,7 +368,7 @@ with st.container(border=True):
         "Set the streaming chunk size",
         sli_params.min_input_size,
         len(wave_slice) // 2,
-        value=sli_params.kernel_size_in,
+        value=sli_params.kernel_size_in * 2,
     )
     stream = build_stream(chunk_size)
 
@@ -376,6 +376,7 @@ with st.container(border=True):
     def stream_step_fragment():
         fig, axs = plt.subplots(figsize=(10, 8.5), nrows=3)
         fig.subplots_adjust(hspace=0.5)
+
         plot_placeholder = st.empty()
 
         step_idx = (
@@ -386,6 +387,9 @@ with st.container(border=True):
                 value=min(2, len(stream.step_history) - 1),
             )
             - 1
+        )
+        fig.suptitle(
+            f"Streaming torchaudio.MelSpectrogram - Step {step_idx + 1}/{len(stream.step_history)}", fontsize=18
         )
 
         # Input plot
@@ -398,3 +402,32 @@ with st.container(border=True):
         plot_placeholder.pyplot(fig)
 
     stream_step_fragment()
+
+"""
+#### Streaming context size
+
+In the above demo you'll see that our input chunks overlap eachother quite a bit. The blue arrow displays the 
+rightmost section of the _previous_ input chunk that is reused in the current input. Hence overlap means: "how much 
+of the previous input is kept in a **buffer** inbetween steps". TorchStream automatically manages this buffer 
+inside the stream object and ensures its size remains **minimal**.
+
+The minimum size of this buffer is called the **streaming context size**. This amount of context is **intrinsically 
+needed by the stream** to produce the same output as the non-streaming function. In general, the streaming context 
+size is non trivial to determine.
+"""
+
+with st.expander("See the source code of `get_streaming_context_size()`"):
+    st.code(inspect.getsource(get_streaming_context_size))
+
+with st.container(border=True):
+    """
+    A suboptimal streaming implementation might use an excessive amount of context, leading to a higher computational 
+    **overhead** that is particularly impactful on **smaller chunk sizes**.
+    """
+
+"""
+#### Output delay
+
+You might have noticed that some intermediary output on the left and right needs to be discarded
+
+"""

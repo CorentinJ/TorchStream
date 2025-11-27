@@ -32,7 +32,6 @@ class SlidingWindowStream(Stream):
         self.transform = transform
 
         self.params = sliding_window_params
-        self.min_buffsize = max(sliding_window_params.streaming_context_size, sliding_window_params.min_input_size - 1)
 
         self.tsfm_out_pos = 0
 
@@ -83,7 +82,7 @@ class SlidingWindowStream(Stream):
 
         # Drop input that won't be necessary in the future. We retain only the context size rounded up to the nearest
         # multiple of the input stride.
-        wins_to_drop = max(0, (in_buff.size - self.min_buffsize) // self.params.stride_in)
+        wins_to_drop = max(0, (in_buff.size - self.params.streaming_context_size) // self.params.stride_in)
         in_buff.drop(wins_to_drop * self.params.stride_in)
 
         # We've dropped past inputs, so the transform will now produce outputs starting further in the sequence
