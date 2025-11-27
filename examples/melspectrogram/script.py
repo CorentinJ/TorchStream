@@ -428,6 +428,27 @@ with st.container(border=True):
 """
 #### Output delay
 
-You might have noticed that some intermediary output on the left and right needs to be discarded
+You might have noticed that the "output to discard" rectangles appear on each step only when the center parameter is 
+set to True. This is because enabling `center` adds half a window of padding on each side of every intermediary 
+input, which does not happen during the non-streaming function call, leading to skewed outputs.
 
+The output delay is the amount of output that we need to discard on the right of intermediary outputs, and therefore 
+it also acts as a measure of overhead.
+
+"""
+
+with st.container(border=True):
+    """
+    Input padding and output trimming are sources of **overhead** that can be **significant** just like they can be 
+    **negligible**. 
+    
+    When they are significant, one should consider applying padding and trimming _outside_ of the streamed transform.
+    """
+
+
+"""
+### Up next
+You've seen how we can stream a simple transform with known sliding window parameters. The following examples will 
+cover **automatic derivation of sliding window parameters** and handling of **complex transforms**, including those that 
+are **not sliding window based**.
 """
