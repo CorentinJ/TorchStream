@@ -234,39 +234,60 @@ with st.container(border=True, vertical_alignment="center", gap="medium"):
 
 st.markdown("### Back to our example")
 
-wave_slice = wave[sample_rate // 5 : sample_rate]
-
-trsfm = lambda x: get_spectrogram(x, n_fft=2048)
-
-params = SlidingWindowParams(
-    kernel_size_in=2048,
-    stride_in=1024,
-    left_pad=1024,
-    right_pad=1024,
-)
-
-
-@st.cache_resource(show_spinner=False)
-def build_stream(chunk_size: int) -> AnimatedSlidingWindowStream:
-    stream_obj = AnimatedSlidingWindowStream(
-        trsfm,
-        params,
-        SeqSpec(-1, dtype=np.float32),
-        SeqSpec(120, -1),
-    )
-    stream_obj.forward_in_chunks(Sequence(wave_slice, seq_dim=0), chunk_size=chunk_size)
-    return stream_obj
-
 
 @st.fragment
 def stream_step_fragment():
+    total_seconds = len(wave) / sample_rate
+    min_slice_seconds = 0.1
+    start_sec, end_sec = st.slider(
+        "Select the audio segment",
+        0.0,
+        total_seconds,
+        (0.3, 0.8),
+        step=0.1,
+        format="%.1fs",
+    )
+    if end_sec - start_sec < min_slice_seconds:
+        end_sec = min(total_seconds, start_sec + min_slice_seconds)
+        if end_sec - start_sec < min_slice_seconds:
+            start_sec = max(0.0, end_sec - min_slice_seconds)
+    start_sample = int(start_sec * sample_rate)
+    end_sample = max(start_sample + int(min_slice_seconds * sample_rate), int(end_sec * sample_rate))
+
+    wave_slice = wave[start_sample:end_sample]
+
+    trsfm = lambda x: get_spectrogram(x, n_fft=2048)
+
+    params = SlidingWindowParams(
+        kernel_size_in=2048,
+        stride_in=1024,
+        left_pad=1024,
+        right_pad=1024,
+    )
+
+    @st.cache_resource(show_spinner=False)
+    def build_stream(chunk_size: int) -> AnimatedSlidingWindowStream:
+        stream_obj = AnimatedSlidingWindowStream(
+            trsfm,
+            params,
+            SeqSpec(-1, dtype=np.float32),
+            SeqSpec(120, -1),
+        )
+        stream_obj.forward_in_chunks(Sequence(wave_slice, seq_dim=0), chunk_size=chunk_size)
+        return stream_obj
+
     chunk_size = st.slider(
         "Chunk size",
-        params.min_input_size,
-        sample_rate * 3,
+        max(params.min_input_size, params.streaming_context_size + 1),
+        len(wave_slice) // 2,
         value=params.kernel_size_in,
     )
     stream = build_stream(chunk_size)
+
+    fig, axs = plt.subplots(figsize=(10, 8.5), nrows=3)
+    fig.subplots_adjust(hspace=0.5)
+    plot_placeholder = st.empty()
+    plot_placeholder.pyplot(fig)
 
     step_idx = (
         st.slider(
@@ -278,9 +299,6 @@ def stream_step_fragment():
         - 1
     )
 
-    fig, axs = plt.subplots(figsize=(10, 8.5), nrows=3)
-    fig.subplots_adjust(hspace=0.5)
-
     # Input plot
     plot_audio(axs[0], wave_slice)
 
@@ -288,8 +306,8 @@ def stream_step_fragment():
     plot_melspec(axs[2], trsfm(wave_slice))
 
     stream.plot_step(step_idx, *axs, out_plot_fn=plot_melspec)
+    plot_placeholder.pyplot(fig)
 
-    st.pyplot(fig)
 
-
-stream_step_fragment()
+with st.container(border=True):
+    stream_step_fragment()
