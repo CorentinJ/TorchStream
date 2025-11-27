@@ -11,6 +11,8 @@ from demo_tools.animated_sliding_window_stream import AnimatedSlidingWindowStrea
 from demo_tools.audio import load_audio
 from demo_tools.download import download_file_cached
 from torchstream import SeqSpec, Sequence, SlidingWindowParams
+from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
+from torchstream.stream_equivalence import test_stream_equivalent
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -33,7 +35,7 @@ st.audio(wave, sample_rate=sample_rate)
 st.caption("Source: https://global.oup.com/us/companion.websites/9780195300505/audio/audio_samples/, sample 32")
 
 
-def plot_audio(ax, wave: np.ndarray):
+def plot_audio(ax, wave: np.ndarray, tick_label_offset_s: float = 0.0):
     ax.plot(wave)
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Amplitude")
@@ -54,9 +56,9 @@ def plot_audio(ax, wave: np.ndarray):
     ticks = (ticks_seconds * sample_rate).round().astype(int)
     ax.set_xticks(ticks)
     if total_seconds >= 5:
-        ax.set_xticklabels([f"{ts:.0f}" for ts in ticks_seconds])
+        ax.set_xticklabels([f"{ts + tick_label_offset_s:.0f}" for ts in ticks_seconds])
     else:
-        ax.set_xticklabels([f"{ts:.1f}" for ts in ticks_seconds])
+        ax.set_xticklabels([f"{ts + tick_label_offset_s:.1f}" for ts in ticks_seconds])
 
 
 fig, ax = plt.subplots(figsize=(10, 2.5))
@@ -69,7 +71,7 @@ couple useful parameters
 """
 
 
-def get_spectrogram(
+def get_spec_trsfm_and_sli_params(
     wave: np.ndarray,
     n_mels=120,
     n_fft=2048,
@@ -85,13 +87,13 @@ def get_spectrogram(
     )(torch.from_numpy(wave))
 
 
-st.code(inspect.getsource(get_spectrogram))
+st.code(inspect.getsource(get_spec_trsfm_and_sli_params))
 
 
 """
 The output of that function is a (n_mels, n_frames) shaped tensor that we can view as a 2D image:
 """
-melspectrogram = get_spectrogram(wave)
+melspectrogram = get_spec_trsfm_and_sli_params(wave)
 st.code(
     f">>> melspectrogram = get_spectrogram(wave)\n{tuple(melspectrogram.shape)} shaped {melspectrogram.dtype} tensor"
 )
@@ -160,7 +162,7 @@ with st.echo():
     spec_chunks = []
     for i in range(0, wave.shape[0], 1500):
         try:
-            spec_chunks.append(get_spectrogram(wave[i : i + 1500]))
+            spec_chunks.append(get_spec_trsfm_and_sli_params(wave[i : i + 1500]))
         except RuntimeError:
             pass  # the last chunk may be too small
     naive_spec = torch.cat(spec_chunks, dim=1)
@@ -171,7 +173,7 @@ fig.subplots_adjust(hspace=0.5)
 axs[0].set_title("Naively Streamed Mel-Spectrogram")
 plot_melspec(axs[0], naive_spec)
 axs[1].set_title("Original Mel-Spectrogram")
-original_spec = get_spectrogram(wave)
+original_spec = get_spec_trsfm_and_sli_params(wave)
 plot_melspec(axs[1], original_spec)
 axs[0].set_xlim(0, max(naive_spec.shape[1], original_spec.shape[1]))
 st.pyplot(fig)
@@ -233,7 +235,85 @@ with st.container(border=True, vertical_alignment="center", gap="medium"):
     """
 
 st.markdown("### Back to our example")
+"""
+When you're working with a transform based on a single (non-trivial) sliding window algorithm, you'll generally be 
+able to infer its sliding window parameters by looking at its code or documentation. Let's go with that manual 
+approach this once. We'll put TorchStream's solver to use in the next example.
 
+Here are the relevant parts of the torchaudio's MelSpectrogram documentation:
+"""
+st.code(
+    """
+class MelSpectrogram(torch.nn.Module):
+(...)
+Args:
+    n_fft (int, optional): Size of FFT, creates n_fft // 2 + 1 bins. (Default: 400)
+    win_length (int or None, optional): Window size. (Default: n_fft)
+    hop_length (int or None, optional): Length of hop between STFT windows. (Default: win_length // 2)
+    center (bool, optional): whether to pad `waveform` on both sides so that frames are centered. (Default: True)
+(...)
+"""
+)
+
+"""
+This is rather straightforward. We can retrieve the function and derive its sliding window parameters this way
+"""
+
+with st.echo():
+
+    def get_spec_trsfm_and_sli_params(n_fft=2048, center: bool = False):
+        trsfm = torchaudio.transforms.MelSpectrogram(
+            sample_rate=sample_rate,
+            n_fft=n_fft,
+            center=center,
+            n_mels=120,
+        )
+
+        sli_params = SlidingWindowParams(
+            kernel_size_in=n_fft,
+            stride_in=n_fft // 2,
+            left_pad=n_fft // 2 if center else 0,
+            right_pad=n_fft // 2 if center else 0,
+            # Not documented but empirically verifiable: the input size below which the transform will raise an error
+            # for not having enough data
+            min_input_size=n_fft // 2 + 1 if center else n_fft,
+        )
+
+        return trsfm, sli_params
+
+
+"""
+TorchStream can empirically verify whether these parameters give the correct input to output size relationship and 
+whether they produce the correct output when streaming. It doesn't _guarantee_ the parameters are true to the transform
+nor that they are optimal for streaming, but it's a good smoke test.
+"""
+with st.echo():
+    trsfm, sli_params = get_spec_trsfm_and_sli_params(center=False)
+
+    stream = SlidingWindowStream(
+        trsfm,
+        sli_params,
+        # Audio inputs are 1D float arrays of varying length
+        input_spec=SeqSpec(-1),
+        # Spectrogram outputs are 2D: 120 channels for the mel bins, and varying length for the time frames
+        output_spec=SeqSpec(120, -1),
+    )
+
+    # This will raise an error if the streamed function differs
+    test_stream_equivalent(
+        sync_fn=trsfm,
+        stream=stream,
+        in_data=torch.from_numpy(wave),
+        # Take random input chunk sizes (inputs that are too small are not problematic,
+        # the stream waits until it has enough to produce an output)
+        in_step_sizes=torch.randint(1, 10_000, (20,)).tolist(),
+        atol=5e-3,
+    )
+
+"""
+So there we have it. TorchStream took a function not originally designed for streaming and it inferred how it should 
+be streamed based on its sliding window parameters. Let's see what that looks like under the hood.
+"""
 
 with st.container(border=True):
     total_seconds = len(wave) / sample_rate
@@ -253,22 +333,15 @@ with st.container(border=True):
     start_sample = int(start_sec * sample_rate)
     end_sample = max(start_sample + int(min_slice_seconds * sample_rate), int(end_sec * sample_rate))
 
-    wave_slice = wave[start_sample:end_sample]
+    wave_slice = torch.from_numpy(wave[start_sample:end_sample])
 
-    trsfm = lambda x: get_spectrogram(x, n_fft=2048)
-
-    params = SlidingWindowParams(
-        kernel_size_in=2048,
-        stride_in=1024,
-        left_pad=1024,
-        right_pad=1024,
-    )
+    trsfm, sli_params = get_spec_trsfm_and_sli_params()
 
     def build_stream(chunk_size: int) -> AnimatedSlidingWindowStream:
         stream_obj = AnimatedSlidingWindowStream(
             trsfm,
-            params,
-            SeqSpec(-1, dtype=np.float32),
+            sli_params,
+            SeqSpec(-1),
             SeqSpec(120, -1),
         )
         stream_obj.forward_in_chunks(Sequence(wave_slice, seq_dim=0), chunk_size=chunk_size)
@@ -276,9 +349,9 @@ with st.container(border=True):
 
     chunk_size = st.slider(
         "Chunk size",
-        max(params.min_input_size, params.streaming_context_size + 1),
+        sli_params.min_input_size,
         len(wave_slice) // 2,
-        value=params.kernel_size_in,
+        value=sli_params.kernel_size_in,
     )
     stream = build_stream(chunk_size)
 
@@ -299,7 +372,7 @@ with st.container(border=True):
         )
 
         # Input plot
-        plot_audio(axs[0], wave_slice)
+        plot_audio(axs[0], wave_slice.numpy(), tick_label_offset_s=start_sec)
 
         # Sync spectrogram plot
         plot_melspec(axs[2], trsfm(wave_slice))

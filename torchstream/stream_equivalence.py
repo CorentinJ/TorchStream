@@ -1,5 +1,5 @@
 import itertools
-from typing import Callable, Tuple
+from typing import Callable, Iterable, Tuple
 
 import numpy as np
 import pytest
@@ -18,8 +18,8 @@ def test_stream_equivalent(
     stream: Stream,
     # TODO: offer comparison to an output array instead, to avoid recomputing for multiple streams
     # TODO: overloads with input sequence size
-    in_data: Tuple[SeqArrayLike, ...] | Sequence | None = None,
-    in_step_sizes: Tuple[int, ...] = (7, 4, 12, 1, 17, 9),
+    in_data: SeqArrayLike | Tuple[SeqArrayLike, ...] | Sequence | None = None,
+    in_step_sizes: Iterable[int] = (7, 4, 12, 1, 17, 9),
     atol: float = 1e-5,
     throughput_check_max_delay: int | None = None,
 ):
@@ -32,12 +32,16 @@ def test_stream_equivalent(
 
     :param throughput_check_max_delay: TODO: doc
     """
+    in_step_sizes = list(in_step_sizes)
+
     # Get the input
     if in_data is None:
         in_seq = stream.in_spec.new_randn_sequence(sum(in_step_sizes))
     elif isinstance(in_data, Sequence):
         in_seq = in_data
     else:
+        if torch.is_tensor(in_data) or isinstance(in_data, np.ndarray):
+            in_data = (in_data,)
         in_seq = stream.in_spec.new_sequence_from_data(*in_data)
 
     # Get the sync output
@@ -66,11 +70,12 @@ def test_stream_equivalent(
         # Compare the stream to the sync output chunk
         if out_seq_stream_i.size:
             for sync_arr, stream_arr in zip(out_sync_i.data, out_seq_stream_i.data):
-                max_error = np.abs(sync_arr - stream_arr).max()
+                abs_diff = np.abs(np.array(sync_arr) - np.array(stream_arr))
+                max_error = np.max(abs_diff)
                 if max_error > atol or np.isnan(max_error):
                     raise ValueError(
                         f"Error too large on step {i} (got {max_error}, expected <= {atol})\n"
-                        f"Sync: {sync_arr}\nStream: {stream_arr}"
+                        f"Absolute difference: {abs_diff}"
                     )
 
         # Check throughput with the NaN trick
