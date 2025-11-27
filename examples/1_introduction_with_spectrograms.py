@@ -6,9 +6,9 @@ import streamlit as st
 import torch
 import torchaudio
 
-from demo_tools.animated_sliding_window_stream import AnimatedSlidingWindowStream
-from demo_tools.audio import load_audio
-from demo_tools.download import download_file_cached
+from examples.utils.animated_sliding_window_stream import AnimatedSlidingWindowStream
+from examples.utils.audio import load_audio
+from examples.utils.download import download_file_cached
 from torchstream import SeqSpec, Sequence, SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params import get_streaming_context_size, in_out_size_rel_repr
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
