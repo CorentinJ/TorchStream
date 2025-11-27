@@ -105,6 +105,8 @@ def plot_melspec(ax, spec, aspect="auto"):
         aspect=aspect,
         origin="lower",
         extent=(0, width, 0, height),
+        vmin=-20.0,
+        vmax=15.0,
     )
     ax.set_xlabel("Frames")
     ax.set_ylabel("Mel Bin")
@@ -133,12 +135,16 @@ If you're working on an application involving a sequence-to-sequence transform s
 
 And you'd be stuck for a while. The torch and numpy functions that make the backbone of modern Machine Learning 
 and AI are **vectorized**, wrapped in **countless layers of abstractions** and implemented in **highly optimized 
-C/C++/CUDA** code. Trying to pick apart their inner workings or to change their batch mode of operation (=all input 
-is processed in one go) to streaming is a tedious feat of engineering.
+C/C++/CUDA** code. Furthermore, the deep neural networks that use such functions arbitrarily combine **several 
+hundreds** of them in **deeply nested** python code.
+
+For any complex sequence-to-sequence transform, let alone a fully fledged deep neural network, trying to pick apart 
+its inner workings or to change their batch mode of operation (=all input is processed in one go) to streaming is a 
+tedious feat of engineering.
 """
 
 """
-For instance, the torchaudio docs do not document the output size of their Spectrogram transform:
+Take the docs of our Mel-Spectrogram function. They do not document how the length of the spectrogram is computed:
 > Returns Dimension (…, freq, time), where freq is n_fft // 2 + 1 where n_fft is the number of Fourier bins, and time 
 is the number of window hops (n_frame).
 
@@ -174,7 +180,7 @@ The outputs are not of the same size and there are frequency artifacts at the to
 It's a mess.
 
 You might argue that by choosing an appropriate chunk size parameter and adding some overlap between chunks, you could 
-recover the correct output. _You'd be entirely right._
+obtain the correct output. _You'd be entirely right._
 
 But what are these parameters? How do we obtain them? How can we be sure they are correct and optimal? And how can 
 we stream not a mere spectrogram function but **real-world massive neural networks with hundreds of layers of data 
