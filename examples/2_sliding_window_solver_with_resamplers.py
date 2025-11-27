@@ -3,6 +3,7 @@ import logging
 import librosa
 import librosa.core
 import numpy as np
+import streamlit as st
 
 from dev_tools.tracing import log_tracing_profile
 from torchstream import SeqSpec, find_sliding_window_params
@@ -10,6 +11,9 @@ from torchstream.patching.call_intercept import intercept_calls
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+
+st.subheader("2. The Sliding Window Parameter Solver")
 
 
 RESAMPLING_ALGOS = [

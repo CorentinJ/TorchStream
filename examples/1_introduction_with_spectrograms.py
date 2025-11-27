@@ -1,5 +1,4 @@
 import inspect
-import logging
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,10 +13,6 @@ from torchstream import SeqSpec, Sequence, SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params import get_streaming_context_size, in_out_size_rel_repr
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 from torchstream.stream_equivalence import test_stream_equivalent
-
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
-
 
 st.subheader("1. Introduction to TorchStream")
 

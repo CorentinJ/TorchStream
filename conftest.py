@@ -7,7 +7,7 @@ from pathlib import Path
 
 from opentelemetry import trace
 
-from demo_tools.tracing import log_tracing_profile
+from dev_tools.tracing import log_tracing_profile
 
 tracer = trace.get_tracer(__name__)
 
