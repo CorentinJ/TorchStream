@@ -235,15 +235,14 @@ with st.container(border=True, vertical_alignment="center", gap="medium"):
 st.markdown("### Back to our example")
 
 
-@st.fragment
-def stream_step_fragment():
+with st.container(border=True):
     total_seconds = len(wave) / sample_rate
     min_slice_seconds = 0.1
     start_sec, end_sec = st.slider(
         "Select the audio segment",
         0.0,
         total_seconds,
-        (0.3, 0.8),
+        (0.2, 0.9),
         step=0.1,
         format="%.1fs",
     )
@@ -265,7 +264,6 @@ def stream_step_fragment():
         right_pad=1024,
     )
 
-    @st.cache_resource(show_spinner=False)
     def build_stream(chunk_size: int) -> AnimatedSlidingWindowStream:
         stream_obj = AnimatedSlidingWindowStream(
             trsfm,
@@ -284,30 +282,29 @@ def stream_step_fragment():
     )
     stream = build_stream(chunk_size)
 
-    fig, axs = plt.subplots(figsize=(10, 8.5), nrows=3)
-    fig.subplots_adjust(hspace=0.5)
-    plot_placeholder = st.empty()
-    plot_placeholder.pyplot(fig)
+    @st.fragment
+    def stream_step_fragment():
+        fig, axs = plt.subplots(figsize=(10, 8.5), nrows=3)
+        fig.subplots_adjust(hspace=0.5)
+        plot_placeholder = st.empty()
 
-    step_idx = (
-        st.slider(
-            "Streaming step",
-            1,
-            len(stream.step_history),
-            value=min(2, len(stream.step_history) - 1),
+        step_idx = (
+            st.slider(
+                "Streaming step",
+                1,
+                len(stream.step_history),
+                value=min(2, len(stream.step_history) - 1),
+            )
+            - 1
         )
-        - 1
-    )
 
-    # Input plot
-    plot_audio(axs[0], wave_slice)
+        # Input plot
+        plot_audio(axs[0], wave_slice)
 
-    # Sync spectrogram plot
-    plot_melspec(axs[2], trsfm(wave_slice))
+        # Sync spectrogram plot
+        plot_melspec(axs[2], trsfm(wave_slice))
 
-    stream.plot_step(step_idx, *axs, out_plot_fn=plot_melspec)
-    plot_placeholder.pyplot(fig)
+        stream.plot_step(step_idx, *axs, out_plot_fn=plot_melspec)
+        plot_placeholder.pyplot(fig)
 
-
-with st.container(border=True):
     stream_step_fragment()
