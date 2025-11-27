@@ -11,6 +11,7 @@ from demo_tools.animated_sliding_window_stream import AnimatedSlidingWindowStrea
 from demo_tools.audio import load_audio
 from demo_tools.download import download_file_cached
 from torchstream import SeqSpec, Sequence, SlidingWindowParams
+from torchstream.sliding_window.sliding_window_params import in_out_size_rel_repr
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 from torchstream.stream_equivalence import test_stream_equivalent
 
@@ -288,7 +289,7 @@ whether they produce the correct output when streaming. It doesn't _guarantee_ t
 nor that they are optimal for streaming, but it's a good smoke test.
 """
 with st.echo():
-    trsfm, sli_params = get_spec_trsfm_and_sli_params(center=False)
+    trsfm, sli_params = get_spec_trsfm_and_sli_params()
 
     stream = SlidingWindowStream(
         trsfm,
@@ -335,7 +336,23 @@ with st.container(border=True):
 
     wave_slice = torch.from_numpy(wave[start_sample:end_sample])
 
-    trsfm, sli_params = get_spec_trsfm_and_sli_params()
+    with st.container(border=True):
+        """
+        Set the transform's parameters
+        """
+        left_col, right_col = st.columns([0.25, 0.75])
+        with left_col:
+            n_fft = st.slider("n_fft", 64, 4096, value=sli_params.kernel_size_in)
+            center = st.checkbox("center", value=True)
+
+        trsfm, sli_params = get_spec_trsfm_and_sli_params(n_fft=n_fft, center=center)
+        with right_col:
+            st.code(
+                str(sli_params)
+                + f"\n-> min/max overlap: {[sli_params.streaming_context_size, sli_params.streaming_context_size + sli_params.stride_in - 1]}\n"
+                + f"-> min/max output delay: {list(sli_params.output_delay_bounds)}\n"
+                + f"-> in/out size relation: {in_out_size_rel_repr(*sli_params.canonical_in_out_size_params)}"
+            )
 
     def build_stream(chunk_size: int) -> AnimatedSlidingWindowStream:
         stream_obj = AnimatedSlidingWindowStream(
@@ -348,7 +365,7 @@ with st.container(border=True):
         return stream_obj
 
     chunk_size = st.slider(
-        "Chunk size",
+        "Set the streaming chunk size",
         sli_params.min_input_size,
         len(wave_slice) // 2,
         value=sli_params.kernel_size_in,
