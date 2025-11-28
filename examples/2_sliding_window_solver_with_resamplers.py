@@ -31,6 +31,25 @@ with st.container(border=True):
     """
 
 """
+### The sliding window params solver
+
+The solver takes any function that transforms sequential data (torch tensors, numpy arrays) into other sequential 
+data. The data can be any shape or data type, it can be audio, video, text, etc... It can also be a combination of 
+multiple arrays (more on this in example #4).
+
+Then:
+1. It probes the function with a randomly generated input to see if it behaves correctly, until it finds a valid 
+input-output pair.
+2. It infers the input size to output size relationship of the function by forwarding multiple inputs of different 
+sizes.
+3. It finds sliding window parameters that would explain the observed inputs and outputs, and it verifies that they 
+are correct by generating specific inputs and checking the outputs.
+
+Let's test it on a simple example
+"""
+
+quit()
+"""
 ### Audio resampling
 
 To resample an audio signal means to modify it to be as if it was recorded at a different sample rate. Common 

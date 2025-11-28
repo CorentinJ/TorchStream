@@ -195,8 +195,8 @@ st.image("examples/_resources/sli_algo1.png")
 
 """
 You take a slice of fixed size of the input data (_a window_), apply a function (_a kernel_) on it and store the output 
-at a given position in the output vector. You then offset (_slide_) the input window and the output position by 
-fixed amounts (_the stride_) and repeat.
+at a given position in the output vector. You then offset (_slide_) the input window by a fixed amount (_the stride_) 
+to generate the next output. Repeat until the full input has been consumed.
 """
 st.image("examples/_resources/sli_algo2.png")
 
@@ -305,6 +305,8 @@ with st.echo():
         in_step_sizes=torch.randint(1, 10_000, (20,)).tolist(),
         atol=5e-3,
     )
+
+st.success("Passed the equivalence test")
 
 """
 So there we have it. TorchStream took a function not originally designed for streaming and it inferred how it should 
