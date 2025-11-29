@@ -587,8 +587,9 @@ class SlidingWindowParamsSolver:
                 raise RuntimeError(
                     f"Reached maximum number of hypotheses ({max_hypotheses}) without converging to a solution. "
                     f"Aborting.\n"
-                    f"This likely means that your transform has a receptive field of varying size, which is not "
-                    f"modeled by this solver."
+                    f"This likely means your transform does not behave according to our sliding window model:\n"
+                    f"  - it may have a receptive field of varying size\n"
+                    f"  - it may break assumptions (stride <= kernel_size, padding < kernel_size, ...)\n"
                 )
 
         return [hyp.params for hyp in out_sols]

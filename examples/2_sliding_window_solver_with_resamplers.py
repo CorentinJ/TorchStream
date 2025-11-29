@@ -1,5 +1,5 @@
+import inspect
 import logging
-import time
 
 import librosa
 import librosa.core
@@ -50,37 +50,58 @@ are correct by generating specific inputs and checking the outputs.
 Let's test it on a simple example
 """
 
+code_placeholder = st.empty()
 
-def long_running_task(n_steps: int):
-    for i in range(n_steps):
-        time.sleep(0.5)
-        logger.info("Step %d/%d", i + 1, n_steps)
+left_col, right_col = st.columns([0.2, 0.8])
 
-    logger.info("Completed all %d steps", n_steps)
-
-
-def on_done(result):
-    if isinstance(result, Exception):
-        st.session_state["last_error"] = repr(result)
-    else:
-        st.session_state["last_result"] = result
+with left_col:
+    win_size = st.slider("Window size", min_value=1, max_value=10, value=3)
+    stride_in = st.slider("Input stride", min_value=1, max_value=10, value=2)
 
 
-n_steps = st.slider("Steps", min_value=1, max_value=100, value=10)
+def moving_average(x: np.ndarray) -> np.ndarray:
+    out = []
+    for start_idx in range(0, len(x), stride_in):
+        window = x[start_idx : start_idx + win_size]
+        if len(window) < win_size:
+            break
+        out.append(np.mean(window))
+    return np.array(out)
 
-run_managed_thread(
-    func=long_running_task,
-    run_id=f"run_{n_steps}",
-    job_id="long_running_task",
-    on_complete=on_done,
-    func_args=(n_steps,),
-    func_kwargs={},
+
+code_placeholder.code(
+    inspect.getsource(moving_average)
+    + """
+find_sliding_window_params(
+    moving_average,
+    # Input spec is the same as output spec, no need to specify it twice
+    in_spec=SeqSpec(-1, dtype=np.float32),
+    # A few cases have multiple equivalent solutions e.g. (win_size=2, stride_in=1)
+    max_equivalent_sols=3,
+)
+"""
 )
 
-if "last_result" in st.session_state:
-    st.success(f"Last result: {st.session_state['last_result']}")
-if "last_error" in st.session_state:
-    st.error(f"Last error: {st.session_state['last_error']}")
+
+def find_sli_params_and_print(*args, **kwargs):
+    sols = find_sliding_window_params(*args, **kwargs)
+
+    logger.info("-----------------\n")
+    for i, sol in enumerate(sols):
+        logger.info(f"Solution #{i + 1}: {sol}")
+
+
+with right_col:
+    run_managed_thread(
+        func=find_sli_params_and_print,
+        run_id=f"run_{win_size}_{stride_in}",
+        job_id="moving_average_demo",
+        func_kwargs=dict(
+            trsfm=moving_average,
+            in_spec=SeqSpec(-1, dtype=np.float32),
+            max_equivalent_sols=3,
+        ),
+    )
 
 
 quit()

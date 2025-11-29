@@ -4,7 +4,7 @@ import logging
 import sys
 import threading
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Optional, Tuple
 
 import streamlit as st
@@ -42,17 +42,12 @@ class _StreamlitLogHandler(logging.Handler):
 class _RunState:
     run_id: Optional[str] = None
     thread: Optional[threading.Thread] = None
-    logs: list[str] = field(default_factory=list)
-    result_box: dict[str, Any] = field(default_factory=dict)
-    done_event: threading.Event = field(default_factory=threading.Event)
-    callback_done: bool = False
 
 
 def run_managed_thread(
     func: Callable[..., Any],
     run_id: str,
     job_id: str,
-    on_complete: Callable[[Any], None],
     func_args: Tuple[Any, ...] = (),
     func_kwargs: Optional[dict[str, Any]] = None,
     log_height: int = 300,
@@ -76,21 +71,10 @@ def run_managed_thread(
 
     if state.thread is not None and state.thread.is_alive() and state.run_id != run_id:
         setattr(state.thread, "streamlit_script_run_ctx", None)
-        state.logs.append(f"[manager] Requested interrupt for previous run {state.run_id!r}")
-
         state.thread.join()
-        state.logs.append(f"[manager] Previous run {state.run_id!r} has stopped")
-
         state.thread = None
-        state.done_event = threading.Event()
-        state.result_box = {}
-        state.callback_done = False
 
     if (state.thread is None or not state.thread.is_alive()) and state.run_id != run_id:
-        state.logs = []
-        state.done_event = threading.Event()
-        state.result_box = {}
-        state.callback_done = False
         state.run_id = run_id
 
         target_logger = logging.getLogger()
@@ -102,39 +86,12 @@ def run_managed_thread(
 
         def worker():
             try:
-                result = func(*func_args, **func_kwargs)
-                state.result_box["status"] = "ok"
-                state.result_box["value"] = result
+                func(*func_args, **func_kwargs)
             except Exception as exc:
-                state.result_box["status"] = "error"
-                state.result_box["value"] = exc
-            finally:
-                state.done_event.set()
+                st.exception(exc)
+                raise exc
 
         state.thread = threading.Thread(target=worker, daemon=True)
         # Enables new thread to modify UI elements from current thread
         add_script_run_ctx(state.thread, get_script_run_ctx())
         state.thread.start()
-        state.logs.append(f"[manager] Started run {job_id!r} (thread={state.thread.name})")
-
-    if (
-        state.thread is not None
-        and not state.thread.is_alive()
-        and not state.callback_done
-        and state.done_event.is_set()
-    ):
-        status = state.result_box.get("status")
-        result = state.result_box.get("value", None)
-
-        if status == "ok":
-            state.logs.append("[manager] Worker completed successfully")
-        elif status == "error":
-            state.logs.append(f"[manager] Worker raised: {result!r}")
-        else:
-            state.logs.append("[manager] Worker finished with no result")
-
-        def _callback_runner():
-            on_complete(result)
-
-        threading.Thread(target=_callback_runner, daemon=True).start()
-        state.callback_done = True
