@@ -5,7 +5,6 @@ import librosa
 import librosa.core
 import numpy as np
 import streamlit as st
-from streamlit.runtime.scriptrunner import get_script_run_ctx
 
 from dev_tools.tracing import log_tracing_profile
 from examples.utils.audio import load_audio
@@ -51,13 +50,8 @@ are correct by generating specific inputs and checking the outputs.
 Let's test it on a simple example
 """
 
-
 def long_running_task(n_steps: int):
     for i in range(n_steps):
-        if get_script_run_ctx(suppress_warning=True) is None:
-            logger.info("Received interrupt at step %d, stopping cleanly", i)
-            return
-
         time.sleep(0.5)
         logger.info("Step %d/%d", i + 1, n_steps)
 
@@ -72,12 +66,10 @@ def on_done(result):
 
 
 n_steps = st.slider("Steps", min_value=1, max_value=100, value=10)
-logs_container = st.container()
 
 run_managed_thread(
     func=long_running_task,
     run_id=f"run_{n_steps}",
-    log_container=logs_container,
     on_complete=on_done,
     state_key="long_task_runner",
     func_args=(n_steps,),

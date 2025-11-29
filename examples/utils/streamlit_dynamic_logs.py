@@ -54,15 +54,21 @@ html, body {{
 """
 
 
+def _refresh(key: str) -> None:
+    widget, text = st.session_state[key]
+    widget.markdown(
+        f'<div id="{key}" style="display:none;">{text}</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def create_logbox(unique_id: str, height: int = 300) -> None:
     key = f"logbox_{unique_id}"
-    if key in st.session_state:
-        return  # Already created
 
-    # Hidden data holder in the main page
-    st.session_state[key] = st.empty()
+    st.session_state[key] = (st.empty(), st.session_state.get(key, (None, "")[1]))
 
     components.html(_LOGBOX_HTML.format(data_id=key), height=height)
+    _refresh(key)
 
 
 def update_logs(unique_id: str, logs: list[str]) -> None:
@@ -71,7 +77,5 @@ def update_logs(unique_id: str, logs: list[str]) -> None:
 
     log_text = "\n".join(logs)
     safe = html.escape(log_text)
-    st.session_state[key].markdown(
-        f'<div id="{key}" style="display:none;">{safe}</div>',
-        unsafe_allow_html=True,
-    )
+    st.session_state[key] = (st.session_state[key][0], safe)
+    _refresh(key)
