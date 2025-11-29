@@ -50,6 +50,7 @@ are correct by generating specific inputs and checking the outputs.
 Let's test it on a simple example
 """
 
+
 def long_running_task(n_steps: int):
     for i in range(n_steps):
         time.sleep(0.5)
@@ -70,8 +71,8 @@ n_steps = st.slider("Steps", min_value=1, max_value=100, value=10)
 run_managed_thread(
     func=long_running_task,
     run_id=f"run_{n_steps}",
+    job_id="long_running_task",
     on_complete=on_done,
-    state_key="long_task_runner",
     func_args=(n_steps,),
     func_kwargs={},
 )

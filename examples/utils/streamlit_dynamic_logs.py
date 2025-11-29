@@ -1,4 +1,5 @@
 import html
+import sys
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -65,7 +66,7 @@ def _refresh(key: str) -> None:
 def create_logbox(unique_id: str, height: int = 300) -> None:
     key = f"logbox_{unique_id}"
 
-    st.session_state[key] = (st.empty(), st.session_state.get(key, (None, "")[1]))
+    st.session_state[key] = (st.empty(), st.session_state.get(key, (None, ""))[1])
 
     components.html(_LOGBOX_HTML.format(data_id=key), height=height)
     _refresh(key)
@@ -73,7 +74,9 @@ def create_logbox(unique_id: str, height: int = 300) -> None:
 
 def update_logs(unique_id: str, logs: list[str]) -> None:
     key = f"logbox_{unique_id}"
-    assert key in st.session_state, "Logbox not created. Call create_logbox first."
+    if key not in st.session_state:
+        print("Logbox not created, exiting")
+        sys.exit(0)
 
     log_text = "\n".join(logs)
     safe = html.escape(log_text)

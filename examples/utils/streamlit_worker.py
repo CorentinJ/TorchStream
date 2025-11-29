@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 import threading
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Tuple
 
@@ -10,6 +11,8 @@ import streamlit as st
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 
 from examples.utils.streamlit_dynamic_logs import create_logbox, update_logs
+
+_RUN_MANAGED_THREAD_ID_KEY = "streamlit_run_managed_thread_id"
 
 
 class _StreamlitLogHandler(logging.Handler):
@@ -39,7 +42,6 @@ class _StreamlitLogHandler(logging.Handler):
 class _RunState:
     run_id: Optional[str] = None
     thread: Optional[threading.Thread] = None
-    log_handler: Optional[logging.Handler] = None
     logs: list[str] = field(default_factory=list)
     result_box: dict[str, Any] = field(default_factory=dict)
     done_event: threading.Event = field(default_factory=threading.Event)
@@ -49,8 +51,8 @@ class _RunState:
 def run_managed_thread(
     func: Callable[..., Any],
     run_id: str,
+    job_id: str,
     on_complete: Callable[[Any], None],
-    state_key: str = "managed_thread",
     func_args: Tuple[Any, ...] = (),
     func_kwargs: Optional[dict[str, Any]] = None,
     log_height: int = 300,
@@ -58,11 +60,19 @@ def run_managed_thread(
     if func_kwargs is None:
         func_kwargs = {}
 
-    if state_key not in st.session_state:
-        st.session_state[state_key] = _RunState()
-    state: _RunState = st.session_state[state_key]
+    # Unique session identifier added to run id to avoid collisions between different sessions
+    if _RUN_MANAGED_THREAD_ID_KEY not in st.session_state:
+        st.session_state[_RUN_MANAGED_THREAD_ID_KEY] = uuid.uuid4().hex
+    session_id = st.session_state[_RUN_MANAGED_THREAD_ID_KEY]
+    job_id = f"{job_id}__{session_id}"
+    run_id = f"{run_id}__{session_id}"
 
-    create_logbox(state_key, height=log_height)
+    # Unique state for any run of this job
+    if job_id not in st.session_state:
+        st.session_state[job_id] = _RunState()
+    state: _RunState = st.session_state[job_id]
+
+    create_logbox(run_id, height=log_height)
 
     if state.thread is not None and state.thread.is_alive() and state.run_id != run_id:
         setattr(state.thread, "streamlit_script_run_ctx", None)
@@ -84,15 +94,10 @@ def run_managed_thread(
         state.run_id = run_id
 
         target_logger = logging.getLogger()
-        if state.log_handler is not None:
-            try:
-                target_logger.removeHandler(state.log_handler)
-            except ValueError:
-                pass
-
-        state.log_handler = _StreamlitLogHandler(state_key)
-        state.log_handler.setLevel(logging.INFO)
-        target_logger.addHandler(state.log_handler)
+        target_logger.handlers = [h for h in target_logger.handlers if not isinstance(h, _StreamlitLogHandler)]
+        log_handler = _StreamlitLogHandler(run_id)
+        log_handler.setLevel(logging.INFO)
+        target_logger.addHandler(log_handler)
         target_logger.setLevel(min(target_logger.level, logging.INFO))
 
         def worker():
@@ -110,7 +115,7 @@ def run_managed_thread(
         # Enables new thread to modify UI elements from current thread
         add_script_run_ctx(state.thread, get_script_run_ctx())
         state.thread.start()
-        state.logs.append(f"[manager] Started run {run_id!r} (thread={state.thread.name})")
+        state.logs.append(f"[manager] Started run {job_id!r} (thread={state.thread.name})")
 
     if (
         state.thread is not None
@@ -118,13 +123,6 @@ def run_managed_thread(
         and not state.callback_done
         and state.done_event.is_set()
     ):
-        target_logger = logging.getLogger()
-        if state.log_handler is not None:
-            try:
-                target_logger.removeHandler(state.log_handler)
-            except ValueError:
-                pass
-
         status = state.result_box.get("status")
         result = state.result_box.get("value", None)
 
