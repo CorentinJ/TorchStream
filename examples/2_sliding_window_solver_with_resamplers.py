@@ -1,13 +1,16 @@
 import logging
+import time
 
 import librosa
 import librosa.core
 import numpy as np
 import streamlit as st
+from streamlit.runtime.scriptrunner import get_script_run_ctx
 
 from dev_tools.tracing import log_tracing_profile
 from examples.utils.audio import load_audio
 from examples.utils.download import download_file_cached
+from examples.utils.streamlit_worker import run_managed_thread
 from torchstream import SeqSpec, find_sliding_window_params
 from torchstream.patching.call_intercept import intercept_calls
 
@@ -47,6 +50,45 @@ are correct by generating specific inputs and checking the outputs.
 
 Let's test it on a simple example
 """
+
+
+def long_running_task(n_steps: int):
+    for i in range(n_steps):
+        if get_script_run_ctx(suppress_warning=True) is None:
+            logger.info("Received interrupt at step %d, stopping cleanly", i)
+            return
+
+        time.sleep(0.5)
+        logger.info("Step %d/%d", i + 1, n_steps)
+
+    logger.info("Completed all %d steps", n_steps)
+
+
+def on_done(result):
+    if isinstance(result, Exception):
+        st.session_state["last_error"] = repr(result)
+    else:
+        st.session_state["last_result"] = result
+
+
+n_steps = st.slider("Steps", min_value=1, max_value=100, value=10)
+logs_container = st.container()
+
+run_managed_thread(
+    func=long_running_task,
+    run_id=f"run_{n_steps}",
+    log_container=logs_container,
+    on_complete=on_done,
+    state_key="long_task_runner",
+    func_args=(n_steps,),
+    func_kwargs={},
+)
+
+if "last_result" in st.session_state:
+    st.success(f"Last result: {st.session_state['last_result']}")
+if "last_error" in st.session_state:
+    st.error(f"Last error: {st.session_state['last_error']}")
+
 
 quit()
 """
