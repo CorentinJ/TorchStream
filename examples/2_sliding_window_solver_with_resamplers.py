@@ -59,6 +59,9 @@ left_col, right_col = st.columns([0.2, 0.8])
 with left_col:
     win_size = st.slider("Window size", min_value=1, max_value=10, value=3)
     stride_in = st.slider("Input stride", min_value=1, max_value=10, value=2)
+    st.caption(
+        "Note: the solver will fail with a stride larger than the window size. These would be invalid parameters, skipping entirely over some inputs."
+    )
 
 
 def moving_average(x: np.ndarray) -> np.ndarray:
@@ -178,7 +181,7 @@ with st.echo():
 st.code(nn.Conv1d(1, 1, kernel_size=3, stride=1, padding=1, dilation=2)(x).detach().tolist())
 
 """
-Your model must accept NaNs as inputs for this to work. Below we'll explore workarounds for when that is not the case.
+Your transform must accept NaNs as inputs for this to work. Below we'll explore workarounds for when that is not the case.
 """
 
 """
@@ -214,10 +217,70 @@ st.code(
 
 """
 It is common to need to stream this resampling operation in **real-time**, for example when receiving audio data from a
-microphone.
+microphone. Here again, a naive approach would lead to awful audio artifacts that would degrade the quality of your 
+application.
 
-Again, a naive approach would lead to awful audio artifacts that will make anyone turn away from your application.
+Let's involve the solver:
 """
+
+
+st.code("""
+def resample_trsfm(x: np.ndarray) -> np.ndarray:
+    return librosa.core.resample(x, orig_sr=16000, target_sr=48000)
+
+sols = find_sliding_window_params(
+    resample_trsfm,
+    SeqSpec(-1, dtype=np.float32),
+)""")
+st.exception(librosa.util.exceptions.ParameterError("Audio buffer is not finite everywhere"), width=400)
+
+"""
+And we've hit our first snag. Librosa has an internal check to verify that input audio is valid, not containing NaNs. 
+If you go into the resample function, you'll see that this method is `valid_audio()`. In practice, you can understand 
+these types of issues by **going through stack traces** or ideally by **stepping into the transform with a debugger**.
+"""
+
+with st.container(border=True):
+    """
+    It is a frequent occurrence when trying to make a transform streamable that one (possibly deeply) nested function 
+    will get in your way. TorchStream offers **monkey patching utilities** to get you past these hurdles without having 
+    to rewrite code. Once you've figured out how to stream your model, you can usually do without them.
+    """
+
+code_placeholder.code(
+    inspect.getsource(moving_average)
+    + """
+find_sliding_window_params(
+    moving_average,
+    # Input spec is the same as output spec, no need to specify it twice
+    in_spec=SeqSpec(-1, dtype=np.float32),
+    # Yield up to 3 equivalent solutions (default is 1)
+    max_equivalent_sols=3,
+)
+"""
+)
+
+
+def find_sli_params_and_print(*args, **kwargs):
+    sols = find_sliding_window_params(*args, **kwargs)
+
+    logger.info("-----------------\n")
+    for i, sol in enumerate(sols):
+        logger.info(f"Solution #{i + 1}: {sol}")
+
+
+with right_col:
+    run_managed_thread(
+        func=find_sli_params_and_print,
+        run_id=f"rund_{win_size}_{stride_in}",
+        job_id="resample_demo",
+        func_kwargs=dict(
+            trsfm=moving_average,
+            in_spec=SeqSpec(-1, dtype=np.float32),
+            max_equivalent_sols=3,
+        ),
+    )
+
 
 quit()
 
