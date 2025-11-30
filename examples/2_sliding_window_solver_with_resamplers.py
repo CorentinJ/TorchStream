@@ -5,6 +5,8 @@ import librosa
 import librosa.core
 import numpy as np
 import streamlit as st
+import torch
+from torch import nn
 
 from dev_tools.tracing import log_tracing_profile
 from examples.utils.audio import load_audio
@@ -34,6 +36,7 @@ with st.container(border=True):
     """
 
 """
+### Overview
 The solver takes any function that transforms sequential data (torch tensors, numpy arrays) into other sequential 
 data. The data can be any shape or data type, it can be audio, video, text, etc... It can also be a combination of 
 multiple arrays (more on this in example #4).
@@ -44,7 +47,7 @@ input-output pair.
 2. It infers the input size to output size relationship of the function by forwarding multiple inputs of different 
 sizes.
 3. It finds sliding window parameters that would explain the observed inputs and outputs, and it verifies that they 
-are correct by generating specific inputs and checking the outputs.
+are correct by generating new specific inputs and checking their outputs.
 
 Let's test it on a simple example. We'll write a moving average function with window size and stride as parameters.
 """
@@ -75,7 +78,7 @@ find_sliding_window_params(
     moving_average,
     # Input spec is the same as output spec, no need to specify it twice
     in_spec=SeqSpec(-1, dtype=np.float32),
-    # A few cases have multiple equivalent solutions e.g. (win_size=2, stride_in=1)
+    # Yield up to 3 equivalent solutions (default is 1)
     max_equivalent_sols=3,
 )
 """
@@ -103,10 +106,39 @@ with right_col:
     )
 
 """
-The solver quickly finds one or multiple solutions, including the exact parameters we used. When it finds multiple 
-solutions, **they are equivalent** in the sense that all produce the same input to output mapping. It does not matter 
-which one you use down the line, they will all work the same. By default `max_equivalent_sols` is set to 1. 
+**Multiplicity of solutions**: The solver quickly finds one or multiple solutions, including the exact parameters we used. When it finds multiple 
+solutions, **they are equivalent** in the sense that all produce the same input to output mapping. For instance, these 
+two are equivalent:
 """
+
+
+def print_map(params: SlidingWindowParams, input_size: int):
+    # Get input ranges for each window
+    win_inputs = [in_range for in_range, _ in params.iter_bounded_kernel_map(input_size)]
+
+    # Map each output index to every input indices that it sees
+    # TODO: specialized methods for this in SlidingWindowParams? This is the receptive field, it's important
+    input_ranges_by_output_idx = []
+    for out_start, out_end, windows in params.get_inverse_kernel_map(input_size):
+        min_in_idx = input_size
+        max_in_idx = 0
+        for win_idx, _, _ in windows:
+            win_in_range = win_inputs[win_idx]
+            min_in_idx = min(min_in_idx, win_in_range[0])
+            max_in_idx = max(max_in_idx, win_in_range[1] - 1)
+        input_range = [min_in_idx, max_in_idx + 1]
+
+        input_ranges_by_output_idx.extend([input_range] * (out_end - out_start))
+
+    st.code(
+        f"Mapping for input of size {input_size}:\n"
+        + "[Output idx]             [Input range]\n"
+        + "\n".join(
+            f"    [{i}]     computed from   {input_ranges_by_output_idx[i]}"
+            for i in range(len(input_ranges_by_output_idx))
+        )
+    )
+
 
 left_col, right_col = st.columns([0.5, 0.5])
 with left_col:
@@ -115,13 +147,8 @@ with left_col:
             kernel_size_in=2,
         )
 
-    st.code(
-        "Mapping for input of size 10:\n"
-        + "\n".join(
-            f"   in_range {list(in_range)} -> out_range {list(out_range)}"
-            for in_range, out_range in params.iter_bounded_kernel_map(10)
-        )
-    )
+    print_map(params, input_size=10)
+
 
 with right_col:
     with st.echo():
@@ -131,18 +158,31 @@ with right_col:
             right_out_trim=1,
         )
 
-    st.code(
-        "Mapping for input of size 10:\n"
-        + "\n".join(
-            f"   in_range {list(in_range)} -> out_range {list(out_range)}"
-            for in_range, out_range in params.iter_bounded_kernel_map(10)
-        )
-    )
+    print_map(params, input_size=10)
 
-
-quit()
 """
-### Audio resampling
+It does not matter which of the solver's solutions you use down the line, they will all work the same. The solver 
+never returns suboptimal or incorrect solutions. Hence by default, `max_equivalent_sols` is set to 1. 
+"""
+
+"""
+**NaN trick**: the solver works using a simple trick. We rely on NaN propagation¹ to understand how the transform 
+maps input indices to output indices. Python, numpy and torch will output a NaN in virtually every operation that 
+has a NaN for operand. For example:
+"""
+st.caption("¹ Defined in the IEEE 754 Standard for Floating-Point Arithmetic")
+
+with st.echo():
+    x = torch.tensor([[[1.0, 2.0, 3.0, float("nan"), 5.0, 6.0, 7.0]]])
+    nn.Conv1d(1, 1, kernel_size=3, stride=1, padding=1, dilation=2)(x)
+st.code(nn.Conv1d(1, 1, kernel_size=3, stride=1, padding=1, dilation=2)(x).detach().tolist())
+
+"""
+Your model must accept NaNs as inputs for this to work. Below we'll explore workarounds for when that is not the case.
+"""
+
+"""
+### Example with audio resampling
 
 To resample an audio signal means to modify it to be as if it was recorded at a different sample rate. Common 
 sample rates range from 8kHz (telephone quality), i.e. 8000 audio samples per second, to 48kHz (professional audio 
