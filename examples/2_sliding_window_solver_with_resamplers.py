@@ -12,6 +12,7 @@ from examples.utils.download import download_file_cached
 from examples.utils.streamlit_worker import run_managed_thread
 from torchstream import SeqSpec, find_sliding_window_params
 from torchstream.patching.call_intercept import intercept_calls
+from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -33,8 +34,6 @@ with st.container(border=True):
     """
 
 """
-### The sliding window params solver
-
 The solver takes any function that transforms sequential data (torch tensors, numpy arrays) into other sequential 
 data. The data can be any shape or data type, it can be audio, video, text, etc... It can also be a combination of 
 multiple arrays (more on this in example #4).
@@ -47,7 +46,7 @@ sizes.
 3. It finds sliding window parameters that would explain the observed inputs and outputs, and it verifies that they 
 are correct by generating specific inputs and checking the outputs.
 
-Let's test it on a simple example
+Let's test it on a simple example. We'll write a moving average function with window size and stride as parameters.
 """
 
 code_placeholder = st.empty()
@@ -101,6 +100,43 @@ with right_col:
             in_spec=SeqSpec(-1, dtype=np.float32),
             max_equivalent_sols=3,
         ),
+    )
+
+"""
+The solver quickly finds one or multiple solutions, including the exact parameters we used. When it finds multiple 
+solutions, **they are equivalent** in the sense that all produce the same input to output mapping. It does not matter 
+which one you use down the line, they will all work the same. By default `max_equivalent_sols` is set to 1. 
+"""
+
+left_col, right_col = st.columns([0.5, 0.5])
+with left_col:
+    with st.echo():
+        params = SlidingWindowParams(
+            kernel_size_in=2,
+        )
+
+    st.code(
+        "Mapping for input of size 10:\n"
+        + "\n".join(
+            f"   in_range {list(in_range)} -> out_range {list(out_range)}"
+            for in_range, out_range in params.iter_bounded_kernel_map(10)
+        )
+    )
+
+with right_col:
+    with st.echo():
+        params = SlidingWindowParams(
+            kernel_size_out=2,
+            left_out_trim=1,
+            right_out_trim=1,
+        )
+
+    st.code(
+        "Mapping for input of size 10:\n"
+        + "\n".join(
+            f"   in_range {list(in_range)} -> out_range {list(out_range)}"
+            for in_range, out_range in params.iter_bounded_kernel_map(10)
+        )
     )
 
 
