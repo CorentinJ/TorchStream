@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import threading
 import uuid
@@ -13,6 +14,8 @@ from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ct
 from examples.utils.streamlit_dynamic_logs import create_logbox, update_logs
 
 _RUN_MANAGED_THREAD_ID_KEY = "streamlit_run_managed_thread_id"
+# Fixes a librosa issue
+os.environ["EAGER_IMPORT"] = "1"
 
 
 class _StreamlitLogHandler(logging.Handler):
@@ -92,10 +95,12 @@ def run_managed_thread(
     if active_run_id and active_run_id != run_id and active_run_id.endswith(job_id):
         other_state = run_history[active_run_id]
         setattr(other_state.thread, "streamlit_script_run_ctx", None)
+        update_logs(run_id, ["Terminating current job..."])
         other_state.thread.join()
 
     # In any case now, we wait for our turn to run
     print(f"\x1b[32m{'LOCK ACQUIRE'}\x1b[39m")
+    update_logs(run_id, ["Waiting for another job to complete..."])
     thread_lock.acquire()
     print(f"\x1b[32m{'LOCK ACQUIRED'}\x1b[39m")
     st.session_state[_RUN_MANAGED_THREAD_ID_KEY]["active_run_id"] = run_id

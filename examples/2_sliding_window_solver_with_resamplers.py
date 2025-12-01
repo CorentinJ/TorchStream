@@ -1,18 +1,23 @@
 import inspect
 import logging
+from functools import partial
 
 import librosa
 import librosa.core
 import numpy as np
 import streamlit as st
 import torch
+from matplotlib import pyplot as plt
 from torch import nn
 
+from examples.utils.animated_sliding_window_stream import AnimatedSlidingWindowStream
 from examples.utils.audio import load_audio
 from examples.utils.download import download_file_cached
 from examples.utils.streamlit_worker import await_running_thread, run_managed_thread
 from torchstream import SeqSpec, SlidingWindowParams, find_sliding_window_params, intercept_calls
 from torchstream.exception_signature import DEFAULT_ZERO_SIZE_EXCEPTIONS
+from torchstream.sequence.sequence import Sequence
+from torchstream.sliding_window.sliding_window_params import in_out_size_rel_repr
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -87,6 +92,7 @@ code_placeholder.code(
 from torchstream import SeqSpec, SlidingWindowParams, find_sliding_window_params
 
 logging.basicConfig(level=logging.INFO)
+
 
 """
     + inspect.getsource(moving_average)
@@ -278,7 +284,7 @@ Second snag: we get an Exception when forwarding an input size that is too small
 that are too small for the given transform to produce any output, because finding **the minimum input size** of the 
 transform is part of its job.
 
-Therefore the solver's job is to swallow these exceptions and work as if the transform gave a **zero-sized output**. 
+Therefore the solver must swallow these exceptions and work as if the transform gave a **zero-sized output**. 
 Because there is no universal exception type for "zero-sized output", you can provide its signature as a tuple 
 `(exception_type, message_substring)` like so:
 
@@ -298,7 +304,7 @@ find_sliding_window_params(
 
 
 """
-And we're off
+And we're off:
 """
 
 
@@ -319,60 +325,145 @@ run_managed_thread(
             (ValueError, "is too small to resample from"),
         ],
     ),
+    log_height=500,
 )
 
+"""
+The solution here is certainly more complex than the ones with the moving average example. It would have been difficult 
+for the developer of the resampling function to find and document these values. You can imagine how hard it gets with 
+neural networks!
+
+Let's visualize the streaming of this resampling operation:
+"""
+
+
+def plot_audio(ax, wave: np.ndarray, sample_rate, tick_label_offset_s: float = 0.0):
+    xs = np.arange(len(wave))
+    ax.scatter(xs, wave, s=6, color="tab:blue", alpha=0.7)
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Amplitude")
+    ax.set_xlim(0, len(wave) - 1)
+    ax.set_ylim(-1, 1)
+
+    total_seconds = len(wave) / sample_rate
+    if total_seconds >= 10:
+        increment = 2.0
+    elif total_seconds >= 5:
+        increment = 1.0
+    elif total_seconds >= 1:
+        increment = 0.2
+    else:
+        increment = 0.1
+    ticks_seconds = np.arange(0, total_seconds, increment)
+    ticks = (ticks_seconds * sample_rate).round().astype(int)
+    ax.set_xticks(ticks)
+    if total_seconds >= 5:
+        ax.set_xticklabels([f"{ts + tick_label_offset_s:.0f}" for ts in ticks_seconds])
+    else:
+        ax.set_xticklabels([f"{ts + tick_label_offset_s:.1f}" for ts in ticks_seconds])
+
+
+with st.container(border=True):
+    total_seconds = len(wave_48khz) / 48000
+    min_slice_seconds = 0.01
+    start_sec, end_sec = st.slider(
+        "Select the audio segment",
+        0.0,
+        1.0,
+        (0.35, 0.4),
+        step=0.001,
+        format="%.2fs",
+    )
+    if end_sec - start_sec < min_slice_seconds:
+        end_sec = min(total_seconds, start_sec + min_slice_seconds)
+        if end_sec - start_sec < min_slice_seconds:
+            start_sec = max(0.0, end_sec - min_slice_seconds)
+    start_sample = int(start_sec * 48000)
+    end_sample = max(start_sample + int(min_slice_seconds * 48000), int(end_sec * 48000))
+
+    wave_48khz_slice = wave_48khz[start_sample:end_sample]
+
+    with st.container(border=True):
+        sli_params = SlidingWindowParams(
+            kernel_size_in=11,
+            stride_in=6,
+            left_pad=5,
+            right_pad=5,
+            kernel_size_out=99,
+            stride_out=1,
+            left_out_trim=49,
+            right_out_trim=49,
+            min_input_size=6,
+        )
+        st.code(
+            str(sli_params)
+            + f"\n-> min/max overlap: {[sli_params.streaming_context_size, sli_params.streaming_context_size + sli_params.stride_in - 1]}\n"
+            + f"-> min/max output delay: {list(sli_params.output_delay_bounds)}\n"
+            + f"-> in/out size relation: {in_out_size_rel_repr(*sli_params.canonical_in_out_size_params)}"
+        )
+
+    def build_stream(chunk_size: int) -> AnimatedSlidingWindowStream:
+        stream_obj = AnimatedSlidingWindowStream(
+            resample_trsfm,
+            sli_params,
+            SeqSpec(-1, dtype=np.float32),
+        )
+        stream_obj.forward_in_chunks(Sequence(wave_48khz_slice, seq_dim=0), chunk_size=chunk_size)
+        return stream_obj
+
+    chunk_size = st.slider(
+        "Set the streaming chunk size",
+        sli_params.min_input_size,
+        len(wave_48khz_slice) // 2,
+        value=len(wave_48khz_slice) // 5,
+    )
+    stream = build_stream(chunk_size)
+
+    @st.fragment
+    def stream_step_fragment():
+        fig, axs = plt.subplots(figsize=(10, 8.5), nrows=3)
+        fig.subplots_adjust(hspace=0.5)
+
+        plot_placeholder = st.empty()
+
+        step_idx = (
+            st.slider(
+                "Streaming step",
+                1,
+                len(stream.step_history),
+                value=min(2, len(stream.step_history) - 1),
+            )
+            - 1
+        )
+        fig.suptitle(f"Streaming librosa.resample - Step {step_idx + 1}/{len(stream.step_history)}", fontsize=18)
+
+        # Input plot
+        plot_audio(axs[0], wave_48khz_slice, 48000, tick_label_offset_s=start_sec)
+
+        # Sync output plot
+        plot_audio(axs[2], resample_trsfm(wave_48khz_slice), 8000)
+
+        stream.plot_step(step_idx, *axs, out_plot_fn=partial(plot_audio, sample_rate=8000))
+        plot_placeholder.pyplot(fig)
+
+    stream_step_fragment()
+
+"""
+The waveforms are plotted as scatter instead of lines to better differentiate between the higher and lower sample 
+rates. The plot is also quite zoomed in (on 50ms of audio by default) so you can see the output delay. It goes up to 
+50, meaning that you will get at least 50/8000 = 6.25ms of delay with this streaming implementation (exact latency and 
+output delay will be covered in another example).
+
+Feel free to play in a separate script with other resampling algorithms by changing the `res_type` parameter 
+(soxr_qq, polyphase, ...). Not all algorithms behave as sliding window transforms. Resampling from between the 
+44.1 kHz family vs the 48 kHz family will also not work as sliding window transforms given the large discrepancy in 
+common factors.
+
+### Up next
+You've seen how to automatically find the sliding window parameters of a simple and of a more complex transform.
+
+In the following examples we'll attack real world neural networks.
+"""
+
+
 await_running_thread()
-
-
-# RESAMPLING_ALGOS = [
-#     "kaiser_best",
-#     "kaiser_fast",
-#     "soxr_qq",
-#     "polyphase",
-# ]
-
-# ZERO_SIZE_EXCEPTION_SIGNATURES = [
-#     # Raised by kaiser resamplers
-#     (ValueError, "is too small to resample from"),
-# ]
-
-
-# results = []
-# with log_tracing_profile("solver"):
-#     for res_algo in RESAMPLING_ALGOS:
-#         for sample_rate_in, sample_rate_out in [(16000, 48000), (16000, 32000)]:
-#             try:
-#                 sols = find_sliding_window_params(
-#                     resample_fn,
-#                     SeqSpec(-1, dtype=np.float32),
-#                     zero_size_exception_signatures=ZERO_SIZE_EXCEPTION_SIGNATURES,
-#                 )
-#             except RuntimeError as e:
-#                 results.append((res_algo, sample_rate_in, sample_rate_out, f"Failed to solve: {e}"))
-#             else:
-#                 results.append((res_algo, sample_rate_in, sample_rate_out, sols[0]))
-
-# print("----")
-# for res_algo, sr_in, sr_out, sol in results:
-#     print(f"Resampling with {res_algo} from {sr_in} to {sr_out}:\n{sol}")
-
-
-# @st.fragment
-# def resampling_solver_demo1():
-#     def resample_trsfm(x: np.ndarray) -> np.ndarray:
-#         with intercept_calls("librosa.util.utils.valid_audio", handler_fn=lambda wav: True):
-#             return librosa.core.resample(x, orig_sr=48000, target_sr=8000, res_type="kaiser_best")
-
-#     run_managed_thread(
-#         func=find_sli_params_and_print,
-#         run_id="run1",
-#         job_id="resample_demo1",
-#         func_kwargs=dict(
-#             trsfm=resample_trsfm,
-#             in_spec=SeqSpec(-1, dtype=np.float32),
-#             zero_size_exception_signatures=DEFAULT_ZERO_SIZE_EXCEPTIONS
-#             + [
-#                 (ValueError, "is too small to resample from"),
-#             ],
-#         ),
-#     )
