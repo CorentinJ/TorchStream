@@ -1,3 +1,4 @@
+import inspect
 import logging
 
 import librosa
@@ -7,10 +8,9 @@ import streamlit as st
 import torch
 from torch import nn
 
-from dev_tools.tracing import log_tracing_profile
 from examples.utils.audio import load_audio
 from examples.utils.download import download_file_cached
-from examples.utils.streamlit_worker import run_managed_thread
+from examples.utils.streamlit_worker import await_running_thread, run_managed_thread
 from torchstream import SeqSpec, SlidingWindowParams, find_sliding_window_params, intercept_calls
 from torchstream.exception_signature import DEFAULT_ZERO_SIZE_EXCEPTIONS
 
@@ -59,35 +59,18 @@ def find_sli_params_and_print(*args, **kwargs):
         logger.info(f"Solution #{i + 1}: {sol}")
 
 
-@st.fragment
-def moving_average_demo():
-    print("RERUN")
-    code_placeholder = st.empty()
+code_placeholder = st.empty()
 
-    left_col, right_col = st.columns([0.2, 0.8])
+left_col, right_col = st.columns([0.2, 0.8])
 
-    with left_col:
-        win_size = st.slider("Window size", min_value=1, max_value=10, value=3)
-        stride_in = st.slider("Input stride", min_value=1, max_value=10, value=2)
-        st.caption(
-            "Note: the solver will fail with a stride larger than the window size. These would be invalid parameters, "
-            "skipping entirely over some inputs."
-        )
+with left_col:
+    win_size = st.slider("Window size", min_value=1, max_value=10, value=3)
+    stride_in = st.slider("Input stride", min_value=1, max_value=10, value=2)
+    st.caption(
+        "Note: the solver will fail with a stride larger than the window size. These would be invalid parameters, "
+        "skipping entirely over some inputs."
+    )
 
-    def moving_average(x: np.ndarray) -> np.ndarray:
-        out = []
-        for start_idx in range(0, len(x), stride_in):
-            window = x[start_idx : start_idx + win_size]
-            if len(window) < win_size:
-                break
-            out.append(np.mean(window))
-        return np.array(out)
-
-    code_placeholder.code(
-        """
-from torchstream import SeqSpec, SlidingWindowParams, find_sliding_window_params
-
-logging.basicConfig(level=logging.INFO)
 
 def moving_average(x: np.ndarray) -> np.ndarray:
     out = []
@@ -97,6 +80,17 @@ def moving_average(x: np.ndarray) -> np.ndarray:
             break
         out.append(np.mean(window))
     return np.array(out)
+
+
+code_placeholder.code(
+    """
+from torchstream import SeqSpec, SlidingWindowParams, find_sliding_window_params
+
+logging.basicConfig(level=logging.INFO)
+
+"""
+    + inspect.getsource(moving_average)
+    + """
     
 find_sliding_window_params(
     moving_average,
@@ -105,75 +99,75 @@ find_sliding_window_params(
     # Yield up to 3 equivalent solutions (default is 1)
     max_equivalent_sols=3,
 )
-    """
+"""
+)
+
+with right_col:
+    run_managed_thread(
+        func=find_sli_params_and_print,
+        run_id=f"run_{win_size}_{stride_in}",
+        job_id="moving_average_demo",
+        func_kwargs=dict(
+            trsfm=moving_average,
+            in_spec=SeqSpec(-1, dtype=np.float32),
+            max_equivalent_sols=3,
+        ),
     )
 
-    with right_col:
-        run_managed_thread(
-            func=find_sli_params_and_print,
-            run_id=f"run_{win_size}_{stride_in}",
-            job_id="moving_average_demo",
-            func_kwargs=dict(
-                trsfm=moving_average,
-                in_spec=SeqSpec(-1, dtype=np.float32),
-                max_equivalent_sols=3,
-            ),
+"""
+**Multiplicity of solutions**: The solver quickly finds one or multiple solutions, including the exact parameters we used. When it finds multiple 
+solutions, **they are equivalent** in the sense that all produce the same input to output mapping. For instance, these 
+two are equivalent:
+"""
+
+
+def print_map(params: SlidingWindowParams, input_size: int):
+    # Get input ranges for each window
+    win_inputs = [in_range for in_range, _ in params.iter_bounded_kernel_map(input_size)]
+
+    # Map each output index to every input indices that it sees
+    # TODO: specialized methods for this in SlidingWindowParams? This is the receptive field, it's important
+    input_ranges_by_output_idx = []
+    for out_start, out_end, windows in params.get_inverse_kernel_map(input_size):
+        min_in_idx = input_size
+        max_in_idx = 0
+        for win_idx, _, _ in windows:
+            win_in_range = win_inputs[win_idx]
+            min_in_idx = min(min_in_idx, win_in_range[0])
+            max_in_idx = max(max_in_idx, win_in_range[1] - 1)
+        input_range = [min_in_idx, max_in_idx + 1]
+
+        input_ranges_by_output_idx.extend([input_range] * (out_end - out_start))
+
+    st.code(
+        f"Mapping for input of size {input_size}:\n"
+        + "[Output idx]             [Input range]\n"
+        + "\n".join(
+            f"    [{i}]     computed from   {input_ranges_by_output_idx[i]}"
+            for i in range(len(input_ranges_by_output_idx))
+        )
+    )
+
+
+left_col, right_col = st.columns([0.5, 0.5])
+with left_col:
+    with st.echo():
+        params = SlidingWindowParams(
+            kernel_size_in=2,
         )
 
-    """
-    **Multiplicity of solutions**: The solver quickly finds one or multiple solutions, including the exact parameters we used. When it finds multiple 
-    solutions, **they are equivalent** in the sense that all produce the same input to output mapping. For instance, these 
-    two are equivalent:
-    """
+    print_map(params, input_size=10)
 
-    def print_map(params: SlidingWindowParams, input_size: int):
-        # Get input ranges for each window
-        win_inputs = [in_range for in_range, _ in params.iter_bounded_kernel_map(input_size)]
-
-        # Map each output index to every input indices that it sees
-        # TODO: specialized methods for this in SlidingWindowParams? This is the receptive field, it's important
-        input_ranges_by_output_idx = []
-        for out_start, out_end, windows in params.get_inverse_kernel_map(input_size):
-            min_in_idx = input_size
-            max_in_idx = 0
-            for win_idx, _, _ in windows:
-                win_in_range = win_inputs[win_idx]
-                min_in_idx = min(min_in_idx, win_in_range[0])
-                max_in_idx = max(max_in_idx, win_in_range[1] - 1)
-            input_range = [min_in_idx, max_in_idx + 1]
-
-            input_ranges_by_output_idx.extend([input_range] * (out_end - out_start))
-
-        st.code(
-            f"Mapping for input of size {input_size}:\n"
-            + "[Output idx]             [Input range]\n"
-            + "\n".join(
-                f"    [{i}]     computed from   {input_ranges_by_output_idx[i]}"
-                for i in range(len(input_ranges_by_output_idx))
-            )
+with right_col:
+    with st.echo():
+        params = SlidingWindowParams(
+            kernel_size_out=2,
+            left_out_trim=1,
+            right_out_trim=1,
         )
 
-    left_col, right_col = st.columns([0.5, 0.5])
-    with left_col:
-        with st.echo():
-            params = SlidingWindowParams(
-                kernel_size_in=2,
-            )
+    print_map(params, input_size=10)
 
-        print_map(params, input_size=10)
-
-    with right_col:
-        with st.echo():
-            params = SlidingWindowParams(
-                kernel_size_out=2,
-                left_out_trim=1,
-                right_out_trim=1,
-            )
-
-        print_map(params, input_size=10)
-
-
-moving_average_demo()
 
 """
 It does not matter which of the solver's solutions you use down the line, they will all work the same. The solver 
@@ -327,58 +321,58 @@ run_managed_thread(
     ),
 )
 
-
-quit()
-
-RESAMPLING_ALGOS = [
-    "kaiser_best",
-    "kaiser_fast",
-    "soxr_qq",
-    "polyphase",
-]
-
-ZERO_SIZE_EXCEPTION_SIGNATURES = [
-    # Raised by kaiser resamplers
-    (ValueError, "is too small to resample from"),
-]
+await_running_thread()
 
 
-results = []
-with log_tracing_profile("solver"):
-    for res_algo in RESAMPLING_ALGOS:
-        for sample_rate_in, sample_rate_out in [(16000, 48000), (16000, 32000)]:
-            try:
-                sols = find_sliding_window_params(
-                    resample_fn,
-                    SeqSpec(-1, dtype=np.float32),
-                    zero_size_exception_signatures=ZERO_SIZE_EXCEPTION_SIGNATURES,
-                )
-            except RuntimeError as e:
-                results.append((res_algo, sample_rate_in, sample_rate_out, f"Failed to solve: {e}"))
-            else:
-                results.append((res_algo, sample_rate_in, sample_rate_out, sols[0]))
+# RESAMPLING_ALGOS = [
+#     "kaiser_best",
+#     "kaiser_fast",
+#     "soxr_qq",
+#     "polyphase",
+# ]
 
-print("----")
-for res_algo, sr_in, sr_out, sol in results:
-    print(f"Resampling with {res_algo} from {sr_in} to {sr_out}:\n{sol}")
+# ZERO_SIZE_EXCEPTION_SIGNATURES = [
+#     # Raised by kaiser resamplers
+#     (ValueError, "is too small to resample from"),
+# ]
 
 
-@st.fragment
-def resampling_solver_demo1():
-    def resample_trsfm(x: np.ndarray) -> np.ndarray:
-        with intercept_calls("librosa.util.utils.valid_audio", handler_fn=lambda wav: True):
-            return librosa.core.resample(x, orig_sr=48000, target_sr=8000, res_type="kaiser_best")
+# results = []
+# with log_tracing_profile("solver"):
+#     for res_algo in RESAMPLING_ALGOS:
+#         for sample_rate_in, sample_rate_out in [(16000, 48000), (16000, 32000)]:
+#             try:
+#                 sols = find_sliding_window_params(
+#                     resample_fn,
+#                     SeqSpec(-1, dtype=np.float32),
+#                     zero_size_exception_signatures=ZERO_SIZE_EXCEPTION_SIGNATURES,
+#                 )
+#             except RuntimeError as e:
+#                 results.append((res_algo, sample_rate_in, sample_rate_out, f"Failed to solve: {e}"))
+#             else:
+#                 results.append((res_algo, sample_rate_in, sample_rate_out, sols[0]))
 
-    run_managed_thread(
-        func=find_sli_params_and_print,
-        run_id="run1",
-        job_id="resample_demo1",
-        func_kwargs=dict(
-            trsfm=resample_trsfm,
-            in_spec=SeqSpec(-1, dtype=np.float32),
-            zero_size_exception_signatures=DEFAULT_ZERO_SIZE_EXCEPTIONS
-            + [
-                (ValueError, "is too small to resample from"),
-            ],
-        ),
-    )
+# print("----")
+# for res_algo, sr_in, sr_out, sol in results:
+#     print(f"Resampling with {res_algo} from {sr_in} to {sr_out}:\n{sol}")
+
+
+# @st.fragment
+# def resampling_solver_demo1():
+#     def resample_trsfm(x: np.ndarray) -> np.ndarray:
+#         with intercept_calls("librosa.util.utils.valid_audio", handler_fn=lambda wav: True):
+#             return librosa.core.resample(x, orig_sr=48000, target_sr=8000, res_type="kaiser_best")
+
+#     run_managed_thread(
+#         func=find_sli_params_and_print,
+#         run_id="run1",
+#         job_id="resample_demo1",
+#         func_kwargs=dict(
+#             trsfm=resample_trsfm,
+#             in_spec=SeqSpec(-1, dtype=np.float32),
+#             zero_size_exception_signatures=DEFAULT_ZERO_SIZE_EXCEPTIONS
+#             + [
+#                 (ValueError, "is too small to resample from"),
+#             ],
+#         ),
+#     )
