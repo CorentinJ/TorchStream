@@ -74,10 +74,11 @@ def run_managed_thread(
         setattr(state.thread, "streamlit_script_run_ctx", None)
         state.thread.join()
         state.thread = None
-        thread_lock.release()
 
     if state.thread is None:
+        print(f"\x1b[32m{'LOCK ACQUIRE'}\x1b[39m")
         thread_lock.acquire()
+        print(f"\x1b[32m{'LOCK ACQUIRED'}\x1b[39m")
         state.run_id = run_id
 
         target_logger = logging.getLogger()
@@ -87,14 +88,17 @@ def run_managed_thread(
         target_logger.addHandler(log_handler)
         target_logger.setLevel(min(target_logger.level, logging.INFO))
 
-        def worker():
+        def worker(thread_lock):
             try:
                 func(*func_args, **func_kwargs)
             except Exception as exc:
                 st.exception(exc)
                 raise exc
+            finally:
+                print(f"\x1b[31m{'LOCK RELEASE'}\x1b[39m")
+                thread_lock.release()
 
-        state.thread = threading.Thread(target=worker, daemon=True)
+        state.thread = threading.Thread(target=worker, daemon=True, args=(thread_lock,))
         # Enables new thread to modify UI elements from current thread
         add_script_run_ctx(state.thread, get_script_run_ctx())
         state.thread.start()

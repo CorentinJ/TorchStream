@@ -1,4 +1,3 @@
-import inspect
 import logging
 
 import librosa
@@ -12,9 +11,8 @@ from dev_tools.tracing import log_tracing_profile
 from examples.utils.audio import load_audio
 from examples.utils.download import download_file_cached
 from examples.utils.streamlit_worker import run_managed_thread
-from torchstream import SeqSpec, find_sliding_window_params
-from torchstream.patching.call_intercept import intercept_calls
-from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+from torchstream import SeqSpec, SlidingWindowParams, find_sliding_window_params, intercept_calls
+from torchstream.exception_signature import DEFAULT_ZERO_SIZE_EXCEPTIONS
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -52,41 +50,6 @@ are correct by generating new specific inputs and checking their outputs.
 Let's test it on a simple example. We'll write a moving average function with window size and stride as parameters.
 """
 
-code_placeholder = st.empty()
-
-left_col, right_col = st.columns([0.2, 0.8])
-
-with left_col:
-    win_size = st.slider("Window size", min_value=1, max_value=10, value=3)
-    stride_in = st.slider("Input stride", min_value=1, max_value=10, value=2)
-    st.caption(
-        "Note: the solver will fail with a stride larger than the window size. These would be invalid parameters, skipping entirely over some inputs."
-    )
-
-
-def moving_average(x: np.ndarray) -> np.ndarray:
-    out = []
-    for start_idx in range(0, len(x), stride_in):
-        window = x[start_idx : start_idx + win_size]
-        if len(window) < win_size:
-            break
-        out.append(np.mean(window))
-    return np.array(out)
-
-
-code_placeholder.code(
-    inspect.getsource(moving_average)
-    + """
-find_sliding_window_params(
-    moving_average,
-    # Input spec is the same as output spec, no need to specify it twice
-    in_spec=SeqSpec(-1, dtype=np.float32),
-    # Yield up to 3 equivalent solutions (default is 1)
-    max_equivalent_sols=3,
-)
-"""
-)
-
 
 def find_sli_params_and_print(*args, **kwargs):
     sols = find_sliding_window_params(*args, **kwargs)
@@ -96,72 +59,121 @@ def find_sli_params_and_print(*args, **kwargs):
         logger.info(f"Solution #{i + 1}: {sol}")
 
 
-with right_col:
-    run_managed_thread(
-        func=find_sli_params_and_print,
-        run_id=f"run_{win_size}_{stride_in}",
-        job_id="moving_average_demo",
-        func_kwargs=dict(
-            trsfm=moving_average,
-            in_spec=SeqSpec(-1, dtype=np.float32),
-            max_equivalent_sols=3,
-        ),
+@st.fragment
+def moving_average_demo():
+    print("RERUN")
+    code_placeholder = st.empty()
+
+    left_col, right_col = st.columns([0.2, 0.8])
+
+    with left_col:
+        win_size = st.slider("Window size", min_value=1, max_value=10, value=3)
+        stride_in = st.slider("Input stride", min_value=1, max_value=10, value=2)
+        st.caption(
+            "Note: the solver will fail with a stride larger than the window size. These would be invalid parameters, "
+            "skipping entirely over some inputs."
+        )
+
+    def moving_average(x: np.ndarray) -> np.ndarray:
+        out = []
+        for start_idx in range(0, len(x), stride_in):
+            window = x[start_idx : start_idx + win_size]
+            if len(window) < win_size:
+                break
+            out.append(np.mean(window))
+        return np.array(out)
+
+    code_placeholder.code(
+        """
+from torchstream import SeqSpec, SlidingWindowParams, find_sliding_window_params
+
+logging.basicConfig(level=logging.INFO)
+
+def moving_average(x: np.ndarray) -> np.ndarray:
+    out = []
+    for start_idx in range(0, len(x), stride_in):
+        window = x[start_idx : start_idx + win_size]
+        if len(window) < win_size:
+            break
+        out.append(np.mean(window))
+    return np.array(out)
+    
+find_sliding_window_params(
+    moving_average,
+    # Input spec is the same as output spec, no need to specify it twice
+    in_spec=SeqSpec(-1, dtype=np.float32),
+    # Yield up to 3 equivalent solutions (default is 1)
+    max_equivalent_sols=3,
+)
+    """
     )
 
-"""
-**Multiplicity of solutions**: The solver quickly finds one or multiple solutions, including the exact parameters we used. When it finds multiple 
-solutions, **they are equivalent** in the sense that all produce the same input to output mapping. For instance, these 
-two are equivalent:
-"""
-
-
-def print_map(params: SlidingWindowParams, input_size: int):
-    # Get input ranges for each window
-    win_inputs = [in_range for in_range, _ in params.iter_bounded_kernel_map(input_size)]
-
-    # Map each output index to every input indices that it sees
-    # TODO: specialized methods for this in SlidingWindowParams? This is the receptive field, it's important
-    input_ranges_by_output_idx = []
-    for out_start, out_end, windows in params.get_inverse_kernel_map(input_size):
-        min_in_idx = input_size
-        max_in_idx = 0
-        for win_idx, _, _ in windows:
-            win_in_range = win_inputs[win_idx]
-            min_in_idx = min(min_in_idx, win_in_range[0])
-            max_in_idx = max(max_in_idx, win_in_range[1] - 1)
-        input_range = [min_in_idx, max_in_idx + 1]
-
-        input_ranges_by_output_idx.extend([input_range] * (out_end - out_start))
-
-    st.code(
-        f"Mapping for input of size {input_size}:\n"
-        + "[Output idx]             [Input range]\n"
-        + "\n".join(
-            f"    [{i}]     computed from   {input_ranges_by_output_idx[i]}"
-            for i in range(len(input_ranges_by_output_idx))
-        )
-    )
-
-
-left_col, right_col = st.columns([0.5, 0.5])
-with left_col:
-    with st.echo():
-        params = SlidingWindowParams(
-            kernel_size_in=2,
+    with right_col:
+        run_managed_thread(
+            func=find_sli_params_and_print,
+            run_id=f"run_{win_size}_{stride_in}",
+            job_id="moving_average_demo",
+            func_kwargs=dict(
+                trsfm=moving_average,
+                in_spec=SeqSpec(-1, dtype=np.float32),
+                max_equivalent_sols=3,
+            ),
         )
 
-    print_map(params, input_size=10)
+    """
+    **Multiplicity of solutions**: The solver quickly finds one or multiple solutions, including the exact parameters we used. When it finds multiple 
+    solutions, **they are equivalent** in the sense that all produce the same input to output mapping. For instance, these 
+    two are equivalent:
+    """
 
+    def print_map(params: SlidingWindowParams, input_size: int):
+        # Get input ranges for each window
+        win_inputs = [in_range for in_range, _ in params.iter_bounded_kernel_map(input_size)]
 
-with right_col:
-    with st.echo():
-        params = SlidingWindowParams(
-            kernel_size_out=2,
-            left_out_trim=1,
-            right_out_trim=1,
+        # Map each output index to every input indices that it sees
+        # TODO: specialized methods for this in SlidingWindowParams? This is the receptive field, it's important
+        input_ranges_by_output_idx = []
+        for out_start, out_end, windows in params.get_inverse_kernel_map(input_size):
+            min_in_idx = input_size
+            max_in_idx = 0
+            for win_idx, _, _ in windows:
+                win_in_range = win_inputs[win_idx]
+                min_in_idx = min(min_in_idx, win_in_range[0])
+                max_in_idx = max(max_in_idx, win_in_range[1] - 1)
+            input_range = [min_in_idx, max_in_idx + 1]
+
+            input_ranges_by_output_idx.extend([input_range] * (out_end - out_start))
+
+        st.code(
+            f"Mapping for input of size {input_size}:\n"
+            + "[Output idx]             [Input range]\n"
+            + "\n".join(
+                f"    [{i}]     computed from   {input_ranges_by_output_idx[i]}"
+                for i in range(len(input_ranges_by_output_idx))
+            )
         )
 
-    print_map(params, input_size=10)
+    left_col, right_col = st.columns([0.5, 0.5])
+    with left_col:
+        with st.echo():
+            params = SlidingWindowParams(
+                kernel_size_in=2,
+            )
+
+        print_map(params, input_size=10)
+
+    with right_col:
+        with st.echo():
+            params = SlidingWindowParams(
+                kernel_size_out=2,
+                left_out_trim=1,
+                right_out_trim=1,
+            )
+
+        print_map(params, input_size=10)
+
+
+moving_average_demo()
 
 """
 It does not matter which of the solver's solutions you use down the line, they will all work the same. The solver 
@@ -199,7 +211,7 @@ MP3_URL = "https://d38nvwmjovqyq6.cloudfront.net/va90web25003/companions/ws_smit
 with st.echo():
     local_audio_path = download_file_cached(MP3_URL)
     wave_48khz, _ = load_audio(local_audio_path, sample_rate=48000)
-    wave_8khz = librosa.core.resample(wave_48khz, orig_sr=48000, target_sr=8000)
+    wave_8khz = librosa.core.resample(wave_48khz, orig_sr=48000, target_sr=8000, res_type="kaiser_best")
 
 st.audio(wave_48khz, sample_rate=48000)
 st.caption("Original audio at 48kHz")
@@ -226,7 +238,7 @@ Let's involve the solver:
 
 st.code("""
 def resample_trsfm(x: np.ndarray) -> np.ndarray:
-    return librosa.core.resample(x, orig_sr=16000, target_sr=48000)
+    return librosa.core.resample(x, orig_sr=48000, target_sr=8000, res_type="kaiser_best")
 
 sols = find_sliding_window_params(
     resample_trsfm,
@@ -244,7 +256,7 @@ with st.container(border=True):
     """
     It is a frequent occurrence when trying to make a transform streamable that one (possibly deeply) nested function 
     will get in your way. TorchStream offers **monkey patching utilities** to get you past these hurdles without having 
-    to rewrite code. Once you've figured out how to stream your model, you can usually do without them.
+    to rewrite code. Once you've figured out how to stream your model, you can usually do without monkey patching.
     """
 
 
@@ -252,47 +264,68 @@ with st.container(border=True):
 Use `torchstream.intercept_calls()` to replace the function with a no-op that always returns True. We only need to do 
 this during the solver's execution.
 """
-with st.echo():
-    from torchstream import intercept_calls
 
-    def resample_trsfm(x: np.ndarray) -> np.ndarray:
-        with intercept_calls("librosa.util.utils.valid_audio", handler_fn=lambda wav: True):
-            return librosa.core.resample(x, orig_sr=16000, target_sr=48000)
+st.code("""
+from torchstream import intercept_calls
 
-
-code_placeholder.code(
-    inspect.getsource(moving_average)
-    + """
+def resample_trsfm(x: np.ndarray) -> np.ndarray:
+    with intercept_calls("librosa.util.utils.valid_audio", handler_fn=lambda wav: True):
+        return librosa.core.resample(x, orig_sr=48000, target_sr=8000, res_type="kaiser_best")
+        
 find_sliding_window_params(
-    moving_average,
-    # Input spec is the same as output spec, no need to specify it twice
+    resample_trsfm,
     in_spec=SeqSpec(-1, dtype=np.float32),
-    # Yield up to 3 equivalent solutions (default is 1)
-    max_equivalent_sols=3,
 )
+""")
+st.exception(ValueError("Input signal length=1 is too small to resample from 48000->8000"), width=400)
+
 """
+Second snag: we get an Exception when forwarding an input size that is too small. The solver _will_ provide inputs 
+that are too small for the given transform to produce any output, because finding **the minimum input size** of the 
+transform is part of its job.
+
+Therefore the solver's job is to swallow these exceptions and work as if the transform gave a **zero-sized output**. 
+Because there is no universal exception type for "zero-sized output", you can provide its signature as a tuple 
+`(exception_type, message_substring)` like so:
+
+"""
+
+st.code("""
+from torchstream import DEFAULT_ZERO_SIZE_EXCEPTIONS
+
+find_sliding_window_params(
+    resample_trsfm,
+    in_spec=SeqSpec(-1, dtype=np.float32),
+    zero_size_exception_signatures=DEFAULT_ZERO_SIZE_EXCEPTIONS + [
+        (ValueError, "is too small to resample from"),
+    ],
 )
+""")
 
 
-# def find_sli_params_and_print(*args, **kwargs):
-#     sols = find_sliding_window_params(*args, **kwargs)
-
-#     logger.info("-----------------\n")
-#     for i, sol in enumerate(sols):
-#         logger.info(f"Solution #{i + 1}: {sol}")
+"""
+And we're off
+"""
 
 
-# with right_col:
-#     run_managed_thread(
-#         func=find_sli_params_and_print,
-#         run_id=f"rund_{win_size}_{stride_in}",
-#         job_id="resample_demo",
-#         func_kwargs=dict(
-#             trsfm=moving_average,
-#             in_spec=SeqSpec(-1, dtype=np.float32),
-#             max_equivalent_sols=3,
-#         ),
-#     )
+def resample_trsfm(x: np.ndarray) -> np.ndarray:
+    with intercept_calls("librosa.util.utils.valid_audio", handler_fn=lambda wav: True):
+        return librosa.core.resample(x, orig_sr=48000, target_sr=8000, res_type="kaiser_best")
+
+
+run_managed_thread(
+    func=find_sli_params_and_print,
+    run_id="run1",
+    job_id="resample_demo1",
+    func_kwargs=dict(
+        trsfm=resample_trsfm,
+        in_spec=SeqSpec(-1, dtype=np.float32),
+        zero_size_exception_signatures=DEFAULT_ZERO_SIZE_EXCEPTIONS
+        + [
+            (ValueError, "is too small to resample from"),
+        ],
+    ),
+)
 
 
 quit()
@@ -328,3 +361,24 @@ with log_tracing_profile("solver"):
 print("----")
 for res_algo, sr_in, sr_out, sol in results:
     print(f"Resampling with {res_algo} from {sr_in} to {sr_out}:\n{sol}")
+
+
+@st.fragment
+def resampling_solver_demo1():
+    def resample_trsfm(x: np.ndarray) -> np.ndarray:
+        with intercept_calls("librosa.util.utils.valid_audio", handler_fn=lambda wav: True):
+            return librosa.core.resample(x, orig_sr=48000, target_sr=8000, res_type="kaiser_best")
+
+    run_managed_thread(
+        func=find_sli_params_and_print,
+        run_id="run1",
+        job_id="resample_demo1",
+        func_kwargs=dict(
+            trsfm=resample_trsfm,
+            in_spec=SeqSpec(-1, dtype=np.float32),
+            zero_size_exception_signatures=DEFAULT_ZERO_SIZE_EXCEPTIONS
+            + [
+                (ValueError, "is too small to resample from"),
+            ],
+        ),
+    )
