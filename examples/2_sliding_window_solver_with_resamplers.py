@@ -247,6 +247,19 @@ with st.container(border=True):
     to rewrite code. Once you've figured out how to stream your model, you can usually do without them.
     """
 
+
+"""
+Use `torchstream.intercept_calls()` to replace the function with a no-op that always returns True. We only need to do 
+this during the solver's execution.
+"""
+with st.echo():
+    from torchstream import intercept_calls
+
+    def resample_trsfm(x: np.ndarray) -> np.ndarray:
+        with intercept_calls("librosa.util.utils.valid_audio", handler_fn=lambda wav: True):
+            return librosa.core.resample(x, orig_sr=16000, target_sr=48000)
+
+
 code_placeholder.code(
     inspect.getsource(moving_average)
     + """
@@ -261,25 +274,25 @@ find_sliding_window_params(
 )
 
 
-def find_sli_params_and_print(*args, **kwargs):
-    sols = find_sliding_window_params(*args, **kwargs)
+# def find_sli_params_and_print(*args, **kwargs):
+#     sols = find_sliding_window_params(*args, **kwargs)
 
-    logger.info("-----------------\n")
-    for i, sol in enumerate(sols):
-        logger.info(f"Solution #{i + 1}: {sol}")
+#     logger.info("-----------------\n")
+#     for i, sol in enumerate(sols):
+#         logger.info(f"Solution #{i + 1}: {sol}")
 
 
-with right_col:
-    run_managed_thread(
-        func=find_sli_params_and_print,
-        run_id=f"rund_{win_size}_{stride_in}",
-        job_id="resample_demo",
-        func_kwargs=dict(
-            trsfm=moving_average,
-            in_spec=SeqSpec(-1, dtype=np.float32),
-            max_equivalent_sols=3,
-        ),
-    )
+# with right_col:
+#     run_managed_thread(
+#         func=find_sli_params_and_print,
+#         run_id=f"rund_{win_size}_{stride_in}",
+#         job_id="resample_demo",
+#         func_kwargs=dict(
+#             trsfm=moving_average,
+#             in_spec=SeqSpec(-1, dtype=np.float32),
+#             max_equivalent_sols=3,
+#         ),
+#     )
 
 
 quit()
@@ -301,13 +314,6 @@ results = []
 with log_tracing_profile("solver"):
     for res_algo in RESAMPLING_ALGOS:
         for sample_rate_in, sample_rate_out in [(16000, 48000), (16000, 32000)]:
-
-            def resample_fn(y):
-                with intercept_calls("librosa.util.utils.valid_audio", lambda wav: True):
-                    return librosa.core.resample(
-                        y, orig_sr=sample_rate_in, target_sr=sample_rate_out, res_type=res_algo
-                    )
-
             try:
                 sols = find_sliding_window_params(
                     resample_fn,

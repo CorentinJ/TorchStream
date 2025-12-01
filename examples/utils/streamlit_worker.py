@@ -57,8 +57,8 @@ def run_managed_thread(
 
     # Unique session identifier added to run id to avoid collisions between different sessions
     if _RUN_MANAGED_THREAD_ID_KEY not in st.session_state:
-        st.session_state[_RUN_MANAGED_THREAD_ID_KEY] = uuid.uuid4().hex
-    session_id = st.session_state[_RUN_MANAGED_THREAD_ID_KEY]
+        st.session_state[_RUN_MANAGED_THREAD_ID_KEY] = (uuid.uuid4().hex, threading.Lock())
+    session_id, thread_lock = st.session_state[_RUN_MANAGED_THREAD_ID_KEY]
     job_id = f"{job_id}__{session_id}"
     run_id = f"{run_id}__{session_id}"
 
@@ -69,12 +69,15 @@ def run_managed_thread(
 
     create_logbox(run_id, height=log_height)
 
-    if state.thread is not None and state.thread.is_alive() and state.run_id != run_id:
+    # Unless it's the same run as requested that's running, stop any existing thread and cleanup
+    if state.thread is not None and (not state.thread.is_alive() or state.run_id != run_id):
         setattr(state.thread, "streamlit_script_run_ctx", None)
         state.thread.join()
         state.thread = None
+        thread_lock.release()
 
-    if (state.thread is None or not state.thread.is_alive()) and state.run_id != run_id:
+    if state.thread is None:
+        thread_lock.acquire()
         state.run_id = run_id
 
         target_logger = logging.getLogger()

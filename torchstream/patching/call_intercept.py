@@ -2,7 +2,6 @@ import importlib
 from copy import deepcopy
 from typing import Callable
 
-
 from torchstream.patching.call_identification import (
     get_callstack_locs,
     get_relative_callstack_locs,
@@ -59,6 +58,24 @@ class intercept_calls:
         :param target_fn: The target function to intercept. Prefer to provide this function as a string of its
         fully qualified name (e.g., "module.submodule.function" or "module.submodule.Class.method"). Providing the
         function object directly is supported but may fail to resolve.
+        Beware that you must target the module that holds the function you mean to patch! For example:
+        ```
+        # my_module.py
+        import some_library
+
+        some_library.target_function(...)
+
+        -> You'll want to patch "some_library.target_function"
+        ```
+
+        ```
+        # my_module.py
+        from some_library import target_function
+
+        target_function(...)
+
+        -> You'll want to patch "my_module.target_function"
+        ```
         :param handler_fn: The handler function that will be called instead of the target function. It will be given
         the same arguments as the original function and its return value will be returned in place of the original
         function's return value. If None, the original function will be called instead, which is useful to
