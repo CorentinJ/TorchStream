@@ -91,6 +91,7 @@ code_placeholder.code(
     """
 from torchstream import SeqSpec, SlidingWindowParams, find_sliding_window_params
 
+# The solver emits INFO level logs, enable them to see its progress
 logging.basicConfig(level=logging.INFO)
 
 
@@ -450,14 +451,14 @@ with st.container(border=True):
 
 """
 The waveforms are plotted as scatter instead of lines to better differentiate between the higher and lower sample 
-rates. The plot is also quite zoomed in (on 50ms of audio by default) so you can see the output delay. It goes up to 
+rates. The plot is also quite zoomed in on the audio so you can see the output delay. It goes up to 
 50, meaning that you will get at least 50/8000 = 6.25ms of delay with this streaming implementation (exact latency and 
 output delay will be covered in another example).
 
 Feel free to play in a separate script with other resampling algorithms by changing the `res_type` parameter 
-(soxr_qq, polyphase, ...). Not all algorithms behave as sliding window transforms. Resampling from between the 
-44.1 kHz family vs the 48 kHz family will also not work as sliding window transforms given the large discrepancy in 
-common factors.
+(soxr_qq, polyphase, ...). Not all algorithms behave as sliding window transforms. Resampling between the 
+44.1 kHz family vs the 48 kHz family will also not be modelable as sliding window transforms given the large 
+discrepancy in common factors.
 
 ### Up next
 You've seen how to automatically find the sliding window parameters of a simple and of a more complex transform.

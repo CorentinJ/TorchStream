@@ -1,14 +1,20 @@
 import logging
 
+import streamlit as st
 import torch
 
-from examples.bigvgan.bigvgan import load_uninit_bigvgan
+from examples.resources.bigvgan import load_uninit_bigvgan
+from examples.utils.streamlit_worker import await_running_thread
 from torchstream.sequence.sequence import SeqSpec
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+
+
+st.subheader("3. Streaming BigVGAN")
+quit()
 
 
 @torch.inference_mode()
@@ -48,3 +54,5 @@ def main():
 
 
 main()
+
+await_running_thread()

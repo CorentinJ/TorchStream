@@ -191,14 +191,14 @@ st.markdown("### It's (almost) all sliding windows")
 """
 The Mel-Spectrogram transform is an example of a **sliding window algorithm**. 
 """
-st.image("examples/_resources/sli_algo1.png")
+st.image("examples/resources/images/sli_algo1.png")
 
 """
 You take a slice of fixed size of the input data (_a window_), apply a function (_a kernel_) on it and store the output 
 at a given position in the output vector. You then offset (_slide_) the input window by a fixed amount (_the stride_) 
 to generate the next output. Repeat until the full input has been consumed.
 """
-st.image("examples/_resources/sli_algo2.png")
+st.image("examples/resources/images/sli_algo2.png")
 
 """
 This is a textbook definition of a sliding window algorithm. **It's a limiting one**; machine learning engineers deal 
@@ -208,7 +208,7 @@ with sliding window algorithms on a daily basis and they often don't realise it.
 - Trimming on the left and right of the full output
 - Kernels that can skip over input elements
 """
-st.image("examples/_resources/sli_algo3.png")
+st.image("examples/resources/images/sli_algo3.png")
 
 """
 And **almost everything becomes a sliding window**:
