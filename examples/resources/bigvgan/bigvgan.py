@@ -1,7 +1,7 @@
 # Copyright (c) 2024 NVIDIA CORPORATION.
 #   Licensed under the MIT license.
 
-# Adapted from https://github.com/NVIDIA/BigVGAN/ under the MIT license.
+# Adapted from https://github.com/jik876/hifi-gan under the MIT license.
 #   LICENSE is in incl_licenses directory.
 
 import json
@@ -15,40 +15,16 @@ from huggingface_hub import PyTorchModelHubMixin, hf_hub_download
 from torch.nn import Conv1d, ConvTranspose1d
 from torch.nn.utils import remove_weight_norm, weight_norm
 
-from .activations import Activation1d, Snake
-
-
-class AttrDict(dict):
-    def __init__(self, *args, **kwargs):
-        super(AttrDict, self).__init__(*args, **kwargs)
-        self.__dict__ = self
-
-
-def get_padding(kernel_size, dilation=1):
-    return int((kernel_size * dilation - dilation) / 2)
-
-
-def init_weights(m, mean=0.0, std=0.01):
-    classname = m.__class__.__name__
-    if classname.find("Conv") != -1:
-        m.weight.data.normal_(mean, std)
+from . import activations
+from .alias_free_activation.torch.act import Activation1d as TorchActivation1d
+from .env import AttrDict
+from .utils import get_padding, init_weights
 
 
 def load_hparams_from_json(path) -> AttrDict:
     with open(path) as f:
         data = f.read()
     return AttrDict(json.loads(data))
-
-
-def load_uninit_bigvgan(config_name: str, device="cpu") -> "BigVGAN":
-    config_file = (Path(__file__).parent / config_name).with_suffix(".json")
-    hparams = AttrDict(json.loads(config_file.read_text()))
-
-    bigvgan = BigVGAN(hparams).to(device)
-    bigvgan.eval()
-    bigvgan.remove_weight_norm()
-
-    return bigvgan
 
 
 class AMPBlock1(torch.nn.Module):
@@ -113,9 +89,24 @@ class AMPBlock1(torch.nn.Module):
         self.num_layers = len(self.convs1) + len(self.convs2)  # Total number of conv layers
 
         # Activation functions
-        self.activations = nn.ModuleList(
-            [Activation1d(activation=Snake(channels, alpha_logscale=h.snake_logscale)) for _ in range(self.num_layers)]
-        )
+        if activation == "snake":
+            self.activations = nn.ModuleList(
+                [
+                    TorchActivation1d(activation=activations.Snake(channels, alpha_logscale=h.snake_logscale))
+                    for _ in range(self.num_layers)
+                ]
+            )
+        elif activation == "snakebeta":
+            self.activations = nn.ModuleList(
+                [
+                    TorchActivation1d(activation=activations.SnakeBeta(channels, alpha_logscale=h.snake_logscale))
+                    for _ in range(self.num_layers)
+                ]
+            )
+        else:
+            raise NotImplementedError(
+                "activation incorrectly specified. check the config file and look for 'activation'."
+            )
 
     def forward(self, x):
         acts1, acts2 = self.activations[::2], self.activations[1::2]
@@ -180,9 +171,24 @@ class AMPBlock2(torch.nn.Module):
         self.num_layers = len(self.convs)  # Total number of conv layers
 
         # Activation functions
-        self.activations = nn.ModuleList(
-            [Activation1d(activation=Snake(channels, alpha_logscale=h.snake_logscale)) for _ in range(self.num_layers)]
-        )
+        if activation == "snake":
+            self.activations = nn.ModuleList(
+                [
+                    TorchActivation1d(activation=activations.Snake(channels, alpha_logscale=h.snake_logscale))
+                    for _ in range(self.num_layers)
+                ]
+            )
+        elif activation == "snakebeta":
+            self.activations = nn.ModuleList(
+                [
+                    TorchActivation1d(activation=activations.SnakeBeta(channels, alpha_logscale=h.snake_logscale))
+                    for _ in range(self.num_layers)
+                ]
+            )
+        else:
+            raise NotImplementedError(
+                "activation incorrectly specified. check the config file and look for 'activation'."
+            )
 
     def forward(self, x):
         for c, a in zip(self.convs, self.activations):
@@ -265,13 +271,17 @@ class BigVGAN(
                 self.resblocks.append(resblock_class(h, ch, k, d, activation=h.activation))
 
         # Post-conv
-        activation_post = Snake(ch, alpha_logscale=h.snake_logscale)
+        activation_post = (
+            activations.Snake(ch, alpha_logscale=h.snake_logscale)
+            if h.activation == "snake"
+            else (activations.SnakeBeta(ch, alpha_logscale=h.snake_logscale) if h.activation == "snakebeta" else None)
+        )
         if activation_post is None:
             raise NotImplementedError(
                 "activation incorrectly specified. check the config file and look for 'activation'."
             )
 
-        self.activation_post = Activation1d(activation=activation_post)
+        self.activation_post = TorchActivation1d(activation=activation_post)
 
         # Whether to use bias for the final conv_post. Default to True for backward compatibility
         self.use_bias_at_final = h.get("use_bias_at_final", True)
@@ -315,11 +325,11 @@ class BigVGAN(
 
     def remove_weight_norm(self):
         try:
-            for layer in self.ups:
-                for l_i in layer:
+            for l in self.ups:
+                for l_i in l:
                     remove_weight_norm(l_i)
-            for layer in self.resblocks:
-                layer.remove_weight_norm()
+            for l in self.resblocks:
+                l.remove_weight_norm()
             remove_weight_norm(self.conv_pre)
             remove_weight_norm(self.conv_post)
         except ValueError:
@@ -406,6 +416,13 @@ class BigVGAN(
 
         checkpoint_dict = torch.load(model_file, map_location=map_location)
 
-        model.load_state_dict(checkpoint_dict["generator"], strict=strict)
+        try:
+            model.load_state_dict(checkpoint_dict["generator"])
+        except RuntimeError:
+            print(
+                "[INFO] the pretrained checkpoint does not contain weight norm. Loading the checkpoint after removing weight norm!"
+            )
+            model.remove_weight_norm()
+            model.load_state_dict(checkpoint_dict["generator"])
 
         return model
