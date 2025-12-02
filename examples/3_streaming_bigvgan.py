@@ -100,6 +100,9 @@ with st.echo():
 
 st.code("""
 from torchstream import find_sliding_window_params
+import logging
+
+logging.basicConfig(level=logging.INFO)
         
 sli_params = find_sliding_window_params(
     model,

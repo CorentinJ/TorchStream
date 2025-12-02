@@ -33,6 +33,7 @@ demos = [
     "librosa>=0.11.0",
     "matplotlib>=3.7.5",
     "opentelemetry-sdk>=1.33.1",
+    "pip>=25.0.1",
     "requests>=2.32.4",
     "resampy>=0.4.3",
     # FIXME

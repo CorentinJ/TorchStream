@@ -1,11 +1,44 @@
 import logging
+
+import streamlit as st
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+
+st.subheader("4. Streaming Kokoro TTS")
+
+"""
+In this example we will stream a full TTS pipeline from a text input to streaming audio output. We will be 
+using the [open-source Kokoro-TTS model](https://huggingface.co/hexgrad/Kokoro-82M) by Hexgrad.
+
+The challenges encountered in streaming this model are typical of what you might encounter in streaming other 
+full fledged models. Hence if you get through this example, you should be well equipped to tackle streaming
+other models of your own.
+"""
+
+@st.cache_resource
+def load_kokoro_pipeline():
+    from kokoro import KPipeline
+
+    pipeline = KPipeline(lang_code="en-us", repo_id="hexgrad/Kokoro-82M")
+    
+    return pipeline
+
+pipeline = load_kokoro_pipeline()
+device = pipeline.model.device
+
+
+quit()
+
+import logging
 from functools import partial
 
 import torch
 from torch.nn import InstanceNorm1d
 from torch.nn import functional as F
 
-from torchstream.patching.call_intercept import make_exit_early, intercept_calls
+from torchstream.patching.call_intercept import intercept_calls, make_exit_early
 from torchstream.sequence.sequence import SeqSpec
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
@@ -21,10 +54,7 @@ torch.Tensor.__repr__ = lambda t: f"{tuple(t.shape)} {str(t.dtype).replace('torc
 # .venv\Scripts\python.exe -m spacy download en_core_web_sm
 # spacy.load("en_core_web_sm")
 
-from kokoro import KPipeline
 
-pipeline = KPipeline(lang_code="en-us", repo_id="hexgrad/Kokoro-82M")
-device = pipeline.model.device
 text = """
 [Kokoro](/kˈOkəɹO/) is an open-weight TTS model with 82 million parameters. Despite its lightweight architecture, it delivers comparable quality to larger models while being significantly faster and more cost-efficient. With Apache-licensed weights, [Kokoro](/kˈOkəɹO/) can be deployed anywhere from production environments to personal projects.
 """
