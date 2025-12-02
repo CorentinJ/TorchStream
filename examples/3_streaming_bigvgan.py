@@ -145,14 +145,12 @@ reduce this big model to just a sliding window algorithm!
 
 For a transform of this complexity we have a myriad of possible sliding window parameters that correspond to it, 
 but still **all with the same input/output size relation, output delay and input context size**. Due to the 
-randomness of the solver, you might even have obtained a different solution than the one hardcoded in the visualization 
-below.
+randomness of the solver, you might even have obtained a different solution than the one hardcoded below.
 
 There are [many variations of hyperparameters for BigVGAN](https://huggingface.co/nvidia/bigvgan_v2_24khz_100band_256x#pretrained-models), 
 **each will have its own set of sliding window parameters**. But you only need to compute them once with the solver, 
 and you can then store them alongside the hyperparameters.
 
-Below is another interactive demo of the streaming so you can visualize it:
 """
 
 with st.echo():
@@ -174,6 +172,10 @@ with st.echo():
         + f"-> min/max output delay: {list(sli_params.output_delay_bounds)}\n"
         + f"-> in/out size relation: {sli_params.in_out_size_rel_repr}"
     )
+
+"""
+Below is another interactive demo of the streaming so you can visualize it:
+"""
 
 st.code("""
 from torchstream import SlidingWindowStream

@@ -32,6 +32,8 @@ pip-delete-this-directory.txt
 .pytest_cache
 .*/
 __*__/
+# Scratch file
+_debug.py
 
 # pytest-profiling outputs
 prof/
