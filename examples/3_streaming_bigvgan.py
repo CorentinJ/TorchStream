@@ -8,7 +8,7 @@ from examples.utils.animated_sliding_window_stream import AnimatedSlidingWindowS
 from examples.utils.plots import plot_audio, plot_melspec
 from examples.utils.streamlit_worker import await_running_thread, run_managed_thread
 from torchstream.sequence.sequence import SeqSpec
-from torchstream.sliding_window.sliding_window_params import SlidingWindowParams, in_out_size_rel_repr
+from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
 
 logger = logging.getLogger(__name__)
@@ -90,16 +90,21 @@ It should sound the same as our input.
 Let's proceed with streaming.
 """
 
-in_spec = SeqSpec(1, model.h.num_mels, -1, device=device)
-out_spec = SeqSpec(1, 1, -1, device=device)
+with st.echo():
+    from torchstream import SeqSpec
+
+    # Mel spectrogram input
+    in_spec = SeqSpec(1, model.h.num_mels, -1, device=device)
+    # Audio waveform output
+    out_spec = SeqSpec(1, 1, -1, device=device)
 
 st.code("""
-params = find_sliding_window_params(
+from torchstream import find_sliding_window_params
+        
+sli_params = find_sliding_window_params(
     model,
-    # Mel spectrogram input
-    in_spec=SeqSpec(1, model.h.num_mels, -1, device=device),
-    # Audio waveform output
-    out_spec=out_spec,
+    in_spec,
+    out_spec,
     # BigVGAN produces outputs in the audio domain with a large receptive field, 
     # so the solver reaches the limit 100,000 on the input/output size while 
     # searching for a solution. We can safely increase it tenfold here.
@@ -147,6 +152,33 @@ and you can then store them alongside the hyperparameters.
 Below is another interactive demo of the streaming so you can visualize it:
 """
 
+with st.echo():
+    from torchstream import SlidingWindowParams
+
+    sli_params = SlidingWindowParams(
+        kernel_size_in=75,
+        stride_in=1,
+        left_pad=37,
+        right_pad=37,
+        kernel_size_out=314,
+        stride_out=256,
+        left_out_trim=29,
+        right_out_trim=29,
+    )
+
+    st.code(
+        f"-> min/max overlap: {[sli_params.streaming_context_size, sli_params.streaming_context_size + sli_params.stride_in - 1]}\n"
+        + f"-> min/max output delay: {list(sli_params.output_delay_bounds)}\n"
+        + f"-> in/out size relation: {sli_params.in_out_size_rel_repr}"
+    )
+
+st.code("""
+from torchstream import SlidingWindowStream
+        
+stream = SlidingWindowStream(model, sli_params, in_spec, out_spec)
+for chunk in stream.forward_in_chunks_iter(mel, chunk_size=chunk_size):
+    ...
+""")
 
 with st.container(border=True):
     total_seconds = len(wave) / sample_rate
@@ -170,24 +202,6 @@ with st.container(border=True):
     mel = get_mel_spectrogram(torch.from_numpy(wave_slice).unsqueeze(0), model.h).to(device)
     with torch.inference_mode():
         wav_out = model(mel).cpu().flatten().numpy()
-
-    with st.container(border=True):
-        sli_params = SlidingWindowParams(
-            kernel_size_in=75,
-            stride_in=1,
-            left_pad=37,
-            right_pad=37,
-            kernel_size_out=314,
-            stride_out=256,
-            left_out_trim=29,
-            right_out_trim=29,
-        )
-        st.code(
-            str(sli_params)
-            + f"\n-> min/max overlap: {[sli_params.streaming_context_size, sli_params.streaming_context_size + sli_params.stride_in - 1]}\n"
-            + f"-> min/max output delay: {list(sli_params.output_delay_bounds)}\n"
-            + f"-> in/out size relation: {in_out_size_rel_repr(*sli_params.canonical_in_out_size_params)}"
-        )
 
     def build_stream(chunk_size: int) -> AnimatedSlidingWindowStream:
         stream_obj = AnimatedSlidingWindowStream(model, sli_params, in_spec, out_spec)
@@ -257,6 +271,12 @@ st.caption(
     "the additional compute might end up being negligible"
 )
 st.caption("² as in with a chunk size of 1. This is possible because the parameters indicate a minimum input size of 1")
+
+"""
+### Up next
+We've found the sliding window parameters of a fully fledged neural network and made it streamable. The following 
+example will target a more complex model, with some non-sliding-window components.
+"""
 
 
 await_running_thread()

@@ -98,6 +98,16 @@ class SlidingWindowParams:
         return get_canonical_in_out_size_params(self)
 
     @property
+    def in_out_size_rel_repr(self) -> str:
+        """
+        Returns a human-readable string representation of the input to output size relation of the sliding window
+        transform.
+
+        :return: A string of the form "out_size = ((in_size + in_size_bias) // stride_in) * stride_out + out_size_bias"
+        """
+        return in_out_size_rel_repr(*self.canonical_in_out_size_params)
+
+    @property
     def output_delay_bounds(self) -> Tuple[int, int]:
         """
         Computes the minimum and maximum values of the streaming output delay. Given an input sequence, the output
