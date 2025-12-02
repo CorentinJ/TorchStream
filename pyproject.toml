@@ -30,14 +30,13 @@ build-backend = "setuptools.build_meta"
 [dependency-groups]
 demos = [
     "huggingface_hub>=0.23.4,<=0.36",
+    "kokoro>=0.9.2",
     "librosa>=0.11.0",
     "matplotlib>=3.7.5",
     "opentelemetry-sdk>=1.33.1",
     "pip>=25.0.1",
     "requests>=2.32.4",
     "resampy>=0.4.3",
-    # FIXME
-    # "kokoro>=0.9.2",
     "soundfile",
     "streamlit>=1.40.1",
     "torch>=1.11.0",
@@ -55,11 +54,14 @@ torch = [
   { index = "pytorch-cu118", group = "demos" },
 ]
 
-
 [[tool.uv.index]]
 name = "pytorch-cu118"
 url = "https://download.pytorch.org/whl/cu118"
 explicit = true
+
+[tool.uv.dependency-groups]
+demos = { requires-python = ">=3.10" }
+
 
 [tool.ruff]
 line-length = 120
