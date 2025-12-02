@@ -1,33 +1,33 @@
-import librosa
-import soundfile as sf
-import torch
+from torch import nn
 
-from examples.resources.bigvgan import bigvgan
-from examples.resources.bigvgan.meldataset import get_mel_spectrogram
+from torchstream.sequence.seq_spec import SeqSpec
+from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
 
 device = "cuda"
 
-# instantiate the model. You can optionally set use_cuda_kernel=True for faster inference.
-model = bigvgan.BigVGAN.from_pretrained("nvidia/bigvgan_v2_24khz_100band_256x", use_cuda_kernel=False)
-
-# remove weight norm in the model and set to eval mode
-model.remove_weight_norm()
-model = model.eval().to(device)
-
-# load wav file and compute mel spectrogram
-wav_path = r"C:\Users\coren\Downloads\32 Speaking The Text As A Dramatic Reading.mp3"
-wav, sr = librosa.load(
-    wav_path, sr=model.h.sampling_rate, mono=True
-)  # wav is np.ndarray with shape [T_time] and values in [-1, 1]
-wav = torch.FloatTensor(wav).unsqueeze(0)  # wav is FloatTensor with shape [B(1), T_time]
-
-# compute mel spectrogram from the ground truth audio
-mel = get_mel_spectrogram(wav, model.h).to(device)  # mel is FloatTensor with shape [B(1), C_mel, T_frame]
-
-# generate waveform from mel
-with torch.inference_mode():
-    wav_gen = model(mel)  # wav_gen is FloatTensor with shape [B(1), 1, T_time] and values in [-1, 1]
-wav_gen_float = wav_gen.cpu().flatten()  # wav_gen is FloatTensor with shape [1, T_time]
+conv = nn.Conv1d(100, 200, 7, 1, padding=3).to(device)
 
 
-sf.write("debug.wav", wav_gen_float.numpy(), samplerate=model.h.sampling_rate)
+in_spec = SeqSpec(1, 100, -1, device=device)
+out_spec = SeqSpec(1, 200, -1, device=device)
+params = find_sliding_window_params(conv, in_spec, out_spec, max_in_out_seq_size=1_000_000)
+print(params)
+
+# params = SlidingWindowParams(
+#     kernel_size_in=35,
+#     stride_in=1,
+#     left_pad=17,
+#     right_pad=17,
+#     kernel_size_out=418,
+#     stride_out=256,
+#     left_out_trim=81,
+#     right_out_trim=81,
+# )
+
+# test_stream_equivalent(
+#     bigvgan,
+#     SlidingWindowStream(bigvgan, params, in_spec, out_spec),
+#     in_step_sizes=(7, 4, 12) + (1,) * 100 + (17, 9),
+#     throughput_check_max_delay=params.out_trim,
+# )
+# quit()

@@ -69,8 +69,13 @@ def run_nan_trick(
     if in_nan_range:
         in_seq[slice(*in_nan_range)] = float("nan")
 
-    # Forward the input through the transform
-    out_seq = in_seq.apply(trsfm, out_spec, zero_size_exception_signatures=zero_size_exception_signatures)
+    # Disabling CuDNN prevents the use of algos that do not propagate NaNs correctly
+    # TODO: add tests to ensure NaNs are propagating correctly in general (across different torch versions, archs,
+    # devices, ...)
+    #   - This conv was the original culprit: nn.Conv1d(100, 200, 7, 1, padding=3).cuda()
+    with torch.backends.cudnn.flags(enabled=False):
+        # Forward the input through the transform
+        out_seq = in_seq.apply(trsfm, out_spec, zero_size_exception_signatures=zero_size_exception_signatures)
 
     out_nan_idx = get_nan_idx(out_seq)
 
