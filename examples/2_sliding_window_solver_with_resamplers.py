@@ -13,6 +13,7 @@ from torch import nn
 from examples.utils.animated_sliding_window_stream import AnimatedSlidingWindowStream
 from examples.utils.audio import load_audio
 from examples.utils.download import download_file_cached
+from examples.utils.plots import plot_audio
 from examples.utils.streamlit_worker import await_running_thread, run_managed_thread
 from torchstream import SeqSpec, SlidingWindowParams, find_sliding_window_params, intercept_calls
 from torchstream.exception_signature import DEFAULT_ZERO_SIZE_EXCEPTIONS
@@ -338,32 +339,6 @@ Let's visualize the streaming of this resampling operation:
 """
 
 
-def plot_audio(ax, wave: np.ndarray, sample_rate, tick_label_offset_s: float = 0.0):
-    xs = np.arange(len(wave))
-    ax.scatter(xs, wave, s=6, color="tab:blue", alpha=0.7)
-    ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Amplitude")
-    ax.set_xlim(0, len(wave) - 1)
-    ax.set_ylim(-1, 1)
-
-    total_seconds = len(wave) / sample_rate
-    if total_seconds >= 10:
-        increment = 2.0
-    elif total_seconds >= 5:
-        increment = 1.0
-    elif total_seconds >= 1:
-        increment = 0.2
-    else:
-        increment = 0.1
-    ticks_seconds = np.arange(0, total_seconds, increment)
-    ticks = (ticks_seconds * sample_rate).round().astype(int)
-    ax.set_xticks(ticks)
-    if total_seconds >= 5:
-        ax.set_xticklabels([f"{ts + tick_label_offset_s:.0f}" for ts in ticks_seconds])
-    else:
-        ax.set_xticklabels([f"{ts + tick_label_offset_s:.1f}" for ts in ticks_seconds])
-
-
 with st.container(border=True):
     total_seconds = len(wave_48khz) / 48000
     min_slice_seconds = 0.01
@@ -439,12 +414,14 @@ with st.container(border=True):
         fig.suptitle(f"Streaming librosa.resample - Step {step_idx + 1}/{len(stream.step_history)}", fontsize=18)
 
         # Input plot
-        plot_audio(axs[0], wave_48khz_slice, 48000, tick_label_offset_s=start_sec)
+        plot_audio(axs[0], wave_48khz_slice, 48000, tick_label_offset_s=start_sec, as_scatter=True, with_end_tick=False)
 
         # Sync output plot
-        plot_audio(axs[2], resample_trsfm(wave_48khz_slice), 8000)
+        plot_audio(axs[2], resample_trsfm(wave_48khz_slice), 8000, as_scatter=True, with_end_tick=False)
 
-        stream.plot_step(step_idx, *axs, out_plot_fn=partial(plot_audio, sample_rate=8000))
+        stream.plot_step(
+            step_idx, *axs, out_plot_fn=partial(plot_audio, sample_rate=8000, as_scatter=True, with_end_tick=False)
+        )
         plot_placeholder.pyplot(fig)
 
     stream_step_fragment()

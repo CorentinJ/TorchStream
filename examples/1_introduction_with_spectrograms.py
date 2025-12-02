@@ -9,6 +9,7 @@ import torchaudio
 from examples.utils.animated_sliding_window_stream import AnimatedSlidingWindowStream
 from examples.utils.audio import load_audio
 from examples.utils.download import download_file_cached
+from examples.utils.plots import plot_audio, plot_melspec
 from torchstream import SeqSpec, Sequence, SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params import get_streaming_context_size, in_out_size_rel_repr
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
@@ -31,34 +32,8 @@ st.audio(wave, sample_rate=sample_rate)
 st.caption("Source: https://global.oup.com/us/companion.websites/9780195300505/audio/audio_samples/, sample 32")
 
 
-def plot_audio(ax, wave: np.ndarray, tick_label_offset_s: float = 0.0):
-    ax.plot(wave)
-    ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Amplitude")
-    ax.set_xlim(0, len(wave) - 1)
-    ax.set_ylim(-1, 1)
-
-    total_seconds = len(wave) / sample_rate
-    if total_seconds >= 10:
-        increment = 2.0
-    elif total_seconds >= 5:
-        increment = 1.0
-    elif total_seconds >= 1:
-        increment = 0.2
-    else:
-        increment = 0.1
-    ticks_seconds = np.arange(0, total_seconds, increment)
-    ticks_seconds = np.append(ticks_seconds, round(total_seconds, 1))
-    ticks = (ticks_seconds * sample_rate).round().astype(int)
-    ax.set_xticks(ticks)
-    if total_seconds >= 5:
-        ax.set_xticklabels([f"{ts + tick_label_offset_s:.0f}" for ts in ticks_seconds])
-    else:
-        ax.set_xticklabels([f"{ts + tick_label_offset_s:.1f}" for ts in ticks_seconds])
-
-
 fig, ax = plt.subplots(figsize=(10, 2.5))
-plot_audio(ax, wave)
+plot_audio(ax, wave, sample_rate)
 st.pyplot(fig)
 
 """
@@ -93,23 +68,6 @@ melspectrogram = get_spec_trsfm_and_sli_params(wave)
 st.code(
     f">>> melspectrogram = get_spectrogram(wave)\n{tuple(melspectrogram.shape)} shaped {melspectrogram.dtype} tensor"
 )
-
-
-def plot_melspec(ax, spec, aspect="auto"):
-    spec_np = spec.log2().numpy()
-    height, width = spec_np.shape
-    ax.imshow(
-        spec_np,
-        aspect=aspect,
-        origin="lower",
-        extent=(0, width, 0, height),
-        vmin=-20.0,
-        vmax=15.0,
-    )
-    ax.set_xlabel("Frames")
-    ax.set_ylabel("Mel Bin")
-    ax.set_xlim(0, width)
-    ax.set_ylim(0, height)
 
 
 fig, ax = plt.subplots(figsize=(10, 2.5))
@@ -290,9 +248,9 @@ with st.echo():
         trsfm,
         sli_params,
         # Audio inputs are 1D float arrays of varying length
-        input_spec=SeqSpec(-1),
+        in_spec=SeqSpec(-1),
         # Spectrogram outputs are 2D: 120 channels for the mel bins, and varying length for the time frames
-        output_spec=SeqSpec(120, -1),
+        out_spec=SeqSpec(120, -1),
     )
 
     # This will raise an error if the streamed function differs
@@ -390,7 +348,7 @@ with st.container(border=True):
         )
 
         # Input plot
-        plot_audio(axs[0], wave_slice.numpy(), tick_label_offset_s=start_sec)
+        plot_audio(axs[0], wave_slice.numpy(), sample_rate, tick_label_offset_s=start_sec)
 
         # Sync spectrogram plot
         plot_melspec(axs[2], trsfm(wave_slice))

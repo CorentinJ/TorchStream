@@ -12,10 +12,10 @@ class AnimatedSlidingWindowStream(SlidingWindowStream):
         self,
         transform: Callable,
         sliding_window_params: SlidingWindowParams,
-        input_spec: SeqSpec,
-        output_spec: SeqSpec | None = None,
+        in_spec: SeqSpec,
+        out_spec: SeqSpec | None = None,
     ):
-        super().__init__(transform, sliding_window_params, input_spec, output_spec)
+        super().__init__(transform, sliding_window_params, in_spec, out_spec)
 
         self.step_history = []
 

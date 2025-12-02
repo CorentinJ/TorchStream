@@ -24,10 +24,10 @@ class SlidingWindowStream(Stream):
         self,
         transform: Callable,
         sliding_window_params: SlidingWindowParams,
-        input_spec: SeqSpec,
-        output_spec: SeqSpec | None = None,
+        in_spec: SeqSpec,
+        out_spec: SeqSpec | None = None,
     ):
-        super().__init__(input_spec, output_spec)
+        super().__init__(in_spec, out_spec)
 
         self.transform = transform
 

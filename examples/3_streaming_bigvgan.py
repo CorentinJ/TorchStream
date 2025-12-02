@@ -1,12 +1,14 @@
 import logging
+import time
 
 import streamlit as st
-import torch
+from matplotlib import pyplot as plt
 
-from examples.resources.bigvgan.bigvgan import load_uninit_bigvgan
-from examples.utils.streamlit_worker import await_running_thread
-from torchstream.sequence.sequence import SeqSpec
-from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+from examples.utils.animated_sliding_window_stream import AnimatedSlidingWindowStream
+from examples.utils.plots import plot_audio, plot_melspec
+from examples.utils.streamlit_worker import await_running_thread, run_managed_thread
+from torchstream.sequence.sequence import SeqSpec, Sequence
+from torchstream.sliding_window.sliding_window_params import SlidingWindowParams, in_out_size_rel_repr
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
 
 logger = logging.getLogger(__name__)
@@ -18,46 +20,222 @@ st.subheader("3. Streaming BigVGAN")
 """
 In the example #1, we mentioned that mel spectrograms are a common way to represent audio data for neural networks.
 Mel spectrograms are cheap to compute, but hard to invert back to audio. This is called vocoding, and modern 
-vocoders are neural networks. 
+high quality vocoders often are neural networks. 
 
 BigVGAN is a state of the art neural vocoder, part of many modern speech synthesis pipelines. For a text-to-speech 
 system, streaming it is essential to reduce latency. For a speech-to-speech system, streaming it allows for 
-live voice conversion.
+live voice conversion or live speech denoising.
+
+Let's load the model and a sample input:
 """
 
 
-# Load our model
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-bigvgan = load_uninit_bigvgan("config_base_22khz_80band", device)
+fig, ax = plt.subplots(figsize=(10, 2.5))
 
-# Specify the input and output data format
-#   - We'll use a batch size of 1 for finding the parameters
-#   - BigVGAN takes mel-spectrograms as input, with a variable time dimension, so (B, M, T) where M is num_mels
-#   - The output is an audio waveform directly, that's (B, 1, T)
-in_spec = SeqSpec(1, bigvgan.h.num_mels, -1, device=device)
-out_spec = SeqSpec(1, 1, -1, device=device)
+with st.echo():
+    import torch
 
-params = SlidingWindowParams(
-    kernel_size_in=35,
-    stride_in=1,
-    left_pad=17,
-    right_pad=17,
-    kernel_size_out=418,
-    stride_out=256,
-    left_out_trim=81,
-    right_out_trim=81,
+    from examples.resources.bigvgan.bigvgan import BigVGAN
+    from examples.resources.bigvgan.meldataset import get_mel_spectrogram
+    from examples.utils.audio import load_audio
+    from examples.utils.download import download_file_cached
+
+    device = "cuda"
+
+    @st.cache_resource
+    def load_bigvgan() -> BigVGAN:
+        model = BigVGAN.from_pretrained("nvidia/bigvgan_v2_24khz_100band_256x", use_cuda_kernel=False)
+        model.remove_weight_norm()
+        model = model.eval().to(device)
+        return model
+
+    model = load_bigvgan()
+
+    # Load an audio file at the model's samplerate
+    MP3_URL = "https://d38nvwmjovqyq6.cloudfront.net/va90web25003/companions/ws_smith/32%20Speaking%20The%20Text%20As%20A%20Dramatic%20Reading.mp3"
+    local_audio_path = download_file_cached(MP3_URL)
+    wave, sample_rate = load_audio(local_audio_path, sample_rate=model.h.sampling_rate)
+
+    # Compute the mel spectrogam input
+    mel = get_mel_spectrogram(torch.from_numpy(wave).unsqueeze(0), model.h).to(device)
+
+st.write("##### Input audio & spectrogram")
+st.audio(wave, sample_rate=sample_rate)
+st.caption("Source: https://global.oup.com/us/companion.websites/9780195300505/audio/audio_samples/, sample 32")
+
+plot_melspec(ax, mel[0], is_log=True, vmin=None, vmax=None)
+st.pyplot(fig)
+
+"""
+And now run inference with it:
+"""
+
+start_time = time.perf_counter()
+with st.echo():
+    with torch.inference_mode():
+        # mel is a (1, M, T_frames) shaped float32 tensor
+        # wav_out is a (1, 1, T_samples) shaped float32 tensor
+        wav_out = model(mel)
+
+inference_time = time.perf_counter() - start_time
+
+wav_out = wav_out.cpu().flatten()
+st.write("##### Output audio")
+st.audio(wav_out.numpy(), sample_rate=sample_rate)
+st.write(f"_{len(wav_out) / sample_rate:.2f} seconds of audio generated in {inference_time:.2f} seconds._")
+
+"""
+It should sound the same as our input. 
+
+Let's proceed with streaming.
+"""
+
+st.code("""
+params = find_sliding_window_params(
+    model,
+    # Mel spectrogram input
+    in_spec=SeqSpec(1, model.h.num_mels, -1, device=device),
+    # Audio waveform output
+    out_spec=SeqSpec(1, 1, -1, device=device),
+    # BigVGAN produces outputs in the audio domain with a large receptive field, 
+    # so the solver reaches the limit 100,000 on the input/output size while 
+    # searching for a solution. We can safely increase it tenfold here.
+    max_in_out_seq_size=1_000_000,
+)[0]
+""")
+
+
+def find_sli_params_and_print(*args, **kwargs):
+    sols = find_sliding_window_params(*args, **kwargs)
+
+    logger.info("-----------------\n")
+    for i, sol in enumerate(sols):
+        logger.info(f"Solution #{i + 1}: {sol}")
+
+
+run_managed_thread(
+    func=find_sli_params_and_print,
+    run_id="run1",
+    job_id="bigvgan_demo",
+    func_kwargs=dict(
+        trsfm=model,
+        in_spec=SeqSpec(-1, model.h.num_mels, device=device),
+        out_spec=SeqSpec(-1, 1, 1, device=device),
+        max_in_out_seq_size=1_000_000,
+    ),
+    log_height=500,
 )
 
-# test_stream_equivalent(
-#     bigvgan,
-#     SlidingWindowStream(bigvgan, params, in_spec, out_spec),
-#     in_step_sizes=(7, 4, 12) + (1,) * 100 + (17, 9),
-#     throughput_check_max_delay=params.out_trim,
-# )
-# quit()
+"""
+Just like in the previous example, we converge to a rather complex solution. Going through the forward function of 
+bigvgan involves the computation of about 280 torch primitives (convs, tconvs, activations, residual sums, ...). So 
+it's quite magic to be able to say that this big model is really just a chunky sliding window algorithm!
 
-params = find_sliding_window_params(bigvgan, in_spec, out_spec)
-print(params)
+For a transform of this complexity we have a myriad of possible sliding window parameters that correspond to it, 
+but still **all with the same input/output size relation, output delay and input context size**. Due to the 
+randomness of the solver, you might even have obtained a different solution than the one below.
+
+There are [many variations of hyperparameters for BigVGAN](https://huggingface.co/nvidia/bigvgan_v2_24khz_100band_256x#pretrained-models), 
+**each will have its own set of sliding window parameters**. But you only need to compute them once with the solver, 
+and you can then store them alongside the hyperparameters.
+
+Below is another interactive demo of the streaming so you can visualize it:
+"""
+
+
+with st.container(border=True):
+    total_seconds = len(wave) / sample_rate
+    min_slice_seconds = 0.01
+    start_sec, end_sec = st.slider(
+        "Select the audio segment",
+        0.0,
+        1.0,
+        (0.35, 0.4),
+        step=0.001,
+        format="%.2fs",
+    )
+    if end_sec - start_sec < min_slice_seconds:
+        end_sec = min(total_seconds, start_sec + min_slice_seconds)
+        if end_sec - start_sec < min_slice_seconds:
+            start_sec = max(0.0, end_sec - min_slice_seconds)
+    start_sample = int(start_sec * sample_rate)
+    end_sample = max(start_sample + int(min_slice_seconds * sample_rate), int(end_sec * sample_rate))
+
+    wave_slice = wave[start_sample:end_sample]
+
+    with st.container(border=True):
+        sli_params = SlidingWindowParams(
+            kernel_size_in=75,
+            stride_in=1,
+            left_pad=37,
+            right_pad=37,
+            kernel_size_out=314,
+            stride_out=256,
+            left_out_trim=29,
+            right_out_trim=29,
+        )
+        st.code(
+            str(sli_params)
+            + f"\n-> min/max overlap: {[sli_params.streaming_context_size, sli_params.streaming_context_size + sli_params.stride_in - 1]}\n"
+            + f"-> min/max output delay: {list(sli_params.output_delay_bounds)}\n"
+            + f"-> in/out size relation: {in_out_size_rel_repr(*sli_params.canonical_in_out_size_params)}"
+        )
+
+    def build_stream(chunk_size: int) -> AnimatedSlidingWindowStream:
+        stream_obj = AnimatedSlidingWindowStream(
+            model,
+            sli_params,
+            in_spec=SeqSpec(-1, model.h.num_mels, device=device),
+            out_spec=SeqSpec(-1, 1, 1, device=device),
+        )
+        stream_obj.forward_in_chunks(Sequence(wave, seq_dim=0), chunk_size=chunk_size)
+        return stream_obj
+
+    chunk_size = st.slider(
+        "Set the streaming chunk size",
+        sli_params.min_input_size,
+        len(wave) // 2,
+        value=len(wave) // 5,
+    )
+    stream = build_stream(chunk_size)
+
+    @st.fragment
+    def stream_step_fragment():
+        fig, axs = plt.subplots(figsize=(10, 8.5), nrows=3)
+        fig.subplots_adjust(hspace=0.5)
+
+        plot_placeholder = st.empty()
+
+        step_idx = (
+            st.slider(
+                "Streaming step",
+                1,
+                len(stream.step_history),
+                value=min(2, len(stream.step_history) - 1),
+            )
+            - 1
+        )
+        fig.suptitle(f"Streaming BigVGAN - Step {step_idx + 1}/{len(stream.step_history)}", fontsize=18)
+
+        # Input plot
+        plot_melspec(axs[0], mel[0])
+
+        # Sync output plot
+        plot_audio(axs[2], wav_out, sample_rate)
+
+        def out_plot_fn(ax, data):
+            plot_audio(ax, data.cpu().flatten().numpy(), sample_rate=sample_rate)
+
+        stream.plot_step(step_idx, *axs, out_plot_fn=out_plot_fn)
+        plot_placeholder.pyplot(fig)
+
+    stream_step_fragment()
+
+"""
+
+This time around we managed to find a solution on the first try. BigVGAN is a convenient model for this first 
+neural network example, 
+"""
 
 
 await_running_thread()

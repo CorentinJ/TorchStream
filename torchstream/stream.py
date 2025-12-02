@@ -19,19 +19,19 @@ class Stream:
 
     Subclasses must override the `_step` method.
 
-    :param input_spec: Specification of the input sequence format. The _step method will receive inputs matching this
+    :param in_spec: Specification of the input sequence format. The _step method will receive inputs matching this
     specification.
-    :param output_spec: Specification of the output sequence format. The _step method must return outputs matching this
+    :param out_spec: Specification of the output sequence format. The _step method must return outputs matching this
     specification. If None, it is assumed to be the same as the input specification.
     """
 
     def __init__(
         self,
-        input_spec: SeqSpec,
-        output_spec: Optional[SeqSpec] = None,
+        in_spec: SeqSpec,
+        out_spec: Optional[SeqSpec] = None,
     ):
-        self.in_spec = input_spec
-        self.out_spec = output_spec or input_spec
+        self.in_spec = in_spec
+        self.out_spec = out_spec or in_spec
 
         self._n_steps = 0
         self._total_in_fed = 0
