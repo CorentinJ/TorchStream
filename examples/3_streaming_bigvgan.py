@@ -7,7 +7,7 @@ from matplotlib import pyplot as plt
 from examples.utils.animated_sliding_window_stream import AnimatedSlidingWindowStream
 from examples.utils.plots import plot_audio, plot_melspec
 from examples.utils.streamlit_worker import await_running_thread, run_managed_thread
-from torchstream.sequence.sequence import SeqSpec, Sequence
+from torchstream.sequence.sequence import SeqSpec
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams, in_out_size_rel_repr
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
 
@@ -90,13 +90,16 @@ It should sound the same as our input.
 Let's proceed with streaming.
 """
 
+in_spec = SeqSpec(1, model.h.num_mels, -1, device=device)
+out_spec = SeqSpec(1, 1, -1, device=device)
+
 st.code("""
 params = find_sliding_window_params(
     model,
     # Mel spectrogram input
     in_spec=SeqSpec(1, model.h.num_mels, -1, device=device),
     # Audio waveform output
-    out_spec=SeqSpec(1, 1, -1, device=device),
+    out_spec=out_spec,
     # BigVGAN produces outputs in the audio domain with a large receptive field, 
     # so the solver reaches the limit 100,000 on the input/output size while 
     # searching for a solution. We can safely increase it tenfold here.
@@ -119,21 +122,23 @@ run_managed_thread(
     job_id="bigvgan_demo",
     func_kwargs=dict(
         trsfm=model,
-        in_spec=SeqSpec(-1, model.h.num_mels, device=device),
-        out_spec=SeqSpec(-1, 1, 1, device=device),
+        in_spec=in_spec,
+        out_spec=out_spec,
         max_in_out_seq_size=1_000_000,
     ),
     log_height=500,
 )
 
 """
-Just like in the previous example, we converge to a rather complex solution. Going through the forward function of 
-bigvgan involves the computation of about 280 torch primitives (convs, tconvs, activations, residual sums, ...). So 
-it's quite magic to be able to say that this big model is really just a chunky sliding window algorithm!
+This time around we managed to find a solution without hitting any snags. Just like in the previous example, we 
+converge to a rather complex solution. Going through the forward function of bigvgan involves the computation 
+of **about 280 torch primitives** (convs, tconvs, activations, residual sums, ...). So it's quite magical to be able to 
+reduce this big model to just a sliding window algorithm!
 
 For a transform of this complexity we have a myriad of possible sliding window parameters that correspond to it, 
 but still **all with the same input/output size relation, output delay and input context size**. Due to the 
-randomness of the solver, you might even have obtained a different solution than the one below.
+randomness of the solver, you might even have obtained a different solution than the one hardcoded in the visualization 
+below.
 
 There are [many variations of hyperparameters for BigVGAN](https://huggingface.co/nvidia/bigvgan_v2_24khz_100band_256x#pretrained-models), 
 **each will have its own set of sliding window parameters**. But you only need to compute them once with the solver, 
@@ -145,14 +150,14 @@ Below is another interactive demo of the streaming so you can visualize it:
 
 with st.container(border=True):
     total_seconds = len(wave) / sample_rate
-    min_slice_seconds = 0.01
+    min_slice_seconds = 0.1
     start_sec, end_sec = st.slider(
         "Select the audio segment",
         0.0,
-        1.0,
-        (0.35, 0.4),
-        step=0.001,
-        format="%.2fs",
+        total_seconds,
+        (0.0, 5.0),
+        step=0.1,
+        format="%.1fs",
     )
     if end_sec - start_sec < min_slice_seconds:
         end_sec = min(total_seconds, start_sec + min_slice_seconds)
@@ -162,6 +167,9 @@ with st.container(border=True):
     end_sample = max(start_sample + int(min_slice_seconds * sample_rate), int(end_sec * sample_rate))
 
     wave_slice = wave[start_sample:end_sample]
+    mel = get_mel_spectrogram(torch.from_numpy(wave_slice).unsqueeze(0), model.h).to(device)
+    with torch.inference_mode():
+        wav_out = model(mel).cpu().flatten().numpy()
 
     with st.container(border=True):
         sli_params = SlidingWindowParams(
@@ -182,20 +190,15 @@ with st.container(border=True):
         )
 
     def build_stream(chunk_size: int) -> AnimatedSlidingWindowStream:
-        stream_obj = AnimatedSlidingWindowStream(
-            model,
-            sli_params,
-            in_spec=SeqSpec(-1, model.h.num_mels, device=device),
-            out_spec=SeqSpec(-1, 1, 1, device=device),
-        )
-        stream_obj.forward_in_chunks(Sequence(wave, seq_dim=0), chunk_size=chunk_size)
+        stream_obj = AnimatedSlidingWindowStream(model, sli_params, in_spec, out_spec)
+        stream_obj.forward_in_chunks(mel, chunk_size=chunk_size)
         return stream_obj
 
     chunk_size = st.slider(
         "Set the streaming chunk size",
         sli_params.min_input_size,
-        len(wave) // 2,
-        value=len(wave) // 5,
+        mel.size(2) // 2,
+        value=mel.size(2) // 5,
     )
     stream = build_stream(chunk_size)
 
@@ -218,7 +221,7 @@ with st.container(border=True):
         fig.suptitle(f"Streaming BigVGAN - Step {step_idx + 1}/{len(stream.step_history)}", fontsize=18)
 
         # Input plot
-        plot_melspec(axs[0], mel[0])
+        plot_melspec(axs[0], mel[0], is_log=True, vmin=None, vmax=None)
 
         # Sync output plot
         plot_audio(axs[2], wav_out, sample_rate)
@@ -232,10 +235,28 @@ with st.container(border=True):
     stream_step_fragment()
 
 """
+BigVGAN is a high stack of convolutions with dilation, leading to large kernels. Their individual receptive field 
+add up and multiply through the upsampling layers (=transposed convolutions with stride>1), leading to a very large 
+output delay. It is of 9501 samples here, which is about 400ms at 24kHz. This not only **wasteful compute**¹ but also 
+a **noticeable latency**. Even if you were to stream frame-by-frame² instantaneously, you would still have a 400ms 
+delay between your input spectrogram and your output audio. 
 
-This time around we managed to find a solution on the first try. BigVGAN is a convenient model for this first 
-neural network example, 
+Yet you can see from the above images that the trimmed portion of the output is quite faithful to the original audio! 
+We should be able to keep some of that trimmed output.
+
+The sliding window parameter solver finds the original parameters of the transform, which allows us to stream it 
+**exactly**. Aside from minor differences in computation introduced by optimizations and floating point rounding, the 
+output you get from a `SlidingWindowStream` with the correct parameters will be identical to the non-streamed 
+transform.
+
+Hence, you can significantly reduce the output delay at the cost of some output fidelity. TorchStream does not yet 
+expose functions to enable this, but it is a planned feature.
 """
+st.caption(
+    "¹ this is _technically_ wasteful compute. Depending on your choices of chunk size and your benchmarks, "
+    "the additional compute might end up being negligible"
+)
+st.caption("² as in with a chunk size of 1. This is possible because the parameters indicate a minimum input size of 1")
 
 
 await_running_thread()

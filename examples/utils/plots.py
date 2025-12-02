@@ -51,7 +51,7 @@ def plot_melspec(
     if torch.is_tensor(spec):
         spec = spec.cpu().numpy()
     if not is_log:
-        spec = np.log2(spec)
+        spec = np.log2(spec + 1e-7)
 
     height, width = spec.shape
     ax.imshow(
