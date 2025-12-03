@@ -8,7 +8,9 @@ import streamlit as st
 from kokoro import KPipeline
 from kokoro.model import KModel
 
+from examples.utils.streamlit_worker import await_running_thread, run_managed_thread
 from torchstream import intercept_calls
+from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -241,7 +243,7 @@ st.caption(
 )
 
 """
-#### Streaming the decoder
+#### Finding the decoder's sliding window params
 
 We're streaming the decoder, so let's specify what its inputs and outputs are. We took a glance above but let's look 
 again, using the convenient `intercept_calls` context manager. It acts as a passthrough by default and can store the 
@@ -384,7 +386,124 @@ Ouch. We've got at least one transform in our decoder that has an infinite recep
 we know that we will be streaming **an approximation** of the original model. But rest assured that the approximation 
 can be very good.
 
+Again, if we don't know the model we've got to step in with the debugger to figure out why this is happening. I've 
+found that the culprit is this core little module that is used several times in the model:
 """
+
+from kokoro.istftnet import AdaIN1d
+
+st.code(inspect.getsource(AdaIN1d), language="python")
+
+"""
+The `InstanceNorm1d` layer computes a mean and variance over the entire time dimension, then normalizes the input with 
+the results. A **moving average approximation** will do the trick for streaming this layer.
+
+But we won't implement it now, our priority is to know whether we can stream this model at all, the implementation 
+can come later. So let's **patch this function to be a no-op** and return the unnormalized input as it is. The no-op
+will propagate NaNs like an identity function.
+"""
+
+st.code(
+    """
+from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
+
+with intercept_calls(
+    "torch.nn.functional.instance_norm",
+    handler_fn=lambda x, *args: x,
+):    
+    sli_params = find_sliding_window_params(
+        decoder_trsfm,
+        decoder_in_spec,
+        decoder_out_spec,
+    )[0]
+"""
+)
+st.exception(
+    RuntimeError(
+        "RuntimeError: Your transform outputs NaNs at the end of the output sequence (in_size=300, out_size=180000, "
+        "out_nan_range=(73015, 180000)). This likely means that you have an autoregressive operation in your model "
+        "(e.g. LSTM, cumsum, ...) that keeps producing NaNs onces it has seen one. These operations are usually "
+        "trivially streamable, but you'll need to prevent their NaN propagation for the duration of the solver run, "
+        "e.g. by patching them into identity functions using torchstream's intercept_calls context manager."
+    )
+)
+
+"""
+Strike two! This time we have an autoregressive operation. These are not as much of bad news as the previous one! 
+Autoregressive operations are usually **trivially and exactly streamable** because they only depend on past inputs 
+(in the jargon we say they have a causal receptive field). They do propagate NaNs to all future outputs once they see 
+one, so we will have to patch them out of the solver run as well. We'll build a correct stateful version of that 
+operation later.
+
+The culprit here is a single line in this function:
+"""
+
+from kokoro.istftnet import SineGen
+
+source = inspect.getsource(SineGen._f02sine)
+short_source = "\n".join(
+    ["# function kokoro.istftnet.SineGen._f02sine", ""] + dedent(source).splitlines()[:17] + ["    ..."]
+)
+st.code(short_source, language="python")
+
+"""
+It's the `torch.cumsum()` call. It keeps on adding previously seen elements to a cumulated output, hence that makes 
+it autoregressive. 
+
+Let's patch it out of the solver run too. Also, this model produces large outputs for small inputs so let's bump 
+up the maximum input/output size the solver can tolerate.
+"""
+
+st.code(
+    """
+from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
+
+with intercept_calls(
+    "torch.nn.functional.instance_norm",
+    lambda x, *args: x,
+):
+    with intercept_calls("torch.cumsum", lambda x, dim: x):
+        sli_params = find_sliding_window_params(
+            decoder_trsfm,
+            decoder_in_spec,
+            decoder_out_spec,
+            # We'll be dealing with long sequences, bump up the limit
+            max_in_out_seq_size=1_000_000,
+        )[0]
+"""
+)
+
+
+def find_sli_params_and_print(*args, **kwargs):
+    with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
+        with intercept_calls("torch.cumsum", lambda x, dim: x):
+            sols = find_sliding_window_params(*args, **kwargs)
+
+    logger.info("-----------------\n")
+    for i, sol in enumerate(sols):
+        logger.info(f"Solution #{i + 1}: {sol}")
+
+
+run_managed_thread(
+    func=find_sli_params_and_print,
+    run_id="run1",
+    job_id="kokoro_demo",
+    func_kwargs=dict(
+        trsfm=decoder_trsfm,
+        in_spec=decoder_in_spec,
+        out_spec=decoder_out_spec,
+        max_in_out_seq_size=1_000_000,
+    ),
+    log_height=500,
+)
+
+
+"""
+There we are!
+
+"""
+
+await_running_thread()
 
 
 quit()
@@ -394,6 +513,7 @@ quit()
 import logging
 from functools import partial
 
+from kokoro import KModel
 from torch.nn import InstanceNorm1d
 from torch.nn import functional as F
 
@@ -401,17 +521,6 @@ from torchstream.patching.call_intercept import intercept_calls, make_exit_early
 from torchstream.sequence.sequence import SeqSpec
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
-from kokoro import KModel
-
-with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
-    with intercept_calls("torch.cumsum", lambda x, dim: x):
-        sli_params = find_sliding_window_params(
-            decoder_trsfm,
-            decoder_in_spec,
-            decoder_out_spec,
-            # We'll be dealing with long sequences, bump up the limit
-            max_in_out_seq_size=1_000_000,
-        )[0]
 
 # In subsequent runs we won't need to run the solver again, we can reuse the found parameters. We'll only need to
 # call the solver again if we change hyperparameters or the model's architecture.
