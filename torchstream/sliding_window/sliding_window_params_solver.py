@@ -200,7 +200,9 @@ class SlidingWindowParamsSolver:
         """
         return len(self.nan_trick_history)
 
-    def run_nan_trick(self, in_seq_size: int, in_nan_range: Tuple[int, int] | None) -> dict:
+    def run_nan_trick(
+        self, in_seq_size: int, in_nan_range: Tuple[int, int] | None, raise_on_max_seq_size: bool = True
+    ) -> dict:
         """
         Forwards an input of size `in_seq_size` with NaNs in the range `in_nan_range` through the transform, storing
         the inputs and outputs NaN positions. The function will raise if the transform does not behave as expected.
@@ -238,7 +240,7 @@ class SlidingWindowParamsSolver:
         else:
             self._min_in_size_bounds[0] = max(self._min_in_size_bounds[0], in_seq.size + 1)
 
-        if max(in_seq_size, out_seq.size) >= self.max_in_out_seq_size:
+        if raise_on_max_seq_size and max(in_seq_size, out_seq.size) >= self.max_in_out_seq_size:
             raise MaximumSequenceSizeReachedError(
                 f"Reached maximum input/output sequence size ({self.max_in_out_seq_size:,}) "
                 f"with a {in_seq_size:,} -> {out_seq.size:,} forward pass. Aborting.\n"
@@ -263,12 +265,9 @@ class SlidingWindowParamsSolver:
         # output sequence of non-zero size
         while True:
             # Use sane defaults for the NaN trick
-            try:
-                nan_start = self.init_seq_size // 2 - self.init_seq_size // 20
-                nan_end = self.init_seq_size // 2 + int(math.ceil(self.init_seq_size / 20))
-                record = self.run_nan_trick(self.init_seq_size, (nan_start, nan_end))
-            except MaximumSequenceSizeReachedError:
-                break
+            nan_start = self.init_seq_size // 2 - self.init_seq_size // 20
+            nan_end = self.init_seq_size // 2 + int(math.ceil(self.init_seq_size / 20))
+            record = self.run_nan_trick(self.init_seq_size, (nan_start, nan_end), raise_on_max_seq_size=False)
 
             # Check whether the output is valid
             if record["out_seq_size"] == 0:
@@ -284,6 +283,9 @@ class SlidingWindowParamsSolver:
                     fail_reason = "last output is NaN"
                 else:
                     return record
+
+            if record["out_seq_size"] >= self.max_in_out_seq_size or record["in_seq_size"] >= self.max_in_out_seq_size:
+                break
 
             # As long as we haven't had a valid output, we'll increase the input size.
             self.init_seq_size = min(10 * self.init_seq_size, self.max_in_out_seq_size)

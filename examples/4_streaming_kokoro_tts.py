@@ -8,6 +8,8 @@ import streamlit as st
 from kokoro import KPipeline
 from kokoro.model import KModel
 
+from torchstream import intercept_calls
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
@@ -65,9 +67,11 @@ with st.echo():
     )
 
 
-# TODO allow rerunning? The first run time will be skewed...
 @st.cache_data()
-def get_wave(device_type: str):
+def tts_infer(device_type: str):
+    # Do a single warmup run to get better benchmarks
+    next(pipeline(text, voice="af_heart"))
+
     with st.echo():
         # Normal, non-streaming inference
         start_time = time.perf_counter()
@@ -77,7 +81,7 @@ def get_wave(device_type: str):
     return wave, inference_time
 
 
-wave, inference_time = get_wave(device.type)
+wave, inference_time = tts_infer(device.type)
 
 st.audio(wave.cpu().numpy(), sample_rate=sample_rate)
 st.caption(f"{len(wave) / sample_rate:.2f}s audio generated on {device.type} in {inference_time:.2f}s")
@@ -91,7 +95,7 @@ processing, and involves two different models internally: a text to phoneme mode
 
 It's not at all trivial to figure out what we want to stream here. It's easier when you've worked on the models you 
 want to stream beforehand - but with TorchStream it's possible to stream models with **little prior knowledge of them**, 
-even **without touching the source code**!
+even **without modifying the source code**!
 
 #### On to exploration!
 
@@ -178,8 +182,9 @@ certain function. That will let us benchmark up to the decoder call only without
 @st.cache_data()
 def partial_pipeline_bench(device_type: str):
     with st.echo():
-        from torchstream.patching.call_intercept import make_exit_early
+        from torchstream import make_exit_early
 
+        # NOTE: we define a wrapper because pipeline acts as a generator function, breaking make_exit_early
         def infer_one(text):
             return next(pipeline(text, voice="af_heart"))
 
@@ -193,7 +198,7 @@ def partial_pipeline_bench(device_type: str):
     """
     All is well. These 4 tensors are the arguments to the decoder's forward pass:
     """
-    st.code("def forward(self, asr, F0_curve, N, s):\n\t...")
+    st.code("def forward(self, asr, F0_curve, N, s):\n    ...")
 
     """
     Now to benchmark:
@@ -220,8 +225,167 @@ f"""
 On average, the full pipeline took **{avg_full_time:.2f}s** to run on **{device.type}**, with 
 **{avg_partial_time:.2f}s** of that time being spent before the decoder. The steps after and including the decoder 
 are thus responsible for **~{(avg_full_time - avg_partial_time) / avg_full_time * 100:.0f}%** of the total inference 
-time.
+time. This is a dynamic script and your mileage may vary², but I have consistently seen this value above 80%.
 """
+
+with st.container(border=True):
+    """
+    -> If we can **stream the decoder alone**, we'll significantly reduce the major source of latency of this pipeline! 
+    End users will get a much shorter Time To First Sound (TTFS).
+    """
+
+st.caption(
+    "² the sequence size should also be a factor in these benchmarks because the performance of neural networks on "
+    "sequential data is usually _sublinear_ w.r.t. sequence length, especially on smaller inputs. We won't explore this "
+    "further in this example."
+)
+
+"""
+#### Streaming the decoder
+
+We're streaming the decoder, so let's specify what its inputs and outputs are. We took a glance above but let's look 
+again, using the convenient `intercept_calls` context manager. It acts as a passthrough by default and can store the 
+inputs and outputs of each call to a target function.
+"""
+
+st.code(
+    """
+from torchstream import intercept_calls
+
+with intercept_calls("kokoro.istftnet.Decoder.forward", store_in_out=True) as interceptor:
+    *_, audio = next(pipeline(text, voice="af_heart"))
+    (decoder, ref_asr, ref_f0_curve, ref_n, ref_s), _, ref_audio = interceptor.calls_in_out[0]
+"""
+)
+
+
+@st.cache_data()
+def in_out_inspect(text: str, device_type: str):
+    with intercept_calls("kokoro.istftnet.Decoder.forward", store_in_out=True) as interceptor:
+        *_, audio = next(pipeline(text, voice="af_heart"))
+        (decoder, ref_asr, ref_f0_curve, ref_n, ref_s), _, ref_audio = interceptor.calls_in_out[0]
+
+        st.code(
+            f"Pipeline input text: {text}\n\n"
+            "Decoder inputs:\n"
+            f"- asr: {tuple(ref_asr.shape)} {str(ref_asr.dtype)} {str(ref_asr.device)}\n"
+            f"- f0_curve: {tuple(ref_f0_curve.shape)} {str(ref_f0_curve.dtype)} {str(ref_f0_curve.device)}\n"
+            f"- n: {tuple(ref_n.shape)} {str(ref_n.dtype)} {str(ref_n.device)}\n"
+            f"- s: {tuple(ref_s.shape)} {str(ref_s.dtype)} {str(ref_s.device)}\n\n"
+            "Decoder output:\n"
+            f"- audio: {tuple(ref_audio.shape)} {str(ref_audio.dtype)} {str(ref_audio.device)}"
+        )
+
+    return decoder, ref_asr, ref_f0_curve, ref_n, ref_s, ref_audio
+
+
+"""
+Let's try a "Hello world!" input
+"""
+
+in_out_inspect("Hello world!", device.type)
+
+
+"""
+For the second input let's put the longer original text (and let's store the results for later use)
+"""
+
+decoder, ref_asr, ref_f0_curve, ref_n, ref_s, ref_audio = in_out_inspect(text, device.type)
+
+"""
+It looks like we have three sequential tensors: asr, f0_curve, n, and one constant tensor s. The sequential inputs 
+have their last dimension as sequence dimensions, and both f0_curve and n have twice the time resolution of asr. We 
+have audio as output. 
+
+It is common when streaming to have heterogeneous inputs like this: some sequential, some constant, with different 
+shapes and even different time resolutions. Torchstream handles this for you with the `SeqSpec` and `Sequence` 
+classes that allow you to treat jointly these combined types as a single sequence.
+"""
+
+with st.echo():
+    from functools import partial
+
+    from torchstream.sequence.sequence import SeqSpec
+
+    decoder_in_spec = SeqSpec(
+        # asr
+        (1, 512, -1, device),
+        # f0_curve (twice the time resolution of asr -> we put -2 to scale accordingly)
+        (1, -2, device),
+        # n (same as above)
+        (1, -2, device),
+        # s is a fixed input of size (1, 128), it does not fit as sequential data
+    )
+    # Audio is 1-dimensional, but is output with the batch & channel dimensions
+    decoder_out_spec = SeqSpec(1, 1, -1, device=device)
+
+    # Here we handle the constant input by creating a wrapper that always injects it
+    decoder_trsfm = partial(decoder.forward, s=ref_s)
+
+"""
+It's the first time we're dealing with multi-tensor data for streaming so let's take a quick peek at how 
+`SeqSpec` and `Sequence` make it work for us:
+"""
+st.code("""
+>>> decoder_input = decoder_in_spec.new_sequence_from_data(ref_asr, ref_f0_curve, ref_n)
+>>> decoder_input.size
+830
+>>> decoder_input[:10]
+Sequence of size 10 with SeqSpec(
+   Tensor #0: (1, 512, -1) cuda:0 torch.float32
+   Tensor #1: (1, -2) cuda:0 torch.float32
+   Tensor #2: (1, -2) cuda:0 torch.float32
+)
+>>> decoder_input[:3].data
+(tensor([[[ 0.4332,  0.4332,  0.4332],
+         [-0.0088, -0.0088, -0.0088],
+         [-0.0069, -0.0069, -0.0069],
+         ...,
+         [-0.0095, -0.0095, -0.0095],
+         [-0.0820, -0.0820, -0.0820],
+         [-0.0030, -0.0030, -0.0030]]]), 
+ tensor([[-0.0255,  0.1937,  0.2450,  0.1267,  0.1129,  0.0103]]),
+ tensor([[-9.6040, -9.5364, -9.3788, -9.3498, -9.2966, -9.2976]])
+)
+""")
+
+"""
+It takes care of slicing the individual arrays across the right dimension and with the right scale. It lets you write 
+code that is **entirely agnostic** of the input and output format, and it exposes convenience functions tailored 
+for streaming (`feed()`, `drop()`, `apply()`, ...) that heavily shorten the amount of code you need to write.
+
+Alright, let's get to streaming:
+"""
+
+st.code(
+    """
+from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
+
+sli_params = find_sliding_window_params(
+    decoder_trsfm,
+    decoder_in_spec,
+    decoder_out_spec,
+)[0]
+"""
+)
+
+st.exception(
+    RuntimeError(
+        "RuntimeError: Your transform outputs NaNs covering the entire output (in_size=300, out_size=180000). "
+        "This likely means that an operation in your transform broadcasts an input element to all output elements, "
+        "like a mean, batchnorm, etc... One solution might be to patch any such operation using torchstream's "
+        "intercept_calls context manager to be an identity function for the duration of the solver run, and "
+        "approximate it later for streaming."
+    )
+)
+
+"""
+Ouch. We've got at least one transform in our decoder that has an infinite receptive field. From this point onwards, 
+we know that we will be streaming **an approximation** of the original model. But rest assured that the approximation 
+can be very good.
+
+"""
+
 
 quit()
 
@@ -236,45 +400,8 @@ from torch.nn import functional as F
 from torchstream.patching.call_intercept import intercept_calls, make_exit_early
 from torchstream.sequence.sequence import SeqSpec
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
-from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
-
-logging.basicConfig(level=logging.INFO)
-
-# Change the tensor repr to show the shape and device, which saves a lot of time for debugging
-old_repr = torch.Tensor.__repr__
-torch.Tensor.__repr__ = lambda t: f"{tuple(t.shape)} {str(t.dtype).replace('torch.', '')} {str(t.device)} {old_repr(t)}"
-
-# uv pip install pip
-# .venv\Scripts\python.exe -m spacy download en_core_web_sm
-# spacy.load("en_core_web_sm")
-
-
-# Let's analyze the shapes of the decoder's forward pass inputs and outputs
-with intercept_calls("kokoro.istftnet.Decoder.forward", store_in_out=True) as interceptor:
-    *_, audio = next(pipeline(text, voice="af_heart"))
-    (decoder, ref_asr, ref_f0_curve, ref_n, ref_s), _, ref_audio = interceptor.calls_in_out[0]
-
-# We have three sequential tensors: asr, f0_curve, n, and one constant tensor s. We have audio as output.
-# Let's define this specification to help us with data manipulation:
-decoder_in_spec = SeqSpec(
-    # asr
-    (1, 512, -1, device),
-    # f0_curve (twice the time resolution of asr -> we put -2 to scale accordingly)
-    (1, -2, device),
-    # n (same as above)
-    (1, -2, device),
-    # s is a fixed input of size (1, 128), it does not fit as sequential data
-)
-# Audio is 1-dimensional, but is output with the batch & channel dimensions
-decoder_out_spec = SeqSpec(1, 1, -1, device=device)
-
-
-# TODO: demonstrate the need for sliding window params solving by showing wrong results without it
-
-
-# We'll wrap the forward pass to have a function that only takes sequential inputs, in the order above
-decoder_trsfm = partial(pipeline.model.decoder.forward, s=ref_s)
+from kokoro import KModel
 
 with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
     with intercept_calls("torch.cumsum", lambda x, dim: x):
