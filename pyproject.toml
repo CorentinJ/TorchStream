@@ -11,7 +11,6 @@ description = "A library for making PyTorch models streamable"
 keywords = ["torch", "pytorch", "streaming", "deep learning", "machine learning", "neural networks", "numpy", "optimization"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
@@ -56,7 +55,6 @@ demos = [
     "streamlit>=1.40.1",
     "torch>=1.11.0",
     "torchaudio>=2.5.1",
-    "webrtcvad>=2.0.10",
 ]
 dev = [
     "opentelemetry-sdk>=1.33.1",
@@ -76,7 +74,6 @@ explicit = true
 
 [tool.uv.dependency-groups]
 demos = { requires-python = ">=3.10" }
-
 
 [tool.ruff]
 line-length = 120
