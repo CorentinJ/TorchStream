@@ -27,11 +27,12 @@ full fledged models. Hence if you get through this example, you should be well e
 other models of your own.
 
 You can go through this demo either with CUDA or with CPU inference. These are very different performance profiles 
-and both are worth considering in a project. An internal model will usually be deployed on a server with GPU(s), where 
-**the point of streaming will be to reduce latency** by having a small and consistent Time To First Sound (TTFS), 
-i.e. the time at which a user connected to the server starts hearing the audio playback. For models deployed on the 
-user side, usually running on CPU, the goal is the same but **streaming can make the difference between a usable and 
-an unusable experience**, as CPU inference times are often much higher.
+and both are worth considering in a project. In either case, **the point of streaming is to reduce latency** by 
+having a small and consistent Time To First Sound (TTFS), i.e. the time after which a user starts hearing audio 
+playback when a request is made. An internal model will usually be deployed on a server with GPU(s), and streaming 
+will help shave a couple hundred milliseconds off the TTFS, leading to a more responsive experience. For models 
+deployed on the user side, usually running on CPU, the goal is the same but **streaming can make the difference 
+between a usable and an unusable experience**, as CPU inference times are often much higher.
 """
 
 device = st.radio("**Select device for inference:**", ("cuda", "cpu"))
@@ -96,7 +97,7 @@ it takes human readable text as input and produces human audible audio as output
 processing, and involves two different models internally: a text to phoneme model and a phoneme to audio model. 
 
 It's not at all trivial to figure out what we want to stream here. It's easier when you've worked on the models you 
-want to stream beforehand - but with TorchStream it's possible to stream models with **little prior knowledge of them**, 
+want to stream beforehand. However, with TorchStream it's possible to stream models with **little prior knowledge of them**, 
 even **without modifying the source code**!
 
 #### On to exploration!
@@ -130,7 +131,7 @@ st.code(dedent(inspect.getsource(KModel.forward_with_tokens)), language="python"
 Well, a lot. There seems to be an attention-based model involved (the `bert` line), and these often have an 
 **infinite receptive field** that renders them non-streamable. There is also an LSTM layer, which is a type of 
 **autoregressive** layer. Autoregressive layers are usually a green flag for streaming, but these are bidirectional 
-LSTMS so they need to see the full input sequence before producing any output.
+LSTMs so they need to see the full input sequence before producing any output.
 
 Succesfully streaming a complex transform really only goes two ways:
 - You can either stream it entirely from start to finish (the case in our last 3 examples)
@@ -222,25 +223,29 @@ partial_times = partial_pipeline_bench(device.type)
 
 avg_full_time = np.mean(full_times)
 avg_partial_time = np.mean(partial_times)
+decoder_time_prop = (avg_full_time - avg_partial_time) / avg_full_time
 
 f"""
 On average, the full pipeline took **{avg_full_time:.2f}s** to run on **{device.type}**, with 
 **{avg_partial_time:.2f}s** of that time being spent before the decoder. The steps after and including the decoder 
-are thus responsible for **~{(avg_full_time - avg_partial_time) / avg_full_time * 100:.0f}%** of the total inference 
-time. This is a dynamic script and your mileage may vary², but I have consistently seen this value above 80%.
+are thus responsible for **~{decoder_time_prop * 100:.0f}%** of the total inference time. 
+
+Depending on your device, you might get a very different figure here. On **CPUs and low end GPUs** I found the decoder 
+to be responsible for at least **80%** of the total inference time. In that case, if we can **stream the decoder 
+alone**, we'll significantly reduce the major source of latency of this pipeline! End users will get a much shorter 
+Time To First Sound (TTFS).
+
+On a **high end GPU** (e.g. RTX 4090), the decoder might only make up **20%** of the total inference time - which is 
+already very low: around 100ms end-to-end. Kokoro TTS is a lightweight model after all! In that case, streaming the 
+decoder would only lead to a small gain in latency. It won't make much of a difference to the user experience.
 """
 
 with st.container(border=True):
     """
-    -> If we can **stream the decoder alone**, we'll significantly reduce the major source of latency of this pipeline! 
-    End users will get a much shorter Time To First Sound (TTFS).
+    You won't know the gains you'll get from streaming unless you design rigorous **benchmarks**. A superficial 
+    performance analysis can be highly error inducing. Remember that results **do not translate from one device to 
+    another**. 
     """
-
-st.caption(
-    "² the sequence size should also be a factor in these benchmarks because the performance of neural networks on "
-    "sequential data is usually _sublinear_ w.r.t. sequence length, especially on smaller inputs. We won't explore this "
-    "further in this example."
-)
 
 """
 #### Finding the decoder's sliding window params
@@ -499,9 +504,41 @@ run_managed_thread(
 
 
 """
-There we are!
+There we are! These parameters are similar to the BigVGAN ones we found earlier, and that makes sense because both 
+models output audio from a low dimensional representation.
 
+We made two operations into no-ops for the solver to run: instance norm and cumsum. Now that we have the sliding 
+window parameters, we no longer need to make them no-ops, but before we get to implementing their streaming version 
+we can already try out streaming as is. Sometimes, you get away without implementing any approximation.
 """
+
+
+@st.cache_data()
+def naive_audio_streaming():
+    with st.echo():
+        from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
+        from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
+
+        sli_params = SlidingWindowParams(
+            kernel_size_in=28,
+            stride_in=1,
+            left_pad=14,
+            right_pad=14,
+            kernel_size_out=675,
+            stride_out=600,
+            left_out_trim=185,
+            right_out_trim=490,
+        )
+
+        decoder_input = decoder_in_spec.new_sequence_from_data(ref_asr, ref_f0_curve, ref_n)
+        stream = SlidingWindowStream(decoder_trsfm, sli_params, decoder_in_spec, decoder_out_spec)
+        audio = stream.forward_in_chunks(decoder_input, chunk_size=40).data[0].cpu().numpy().flatten()
+
+    return audio
+
+
+st.audio(naive_audio_streaming(), sample_rate=sample_rate)
+
 
 await_running_thread()
 
@@ -519,30 +556,6 @@ from torch.nn import functional as F
 
 from torchstream.patching.call_intercept import intercept_calls, make_exit_early
 from torchstream.sequence.sequence import SeqSpec
-from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
-from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
-
-# In subsequent runs we won't need to run the solver again, we can reuse the found parameters. We'll only need to
-# call the solver again if we change hyperparameters or the model's architecture.
-sli_params = SlidingWindowParams(
-    kernel_size_in=28,
-    stride_in=1,
-    left_pad=14,
-    right_pad=14,
-    kernel_size_out=675,
-    stride_out=600,
-    left_out_trim=185,
-    right_out_trim=490,
-)
-
-# At this point we can already get a decent streaming inference going. It won't yet be exactly the same as the
-# non-streaming inference because we are not handling the statefulness of the cumsum & instance norm layers, so that
-# will lead to noticeable artifacts at chunk boundaries.
-decoder_input = decoder_in_spec.new_sequence_from_data(ref_asr, ref_f0_curve, ref_n)
-stream = SlidingWindowStream(decoder_trsfm, sli_params, decoder_in_spec, decoder_out_spec)
-audio = stream.forward_in_chunks(decoder_input, chunk_size=40).data[0].cpu().numpy()
-sf.write("demo_audio_streamed_v2.wav", audio[0, 0], 24000)
-
 
 # Let's improve. There are several dozen calls to instance_norm in the model but only one early call to cumsum, so
 # we will start with that easier one.
