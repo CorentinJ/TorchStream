@@ -7,7 +7,9 @@ import numpy as np
 import streamlit as st
 from kokoro import KPipeline
 from kokoro.model import KModel
+from matplotlib import pyplot as plt
 
+from examples.utils.plots import plot_audio
 from examples.utils.streamlit_worker import await_running_thread, run_managed_thread
 from torchstream import intercept_calls
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
@@ -298,11 +300,12 @@ For the second input let's put the longer original text (and let's store the res
 """
 
 decoder, ref_asr, ref_f0_curve, ref_n, ref_s, ref_audio = in_out_inspect(text, device.type)
+ref_audio = ref_audio.cpu().numpy().flatten()
 
 """
-It looks like we have three sequential tensors: asr, f0_curve, n, and one constant tensor s. The sequential inputs 
-have their last dimension as sequence dimensions, and both f0_curve and n have twice the time resolution of asr. We 
-have audio as output. 
+It looks like we have three sequential tensors: `asr`, `f0_curve`, `n`, and one constant tensor `s`. The sequential 
+inputs have their last dimension as sequence dimensions, and both `f0_curve` and `n` have twice the time resolution 
+of `asr`. We have audio as output. 
 
 It is common when streaming to have heterogeneous inputs like this: some sequential, some constant, with different 
 shapes and even different time resolutions. Torchstream handles this for you with the `SeqSpec` and `Sequence` 
@@ -378,7 +381,7 @@ sli_params = find_sliding_window_params(
 
 st.exception(
     RuntimeError(
-        "RuntimeError: Your transform outputs NaNs covering the entire output (in_size=300, out_size=180000). "
+        "Your transform outputs NaNs covering the entire output (in_size=300, out_size=180000). "
         "This likely means that an operation in your transform broadcasts an input element to all output elements, "
         "like a mean, batchnorm, etc... One solution might be to patch any such operation using torchstream's "
         "intercept_calls context manager to be an identity function for the duration of the solver run, and "
@@ -425,7 +428,7 @@ with intercept_calls(
 )
 st.exception(
     RuntimeError(
-        "RuntimeError: Your transform outputs NaNs at the end of the output sequence (in_size=300, out_size=180000, "
+        "Your transform outputs NaNs at the end of the output sequence (in_size=300, out_size=180000, "
         "out_nan_range=(73015, 180000)). This likely means that you have an autoregressive operation in your model "
         "(e.g. LSTM, cumsum, ...) that keeps producing NaNs onces it has seen one. These operations are usually "
         "trivially streamable, but you'll need to prevent their NaN propagation for the duration of the solver run, "
@@ -435,10 +438,9 @@ st.exception(
 
 """
 Strike two! This time we have an autoregressive operation. These are not as much of bad news as the previous one! 
-Autoregressive operations are usually **trivially and exactly streamable** because they only depend on past inputs 
-(in the jargon we say they have a causal receptive field). They do propagate NaNs to all future outputs once they see 
-one, so we will have to patch them out of the solver run as well. We'll build a correct stateful version of that 
-operation later.
+Autoregressive operations are exactly streamable because their receptive field is causal: each output depends 
+only on past inputs. They do propagate NaNs to all future outputs once they see one, so we will have to patch 
+them out of the solver run as well. We'll build a correct stateful version of that operation later.
 
 The culprit here is a single line in this function:
 """
@@ -501,6 +503,8 @@ run_managed_thread(
     ),
     log_height=500,
 )
+# Await the thread here; the monkey patching needs to be undone properly.
+await_running_thread()
 
 
 """
@@ -514,8 +518,10 @@ we can already try out streaming as is. Sometimes, you get away without implemen
 
 
 @st.cache_data()
-def naive_audio_streaming():
+def get_naive_streaming_audio():
     with st.echo():
+        import math
+
         from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
         from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 
@@ -530,170 +536,220 @@ def naive_audio_streaming():
             right_out_trim=490,
         )
 
-        decoder_input = decoder_in_spec.new_sequence_from_data(ref_asr, ref_f0_curve, ref_n)
-        stream = SlidingWindowStream(decoder_trsfm, sli_params, decoder_in_spec, decoder_out_spec)
-        audio = stream.forward_in_chunks(decoder_input, chunk_size=40).data[0].cpu().numpy().flatten()
-
-    return audio
-
-
-st.audio(naive_audio_streaming(), sample_rate=sample_rate)
-
-
-await_running_thread()
-
-
-quit()
-
-# Consistent TTFS compared to sync
-
-import logging
-from functools import partial
-
-from kokoro import KModel
-from torch.nn import InstanceNorm1d
-from torch.nn import functional as F
-
-from torchstream.patching.call_intercept import intercept_calls, make_exit_early
-from torchstream.sequence.sequence import SeqSpec
-
-# Let's improve. There are several dozen calls to instance_norm in the model but only one early call to cumsum, so
-# we will start with that easier one.
-with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
-    with intercept_calls("torch.cumsum", store_in_out=True) as interceptor:
-        # Let's see what the cumsum input looks like in the non-streaming case
-        decoder_trsfm(*decoder_input.data)
-        (ref_cumsum_in,), _, ref_cumsum_out = interceptor.calls_in_out[0]
-        print("Non-streaming cumsum input shape:", tuple(ref_cumsum_in.shape))
-
-        # And what it gets when streaming like earlier
-        stream = SlidingWindowStream(decoder_trsfm, sli_params, decoder_in_spec, decoder_out_spec)
-        stream.forward_in_chunks(decoder_input, chunk_size=40)
-        stream_cumsum_ins = [args[0] for args, kwargs, out in interceptor.calls_in_out[1:]]
-        print("Streaming cumsum input shapes:\n\t" + "\n\t".join(map(str, [tuple(x.shape) for x in stream_cumsum_ins])))
-        print("Total cumsum input size seen in streaming:", str(sum(x.shape[1] for x in stream_cumsum_ins)))
-
-# We see that we get larger inputs in streaming, because we provide the past context at each step. This is definitely
-# something to take into consideration if we want to reproduce the same values as non-streaming inference.
-# You'll notice this context size is a constant 56. It's easy to demonstrate why.
-# Let's make the decoder's forward pass exit right before cumsum. Search for the sliding window parameters of this
-# operation to obtain the mapping to the cumsum input.
-dec_trsfm_cumsum_exit = make_exit_early(decoder_trsfm, target_to_exit_on="torch.cumsum", out_proc_fn=lambda x, dim: x)
-cumsum_in_spec = SeqSpec(1, -1, 9, device=device)
-with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
-    find_sliding_window_params(dec_trsfm_cumsum_exit, decoder_in_spec, cumsum_in_spec)
-
-# The solution are parameters with an output stride and kernel of 2. Cumsum just gets our input size scaled by 2.
-# Therefore, at each streaming step after the first, we get twice the context size of the full model
-print(f"Full model context size * 2 = {sli_params.streaming_context_size * 2}")
-
-# Let's verify our claims
-cumsum_in_buff = cumsum_in_spec.new_empty_sequence()
-for i, x in enumerate(stream_cumsum_ins):
-    if i > 0:
-        cumsum_in_buff.feed(x[:, sli_params.streaming_context_size * 2 :])
-    else:
-        cumsum_in_buff.feed(x)
-print(
-    "Max difference between streaming & sync cumsum input:",
-    torch.abs(cumsum_in_buff.data[0] - ref_cumsum_in).max().item(),
-)
-
-
-# And now we can trivially implement a stateful function specific to this model's cumsum
-def get_streaming_cumsum():
-    accum_value = 0.0
-
-    def streaming_cumsum(x, dim, original_fn):
-        nonlocal accum_value
-        out = original_fn(x, dim=dim) + accum_value
-
-        assert dim == 1
-        accum_value = out[:, -2 * sli_params.streaming_context_size - 1, :]
-
-        return out
-
-    return streaming_cumsum
-
-
-with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
-    with intercept_calls(
-        "torch.cumsum", handler_fn=get_streaming_cumsum(), store_in_out=True, pass_original_fn=True
-    ) as interceptor:
-        # NOTE: you can vary the chunk size (set at least 28) to see that the implementation still holds
-        chunk_size = 40
-        decoder_input.stream_apply(decoder_trsfm, sli_params, chunk_size=chunk_size, out_spec=decoder_out_spec)
-
-        # Compare our cumsum outputs in stream vs non-streaming
-        print("Max difference between streaming & sync cumsum output with the stateful cumsum:")
-        for i, (call_in, _, call_out) in enumerate(interceptor.calls_in_out):
-            end_idx = min((i + 1) * chunk_size * 2, ref_cumsum_out.shape[1])
-            start_idx = end_idx - call_out.shape[1]
-            abs_diff = ref_cumsum_out[:, start_idx:end_idx, :] - call_out
-            print(f"Output chunk #{i} at indices [{start_idx}:{end_idx}] max abs diff: {abs_diff.abs().max().item()}")
-
-
-# Now let's tackle instance norm. It's impossible to exactly stream a norm over the time dimension because it requires
-# looking at the entire sequence to compute the mean and variance. We can however get a decent approximation with
-# running estimates.
-# There are multiple calls to InstanceNorm in the model, each with different learned parameters. The calls at each
-# location need to maintain their own running stats.
-def get_streaming_instance_norm():
-    running_stats_per_instnorm = {}
-
-    def streaming_instance_norm(instnorm_obj: InstanceNorm1d, x):
-        # Instantiate fresh running stats for each unique InstanceNorm1d object
-        if instnorm_obj not in running_stats_per_instnorm:
-            running_stats_per_instnorm[instnorm_obj] = (
-                # Mean
-                torch.zeros(instnorm_obj.num_features, device=x.device, dtype=x.dtype),
-                # Variance (NOTE: both could be initialized from the means & vars of a couple of inputs to be
-                # more accurate)
-                torch.ones(instnorm_obj.num_features, device=x.device, dtype=x.dtype),
-            )
-            # Use momentum=1.0 for the first call to just set the running stats to the stats of the first chunk
-            momentum = 1.0
-        else:
-            momentum = max(instnorm_obj.momentum if instnorm_obj.momentum is not None else 0.0, 0.1)
-
-        running_mean, running_var = running_stats_per_instnorm[instnorm_obj]
-
-        # This is a lazy implementation: we do a first pass of instance_norm just to compute the running mean/var
-        # (in place) and we discard the output
-        # This implementation has quite some flaws: it uses the unbiased variance whereas the non streaming version
-        # uses the biased one, and it abruptly shifts the running stats each chunk instead of smoothly updating them.
-        # But this is totally sufficient for a heuristic
-        F.instance_norm(
-            x,
-            running_mean,
-            running_var,
-            None,
-            None,
-            use_input_stats=True,
-            momentum=momentum,
-            eps=instnorm_obj.eps,
+        decoder_input = decoder_in_spec.new_sequence_from_data(
+            ref_asr,
+            ref_f0_curve,
+            ref_n,
+        )
+        stream = SlidingWindowStream(
+            decoder_trsfm,
+            sli_params,
+            decoder_in_spec,
+            decoder_out_spec,
         )
 
-        # Now we actually do the normalization
-        return F.instance_norm(
-            x,
-            running_mean,
-            running_var,
-            instnorm_obj.weight,
-            instnorm_obj.bias,
-            use_input_stats=False,
-            eps=instnorm_obj.eps,
+        # Let's do 20 steps of streaming, that's enough to hear boundary artifacts
+        # if there are any
+        n_steps = 20
+        chunk_size = int(math.ceil(decoder_input.size / n_steps))
+        audio_chunks = list(stream.forward_in_chunks_iter(decoder_input, chunk_size=chunk_size))
+        chunk_boundaries_s = np.cumsum([chunk.size for chunk in audio_chunks]) / sample_rate
+        audio = np.concatenate([chunk.data[0].cpu().numpy().flatten() for chunk in audio_chunks])
+
+    return audio, chunk_boundaries_s
+
+
+naive_streaming_audio, chunk_boundaries_s = get_naive_streaming_audio()
+
+
+@st.fragment()
+def audio_comparison():
+    with st.container(border=True):
+        total_seconds = len(ref_audio) / sample_rate
+        min_slice_seconds = 0.1
+        start_sec, end_sec = st.slider(
+            "Select the audio segment",
+            0.0,
+            total_seconds,
+            (0.0, 5.0),
+            step=0.1,
+            format="%.1fs",
         )
+        if end_sec - start_sec < min_slice_seconds:
+            end_sec = min(total_seconds, start_sec + min_slice_seconds)
+            if end_sec - start_sec < min_slice_seconds:
+                start_sec = max(0.0, end_sec - min_slice_seconds)
+        start_sample = int(start_sec * sample_rate)
+        end_sample = max(start_sample + int(min_slice_seconds * sample_rate), int(end_sec * sample_rate))
 
-    return streaming_instance_norm
+        ref_slice = ref_audio[start_sample:end_sample]
+        naive_slice = naive_streaming_audio[start_sample:end_sample]
+
+        fig, axs = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+        plt.subplots_adjust(hspace=0.4)
+        plot_audio(axs[0], ref_slice, sample_rate, tick_label_offset_s=start_sec)
+        plot_audio(axs[1], naive_slice, sample_rate, tick_label_offset_s=start_sec)
+
+        st.pyplot(fig)
+        st.audio(naive_slice, sample_rate=sample_rate)
+        st.caption("Streaming the audio output with a completely stateless decoder")
 
 
-# Let's listen to see how we've improved
-with intercept_calls("torch.cumsum", handler_fn=get_streaming_cumsum(), pass_original_fn=True):
-    with intercept_calls(
-        # NOTE: different target than before because we could not identify the calling instance with F.instance_norm()
-        "torch.nn.modules.instancenorm.InstanceNorm1d.forward",
-        get_streaming_instance_norm(),
-    ):
-        audio = decoder_input.stream_apply(decoder_trsfm, sli_params, chunk_size=40, out_spec=decoder_out_spec)
-        sf.write("demo_audio_streamed_v3.wav", audio.data[0][0, 0].cpu().numpy(), 24000)
+audio_comparison()
+st.write(chunk_boundaries_s)
+
+
+# quit()
+
+# # Consistent TTFS compared to sync
+
+# import logging
+# from functools import partial
+
+# from kokoro import KModel
+# from torch.nn import InstanceNorm1d
+# from torch.nn import functional as F
+
+# from torchstream.patching.call_intercept import intercept_calls, make_exit_early
+# from torchstream.sequence.sequence import SeqSpec
+
+# # Let's improve. There are several dozen calls to instance_norm in the model but only one early call to cumsum, so
+# # we will start with that easier one.
+# with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
+#     with intercept_calls("torch.cumsum", store_in_out=True) as interceptor:
+#         # Let's see what the cumsum input looks like in the non-streaming case
+#         decoder_trsfm(*decoder_input.data)
+#         (ref_cumsum_in,), _, ref_cumsum_out = interceptor.calls_in_out[0]
+#         print("Non-streaming cumsum input shape:", tuple(ref_cumsum_in.shape))
+
+#         # And what it gets when streaming like earlier
+#         stream = SlidingWindowStream(decoder_trsfm, sli_params, decoder_in_spec, decoder_out_spec)
+#         stream.forward_in_chunks(decoder_input, chunk_size=40)
+#         stream_cumsum_ins = [args[0] for args, kwargs, out in interceptor.calls_in_out[1:]]
+#         print("Streaming cumsum input shapes:\n\t" + "\n\t".join(map(str, [tuple(x.shape) for x in stream_cumsum_ins])))
+#         print("Total cumsum input size seen in streaming:", str(sum(x.shape[1] for x in stream_cumsum_ins)))
+
+# # We see that we get larger inputs in streaming, because we provide the past context at each step. This is definitely
+# # something to take into consideration if we want to reproduce the same values as non-streaming inference.
+# # You'll notice this context size is a constant 56. It's easy to demonstrate why.
+# # Let's make the decoder's forward pass exit right before cumsum. Search for the sliding window parameters of this
+# # operation to obtain the mapping to the cumsum input.
+# dec_trsfm_cumsum_exit = make_exit_early(decoder_trsfm, target_to_exit_on="torch.cumsum", out_proc_fn=lambda x, dim: x)
+# cumsum_in_spec = SeqSpec(1, -1, 9, device=device)
+# with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
+#     find_sliding_window_params(dec_trsfm_cumsum_exit, decoder_in_spec, cumsum_in_spec)
+
+# # The solution are parameters with an output stride and kernel of 2. Cumsum just gets our input size scaled by 2.
+# # Therefore, at each streaming step after the first, we get twice the context size of the full model
+# print(f"Full model context size * 2 = {sli_params.streaming_context_size * 2}")
+
+# # Let's verify our claims
+# cumsum_in_buff = cumsum_in_spec.new_empty_sequence()
+# for i, x in enumerate(stream_cumsum_ins):
+#     if i > 0:
+#         cumsum_in_buff.feed(x[:, sli_params.streaming_context_size * 2 :])
+#     else:
+#         cumsum_in_buff.feed(x)
+# print(
+#     "Max difference between streaming & sync cumsum input:",
+#     torch.abs(cumsum_in_buff.data[0] - ref_cumsum_in).max().item(),
+# )
+
+
+# # And now we can trivially implement a stateful function specific to this model's cumsum
+# def get_streaming_cumsum():
+#     accum_value = 0.0
+
+#     def streaming_cumsum(x, dim, original_fn):
+#         nonlocal accum_value
+#         out = original_fn(x, dim=dim) + accum_value
+
+#         assert dim == 1
+#         accum_value = out[:, -2 * sli_params.streaming_context_size - 1, :]
+
+#         return out
+
+#     return streaming_cumsum
+
+
+# with intercept_calls("torch.nn.functional.instance_norm", lambda x, *args: x):
+#     with intercept_calls(
+#         "torch.cumsum", handler_fn=get_streaming_cumsum(), store_in_out=True, pass_original_fn=True
+#     ) as interceptor:
+#         # NOTE: you can vary the chunk size (set at least 28) to see that the implementation still holds
+#         chunk_size = 40
+#         decoder_input.stream_apply(decoder_trsfm, sli_params, chunk_size=chunk_size, out_spec=decoder_out_spec)
+
+#         # Compare our cumsum outputs in stream vs non-streaming
+#         print("Max difference between streaming & sync cumsum output with the stateful cumsum:")
+#         for i, (call_in, _, call_out) in enumerate(interceptor.calls_in_out):
+#             end_idx = min((i + 1) * chunk_size * 2, ref_cumsum_out.shape[1])
+#             start_idx = end_idx - call_out.shape[1]
+#             abs_diff = ref_cumsum_out[:, start_idx:end_idx, :] - call_out
+#             print(f"Output chunk #{i} at indices [{start_idx}:{end_idx}] max abs diff: {abs_diff.abs().max().item()}")
+
+
+# # Now let's tackle instance norm. It's impossible to exactly stream a norm over the time dimension because it requires
+# # looking at the entire sequence to compute the mean and variance. We can however get a decent approximation with
+# # running estimates.
+# # There are multiple calls to InstanceNorm in the model, each with different learned parameters. The calls at each
+# # location need to maintain their own running stats.
+# def get_streaming_instance_norm():
+#     running_stats_per_instnorm = {}
+
+#     def streaming_instance_norm(instnorm_obj: InstanceNorm1d, x):
+#         # Instantiate fresh running stats for each unique InstanceNorm1d object
+#         if instnorm_obj not in running_stats_per_instnorm:
+#             running_stats_per_instnorm[instnorm_obj] = (
+#                 # Mean
+#                 torch.zeros(instnorm_obj.num_features, device=x.device, dtype=x.dtype),
+#                 # Variance (NOTE: both could be initialized from the means & vars of a couple of inputs to be
+#                 # more accurate)
+#                 torch.ones(instnorm_obj.num_features, device=x.device, dtype=x.dtype),
+#             )
+#             # Use momentum=1.0 for the first call to just set the running stats to the stats of the first chunk
+#             momentum = 1.0
+#         else:
+#             momentum = max(instnorm_obj.momentum if instnorm_obj.momentum is not None else 0.0, 0.1)
+
+#         running_mean, running_var = running_stats_per_instnorm[instnorm_obj]
+
+#         # This is a lazy implementation: we do a first pass of instance_norm just to compute the running mean/var
+#         # (in place) and we discard the output
+#         # This implementation has quite some flaws: it uses the unbiased variance whereas the non streaming version
+#         # uses the biased one, and it abruptly shifts the running stats each chunk instead of smoothly updating them.
+#         # But this is totally sufficient for a heuristic
+#         F.instance_norm(
+#             x,
+#             running_mean,
+#             running_var,
+#             None,
+#             None,
+#             use_input_stats=True,
+#             momentum=momentum,
+#             eps=instnorm_obj.eps,
+#         )
+
+#         # Now we actually do the normalization
+#         return F.instance_norm(
+#             x,
+#             running_mean,
+#             running_var,
+#             instnorm_obj.weight,
+#             instnorm_obj.bias,
+#             use_input_stats=False,
+#             eps=instnorm_obj.eps,
+#         )
+
+#     return streaming_instance_norm
+
+
+# # Let's listen to see how we've improved
+# with intercept_calls("torch.cumsum", handler_fn=get_streaming_cumsum(), pass_original_fn=True):
+#     with intercept_calls(
+#         # NOTE: different target than before because we could not identify the calling instance with F.instance_norm()
+#         "torch.nn.modules.instancenorm.InstanceNorm1d.forward",
+#         get_streaming_instance_norm(),
+#     ):
+#         audio = decoder_input.stream_apply(decoder_trsfm, sli_params, chunk_size=40, out_spec=decoder_out_spec)
+#         sf.write("demo_audio_streamed_v3.wav", audio.data[0][0, 0].cpu().numpy(), 24000)
