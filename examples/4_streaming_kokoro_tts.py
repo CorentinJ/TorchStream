@@ -7,9 +7,7 @@ import numpy as np
 import streamlit as st
 from kokoro import KPipeline
 from kokoro.model import KModel
-from matplotlib import pyplot as plt
 
-from examples.utils.plots import plot_audio
 from examples.utils.streamlit_worker import await_running_thread, run_managed_thread
 from torchstream import intercept_calls
 from torchstream.sliding_window.sliding_window_params_solver import find_sliding_window_params
@@ -548,9 +546,9 @@ def get_naive_streaming_audio():
             decoder_out_spec,
         )
 
-        # Let's do 20 steps of streaming, that's enough to hear boundary artifacts
+        # Let's do 10 steps of streaming, that's enough to hear boundary artifacts
         # if there are any
-        n_steps = 20
+        n_steps = 10
         chunk_size = int(math.ceil(decoder_input.size / n_steps))
         audio_chunks = list(stream.forward_in_chunks_iter(decoder_input, chunk_size=chunk_size))
         chunk_boundaries_s = np.cumsum([chunk.size for chunk in audio_chunks]) / sample_rate
@@ -560,44 +558,17 @@ def get_naive_streaming_audio():
 
 
 naive_streaming_audio, chunk_boundaries_s = get_naive_streaming_audio()
+"""
+The output:
+"""
+st.audio(naive_streaming_audio, sample_rate=sample_rate)
+st.caption("Streaming the audio output with a completely stateless decoder")
 
-
-@st.fragment()
-def audio_comparison():
-    with st.container(border=True):
-        total_seconds = len(ref_audio) / sample_rate
-        min_slice_seconds = 0.1
-        start_sec, end_sec = st.slider(
-            "Select the audio segment",
-            0.0,
-            total_seconds,
-            (0.0, 5.0),
-            step=0.1,
-            format="%.1fs",
-        )
-        if end_sec - start_sec < min_slice_seconds:
-            end_sec = min(total_seconds, start_sec + min_slice_seconds)
-            if end_sec - start_sec < min_slice_seconds:
-                start_sec = max(0.0, end_sec - min_slice_seconds)
-        start_sample = int(start_sec * sample_rate)
-        end_sample = max(start_sample + int(min_slice_seconds * sample_rate), int(end_sec * sample_rate))
-
-        ref_slice = ref_audio[start_sample:end_sample]
-        naive_slice = naive_streaming_audio[start_sample:end_sample]
-
-        fig, axs = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
-        plt.subplots_adjust(hspace=0.4)
-        plot_audio(axs[0], ref_slice, sample_rate, tick_label_offset_s=start_sec)
-        plot_audio(axs[1], naive_slice, sample_rate, tick_label_offset_s=start_sec)
-
-        st.pyplot(fig)
-        st.audio(naive_slice, sample_rate=sample_rate)
-        st.caption("Streaming the audio output with a completely stateless decoder")
-
-
-audio_comparison()
-st.write(chunk_boundaries_s)
-
+"""
+The output is decent, the streaming is working. But we can definitely hear **boundary artifacts**. They'll appear 
+at some of the chunk boundaries. When you hear them, you'll see that they are at one of these timestamps:
+"""
+st.code(">>> chunk_boundaries_s\n" + str([round(float(t), 1) for t in chunk_boundaries_s]), language="python")
 
 # quit()
 
@@ -753,3 +724,43 @@ st.write(chunk_boundaries_s)
 #     ):
 #         audio = decoder_input.stream_apply(decoder_trsfm, sli_params, chunk_size=40, out_spec=decoder_out_spec)
 #         sf.write("demo_audio_streamed_v3.wav", audio.data[0][0, 0].cpu().numpy(), 24000)
+
+# @st.fragment()
+# def audio_comparison():
+#     with st.container(border=True):
+#         total_seconds = len(ref_audio) / sample_rate
+#         min_slice_seconds = 0.1
+#         start_sec, end_sec = st.slider(
+#             "Select the audio segment",
+#             0.0,
+#             total_seconds,
+#             (0.0, 5.0),
+#             step=0.1,
+#             format="%.1fs",
+#         )
+#         if end_sec - start_sec < min_slice_seconds:
+#             end_sec = min(total_seconds, start_sec + min_slice_seconds)
+#             if end_sec - start_sec < min_slice_seconds:
+#                 start_sec = max(0.0, end_sec - min_slice_seconds)
+#         start_sample = int(start_sec * sample_rate)
+#         end_sample = max(start_sample + int(min_slice_seconds * sample_rate), int(end_sec * sample_rate))
+
+#         ref_slice = ref_audio[start_sample:end_sample]
+#         naive_slice = naive_streaming_audio[start_sample:end_sample]
+
+#         fig, axs = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+#         plt.subplots_adjust(hspace=0.4)
+#         to_spec = torchaudio.transforms.Spectrogram(n_fft=1024, win_length=128, hop_length=32)
+#         spec_db = 10 * np.log10(to_spec(torch.tensor(ref_slice)) + 1e-10)
+#         plot_spectrogram(axs[0], spec_db, is_log=True, vmin=spec_db.max() - 40, vmax=spec_db.max())
+#         plot_spectrogram(
+#             axs[1],
+#             10 * np.log10(to_spec(torch.tensor(naive_slice)) + 1e-10),
+#             is_log=True,
+#             vmin=spec_db.max() - 40,
+#             vmax=spec_db.max(),
+#         )
+
+#         st.pyplot(fig)
+#         st.audio(naive_slice, sample_rate=sample_rate)
+#         st.caption("Streaming the audio output with a completely stateless decoder")

@@ -5,7 +5,7 @@ import streamlit as st
 from matplotlib import pyplot as plt
 
 from examples.utils.animated_sliding_window_stream import AnimatedSlidingWindowStream
-from examples.utils.plots import plot_audio, plot_melspec
+from examples.utils.plots import plot_audio, plot_spectrogram
 from examples.utils.streamlit_worker import await_running_thread, run_managed_thread
 from torchstream.sequence.sequence import SeqSpec
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
@@ -63,7 +63,7 @@ st.write("##### Input audio & spectrogram")
 st.audio(wave, sample_rate=sample_rate)
 st.caption("Source: https://global.oup.com/us/companion.websites/9780195300505/audio/audio_samples/, sample 32")
 
-plot_melspec(ax, mel[0], is_log=True, vmin=None, vmax=None)
+plot_spectrogram(ax, mel[0], is_log=True, vmin=None, vmax=None)
 st.pyplot(fig)
 
 """
@@ -240,7 +240,7 @@ with st.container(border=True):
         fig.suptitle(f"Streaming BigVGAN - Step {step_idx + 1}/{len(stream.step_history)}", fontsize=18)
 
         # Input plot
-        plot_melspec(axs[0], mel[0], is_log=True, vmin=None, vmax=None)
+        plot_spectrogram(axs[0], mel[0], is_log=True, vmin=None, vmax=None)
 
         # Sync output plot
         plot_audio(axs[2], wav_out, sample_rate)

@@ -40,7 +40,7 @@ def plot_audio(
         ax.set_xticklabels([f"{ts + tick_label_offset_s:.1f}" for ts in ticks_seconds])
 
 
-def plot_melspec(
+def plot_spectrogram(
     ax,
     spec,
     aspect="auto",

@@ -9,7 +9,7 @@ import torchaudio
 from examples.utils.animated_sliding_window_stream import AnimatedSlidingWindowStream
 from examples.utils.audio import load_audio
 from examples.utils.download import download_file_cached
-from examples.utils.plots import plot_audio, plot_melspec
+from examples.utils.plots import plot_audio, plot_spectrogram
 from torchstream import SeqSpec, Sequence, SlidingWindowParams
 from torchstream.sliding_window.sliding_window_params import get_streaming_context_size, in_out_size_rel_repr
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
@@ -71,7 +71,7 @@ st.code(
 
 
 fig, ax = plt.subplots(figsize=(10, 2.5))
-plot_melspec(ax, melspectrogram)
+plot_spectrogram(ax, melspectrogram)
 st.pyplot(fig)
 
 """
@@ -125,10 +125,10 @@ with st.echo():
 fig, axs = plt.subplots(figsize=(10, 5.5), nrows=2, sharex=True)
 fig.subplots_adjust(hspace=0.5)
 axs[0].set_title("Naively Streamed Mel-Spectrogram")
-plot_melspec(axs[0], naive_spec)
+plot_spectrogram(axs[0], naive_spec)
 axs[1].set_title("Original Mel-Spectrogram")
 original_spec = get_spec_trsfm_and_sli_params(wave)
-plot_melspec(axs[1], original_spec)
+plot_spectrogram(axs[1], original_spec)
 axs[0].set_xlim(0, max(naive_spec.shape[1], original_spec.shape[1]))
 st.pyplot(fig)
 """
@@ -351,9 +351,9 @@ with st.container(border=True):
         plot_audio(axs[0], wave_slice.numpy(), sample_rate, tick_label_offset_s=start_sec)
 
         # Sync spectrogram plot
-        plot_melspec(axs[2], trsfm(wave_slice))
+        plot_spectrogram(axs[2], trsfm(wave_slice))
 
-        stream.plot_step(step_idx, *axs, out_plot_fn=plot_melspec)
+        stream.plot_step(step_idx, *axs, out_plot_fn=plot_spectrogram)
         plot_placeholder.pyplot(fig)
 
     stream_step_fragment()
