@@ -1,11 +1,26 @@
 [project]
 name = "torchstream"
 version = "1.0.0"
-description = "A library for making PyTorch models streamable"
 authors = [
   { name = "Corentin Jemine", email = "corentin.jemine@gmail.com" }
 ]
+maintainers = [
+  { name = "Corentin Jemine", email = "corentin.jemine@gmail.com" }
+]
+description = "A library for making PyTorch models streamable"
+keywords = ["torch", "pytorch", "streaming", "deep learning", "machine learning", "neural networks", "numpy", "optimization"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries",
+    "Framework :: OpenTelemetry :: Instrumentations",
+]
 readme = "README.md"
+license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.8"
 dependencies = [
