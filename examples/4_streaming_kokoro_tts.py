@@ -23,20 +23,22 @@ st.subheader("4. Streaming Kokoro TTS")
 
 """
 In this example we will stream a full TTS pipeline from a static text input to a streaming audio output. We will be 
-using the [open-source Kokoro-TTS model](https://huggingface.co/hexgrad/Kokoro-82M) by Hexgrad. Watch out, this 
-is a **long read**.
+using the [open-source Kokoro-TTS model](https://huggingface.co/hexgrad/Kokoro-82M) by Hexgrad. Even though what 
+we'll be doing is conceptually simple, this is a long read.
 
 The challenges encountered in streaming this model are typical of what you might encounter in streaming other 
 full fledged models. Hence if you get through this example, you should be well equipped to tackle streaming
 other models of your own.
 
 You can go through this demo either with CUDA or with CPU inference. These are very different performance profiles 
-and both are worth considering in a project. In either case, **the point of streaming is to reduce latency** by 
-having a small and consistent Time To First Sound (TTFS), i.e. the time after which a user starts hearing audio 
-playback when a request is made. An internal model will usually be deployed on a server with GPU(s), and streaming 
-will help shave a couple hundred milliseconds off the TTFS, leading to a more responsive experience. For models 
-deployed on the user side, usually running on CPU, the goal is the same but **streaming can make the difference 
-between a usable and an unusable experience**, as CPU inference times are often much higher.
+and both are worth considering in a project. In either case, **the point of streaming is to reduce latency**. For 
+a TTS model, it means having a small and consistent Time To First Sound (TTFS), i.e. the time after which a user 
+starts hearing audio playback when a request is made. 
+
+An internal model will usually be deployed on a server with 
+GPU(s), and streaming will help shave a couple hundred milliseconds off the TTFS, leading to a more responsive 
+experience. For models deployed on the user side, usually running on CPU, the goal is the same but **streaming can 
+make the difference between a usable and an unusable experience**, as CPU inference times are often much higher.
 """
 
 device = st.radio("**Select device for inference:**", ("cuda", "cpu"))
@@ -439,7 +441,7 @@ st.exception(
 )
 
 """
-Strike two! This time we have an autoregressive operation. These are not as much of bad news as the previous one! 
+Strike two! This time we have an **autoregressive operation**. These are not as much of bad news as the previous one! 
 Autoregressive operations are exactly streamable because their receptive field is causal: each output depends 
 only on past inputs. They do propagate NaNs to all future outputs once they see one, so we will have to patch 
 them out of the solver run as well. We'll build a correct stateful version of that operation later.
@@ -706,12 +708,13 @@ with st.echo():
                 pass_original_fn=True if apply_cumsum_patch else False,
             ) as interceptor:
                 chunk_size = 100
-                decoder_input.stream_apply(
+                stream = SlidingWindowStream(
                     decoder_trsfm,
                     sli_params,
-                    chunk_size=chunk_size,
-                    out_spec=decoder_out_spec,
+                    decoder_in_spec,
+                    decoder_out_spec,
                 )
+                stream.forward_in_chunks(decoder_input, chunk_size=chunk_size)
 
                 diffs = []
                 for i, (call_in, _, call_out) in enumerate(interceptor.calls_in_out):
@@ -748,113 +751,138 @@ _verify_cumsum_correctness(True)
 We're down to negligible differences due to numerical instability. One down, one to go!
 
 ### Streaming InstanceNorm1d
+
+Now let's tackle instance norm. It's **impossible to exactly stream** a norm over the time dimension because it 
+requires looking at the **entire sequence** to compute the mean and variance. We can however get a decent approximation 
+with running estimates.
+
+There are **multiple calls** to InstanceNorm in the model, each with **different learned parameters**. The calls at each
+location need to maintain their own running stats. Because each call comes with its own InstanceNorm1d object, 
+we can use them to identify which running stats to use.
+
+Here too we should be accounting for redundant inputs, but because we're computing a running approximation of 
+some statistics over the whole input, we can let it slide. Feel free to skip over the details of this implementation, 
+we've already covered what's important.
 """
 
-quit()
+with st.echo():
+    from torch.nn import functional as F
+    from torch.nn.modules.instancenorm import InstanceNorm1d
 
+    def get_streaming_instance_norm():
+        running_stats_per_instnorm = {}
 
-# Now let's tackle instance norm. It's impossible to exactly stream a norm over the time dimension because it requires
-# looking at the entire sequence to compute the mean and variance. We can however get a decent approximation with
-# running estimates.
-# There are multiple calls to InstanceNorm in the model, each with different learned parameters. The calls at each
-# location need to maintain their own running stats.
-def get_streaming_instance_norm():
-    running_stats_per_instnorm = {}
+        def streaming_instance_norm(instnorm_obj: InstanceNorm1d, x):
+            # Instantiate fresh running stats for each unique InstanceNorm1d object
+            if instnorm_obj not in running_stats_per_instnorm:
+                running_stats_per_instnorm[instnorm_obj] = (
+                    # Mean
+                    torch.zeros(
+                        instnorm_obj.num_features,
+                        device=x.device,
+                        dtype=x.dtype,
+                    ),
+                    # Variance
+                    torch.ones(
+                        instnorm_obj.num_features,
+                        device=x.device,
+                        dtype=x.dtype,
+                    ),
+                )
+                # Use momentum=1.0 for the first call to just set the
+                # running stats to the stats of the first chunk
+                momentum = 1.0
+            else:
+                momentum = max(
+                    instnorm_obj.momentum if instnorm_obj.momentum is not None else 0.0,
+                    0.1,
+                )
 
-    def streaming_instance_norm(instnorm_obj: InstanceNorm1d, x):
-        # Instantiate fresh running stats for each unique InstanceNorm1d object
-        if instnorm_obj not in running_stats_per_instnorm:
-            running_stats_per_instnorm[instnorm_obj] = (
-                # Mean
-                torch.zeros(instnorm_obj.num_features, device=x.device, dtype=x.dtype),
-                # Variance (NOTE: both could be initialized from the means & vars of a couple of inputs to be
-                # more accurate)
-                torch.ones(instnorm_obj.num_features, device=x.device, dtype=x.dtype),
+            running_mean, running_var = running_stats_per_instnorm[instnorm_obj]
+
+            # This is a lazy implementation exploiting instance_norm()'s behaviour.
+            # With use_input_stats=True, it will update the mean and var in place
+            # based on the input x. Then we discard the output.
+            F.instance_norm(
+                x,
+                running_mean,
+                running_var,
+                use_input_stats=True,
+                momentum=momentum,
             )
-            # Use momentum=1.0 for the first call to just set the running stats to the stats of the first chunk
-            momentum = 1.0
-        else:
-            momentum = max(instnorm_obj.momentum if instnorm_obj.momentum is not None else 0.0, 0.1)
 
-        running_mean, running_var = running_stats_per_instnorm[instnorm_obj]
+            # On the second call we do the normalization with the updated mean
+            # and variance
+            # This implementation has quite some flaws: it uses the unbiased
+            # variance whereas the non streaming version uses the biased one, and
+            # it abruptly shifts the running stats each chunk instead of smoothly
+            # updating them. But this is totally sufficient for a heuristic
+            return F.instance_norm(
+                x,
+                running_mean,
+                running_var,
+                instnorm_obj.weight,
+                instnorm_obj.bias,
+                use_input_stats=False,
+            )
 
-        # This is a lazy implementation: we do a first pass of instance_norm just to compute the running mean/var
-        # (in place) and we discard the output
-        # This implementation has quite some flaws: it uses the unbiased variance whereas the non streaming version
-        # uses the biased one, and it abruptly shifts the running stats each chunk instead of smoothly updating them.
-        # But this is totally sufficient for a heuristic
-        F.instance_norm(
-            x,
-            running_mean,
-            running_var,
-            None,
-            None,
-            use_input_stats=True,
-            momentum=momentum,
-            eps=instnorm_obj.eps,
-        )
-
-        # Now we actually do the normalization
-        return F.instance_norm(
-            x,
-            running_mean,
-            running_var,
-            instnorm_obj.weight,
-            instnorm_obj.bias,
-            use_input_stats=False,
-            eps=instnorm_obj.eps,
-        )
-
-    return streaming_instance_norm
+        return streaming_instance_norm
 
 
 # Let's listen to see how we've improved
-with intercept_calls("torch.cumsum", handler_fn=get_streaming_cumsum(), pass_original_fn=True):
-    with intercept_calls(
-        # NOTE: different target than before because we could not identify the calling instance with F.instance_norm()
-        "torch.nn.modules.instancenorm.InstanceNorm1d.forward",
-        get_streaming_instance_norm(),
-    ):
-        audio = decoder_input.stream_apply(decoder_trsfm, sli_params, chunk_size=40, out_spec=decoder_out_spec)
-        sf.write("demo_audio_streamed_v3.wav", audio.data[0][0, 0].cpu().numpy(), 24000)
+# @st.cache_data()
+def get_streamed_audio():
+    with st.echo():
+        with intercept_calls(
+            "torch.cumsum",
+            handler_fn=get_streaming_cumsum(),
+            pass_original_fn=True,
+        ):
+            with intercept_calls(
+                # NOTE: different target so we can identify the
+                # calls via the InstanceNorm1d objects
+                "torch.nn.modules.instancenorm.InstanceNorm1d.forward",
+                get_streaming_instance_norm(),
+            ):
+                stream = SlidingWindowStream(
+                    decoder_trsfm,
+                    sli_params,
+                    decoder_in_spec,
+                    decoder_out_spec,
+                )
+                streamed_audio = stream.forward_in_chunks(
+                    decoder_input,
+                    # Stream with an even lower chunk size to highlight any
+                    # chunk boundary artifacts
+                    chunk_size=40,
+                )
+
+    return streamed_audio.data[0].cpu().numpy().flatten()
 
 
-@st.fragment()
-def audio_comparison():
-    with st.container(border=True):
-        total_seconds = len(ref_audio) / sample_rate
-        min_slice_seconds = 0.1
-        start_sec, end_sec = st.slider(
-            "Select the audio segment",
-            0.0,
-            total_seconds,
-            (0.0, 5.0),
-            step=0.1,
-            format="%.1fs",
-        )
-        if end_sec - start_sec < min_slice_seconds:
-            end_sec = min(total_seconds, start_sec + min_slice_seconds)
-            if end_sec - start_sec < min_slice_seconds:
-                start_sec = max(0.0, end_sec - min_slice_seconds)
-        start_sample = int(start_sec * sample_rate)
-        end_sample = max(start_sample + int(min_slice_seconds * sample_rate), int(end_sec * sample_rate))
+"""
+Now to stream it:
+"""
+streamed_audio = get_streamed_audio()
 
-        ref_slice = ref_audio[start_sample:end_sample]
-        naive_slice = naive_streaming_audio[start_sample:end_sample]
 
-        fig, axs = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
-        plt.subplots_adjust(hspace=0.4)
-        to_spec = torchaudio.transforms.Spectrogram(n_fft=1024, win_length=128, hop_length=32)
-        spec_db = 10 * np.log10(to_spec(torch.tensor(ref_slice)) + 1e-10)
-        plot_spectrogram(axs[0], spec_db, is_log=True, vmin=spec_db.max() - 40, vmax=spec_db.max())
-        plot_spectrogram(
-            axs[1],
-            10 * np.log10(to_spec(torch.tensor(naive_slice)) + 1e-10),
-            is_log=True,
-            vmin=spec_db.max() - 40,
-            vmax=spec_db.max(),
-        )
+"""
+The result:
+"""
+st.audio(streamed_audio, sample_rate=sample_rate)
 
-        st.pyplot(fig)
-        st.audio(naive_slice, sample_rate=sample_rate)
-        st.caption("Streaming the audio output with a completely stateless decoder")
+"""
+Pretty good! Maybe you can hear one or two remaining artifacts, but this is almost the original.
+
+With only the sliding window parameters and two function patches, we've managed to stream a complex state of the art 
+TTS model.
+
+### Wrapping up
+
+We haven't digged too deep into the topic of performance: how to write proper benchmarks, how to profile models 
+quickly, how to pick the ideal chunk size for streaming, ... These topics will be covered in future examples, yet 
+to be written.
+
+For now this is the last TorchStream example. I hope you've enjoyed it. If you have questions or troubles streaming 
+your own models, consider opening an issue or shouting me an email at corentin.jemine@gmail.com
+"""
