@@ -15,7 +15,7 @@ from torchstream.sliding_window.sliding_window_params import get_streaming_conte
 from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
 from torchstream.stream_equivalence import test_stream_equivalent
 
-st.subheader("1. Introduction to TorchStream")
+st.title("1. Introduction to TorchStream (with Spectrograms)")
 
 """
 A very common speech processing data transformation is the Mel-Spectrogram. ML models that generate or ingest speech 

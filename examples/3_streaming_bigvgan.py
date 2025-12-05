@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
-st.subheader("3. Streaming BigVGAN")
+st.title("3. Streaming BigVGAN")
 
 """
 In the example #1, we mentioned that mel spectrograms are a common way to represent audio data for neural networks.

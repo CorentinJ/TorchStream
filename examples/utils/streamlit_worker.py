@@ -100,7 +100,7 @@ def run_managed_thread(
 
     # In any case now, we wait for our turn to run
     print(f"\x1b[32m{'LOCK ACQUIRE'}\x1b[39m")
-    update_logs(run_id, ["Waiting for another job to complete..."])
+    # update_logs(run_id, ["Waiting for another job to complete..."])
     thread_lock.acquire()
     print(f"\x1b[32m{'LOCK ACQUIRED'}\x1b[39m")
     st.session_state[_RUN_MANAGED_THREAD_ID_KEY]["active_run_id"] = run_id

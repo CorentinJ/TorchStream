@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
-st.subheader("4. Streaming Kokoro TTS")
+st.title("4. Streaming Kokoro TTS")
 
 """
 In this example we will stream a full TTS pipeline from a static text input to a streaming audio output. We will be 
@@ -36,7 +36,7 @@ a TTS model, it means having a small and consistent Time To First Sound (TTFS), 
 starts hearing audio playback when a request is made. 
 
 An internal model will usually be deployed on a server with 
-GPU(s), and streaming will help shave a couple hundred milliseconds off the TTFS, leading to a more responsive 
+GPU(s), and streaming will help **shave a couple hundred milliseconds off the TTFS**, leading to a more responsive 
 experience. For models deployed on the user side, usually running on CPU, the goal is the same but **streaming can 
 make the difference between a usable and an unusable experience**, as CPU inference times are often much higher.
 """
@@ -102,9 +102,9 @@ We are no longer dealing with a model that takes tensors in and spits tensors ou
 it takes human readable text as input and produces human audible audio as output. It does so with multiple stages of 
 processing, and involves two different models internally: a text to phoneme model and a phoneme to audio model. 
 
-It's not at all trivial to figure out what we want to stream here. It's easier when you've worked on the models you 
-want to stream beforehand. However, with TorchStream it's possible to stream models with **little prior knowledge of them**, 
-even **without modifying the source code**!
+It's not at all trivial to figure out what parts of the pipeline we want to stream here. It's easier when you've 
+worked on the models you want to stream beforehand. However, with TorchStream it's possible to stream models 
+with **little prior knowledge of them**, even **without modifying the source code**!
 
 #### On to exploration!
 
@@ -241,7 +241,7 @@ to be responsible for at least **80%** of the total inference time. In that case
 alone**, we'll significantly reduce the major source of latency of this pipeline! End users will get a much shorter 
 Time To First Sound (TTFS).
 
-On a **high end GPU** (e.g. RTX 4090), the decoder might only make up **20%** of the total inference time - which is 
+On a **high end GPU**, the decoder might only make up **20%** of the total inference time - which is 
 already very low: around 100ms end-to-end. Kokoro TTS is a lightweight model after all! In that case, streaming the 
 decoder would only lead to a small gain in latency. It won't make much of a difference to the user experience.
 """

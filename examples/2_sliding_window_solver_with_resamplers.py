@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
-st.subheader("2. The Sliding Window Parameter Solver")
+st.title("2. The Sliding Window Parameters Solver (with audio resamplers)")
 
 """
 In the first example we mentioned that TorchStream can automatically determine the sliding window parameters of a 
@@ -41,16 +41,16 @@ with st.container(border=True):
 
 """
 ### Overview
-The solver takes any function that transforms sequential data (torch tensors, numpy arrays) into other sequential 
-data. The data can be any shape or data type, it can be audio, video, text, etc... It can also be a combination of 
+The solver takes any function **that transforms sequential data** (torch tensors, numpy arrays) into **other sequential 
+data**. The data can be any shape or data type, it can be audio, video, text, etc... It can also be a combination of 
 multiple arrays (more on this in example #4).
 
 Then:
-1. It probes the function with a randomly generated input to see if it behaves correctly, until it finds a valid 
+1. **It probes the function** with a randomly generated input to see if it behaves correctly, until it finds a valid 
 input-output pair.
-2. It infers the input size to output size relationship of the function by forwarding multiple inputs of different 
+2. **It infers the input size to output size relationship** of the function by forwarding multiple inputs of different 
 sizes.
-3. It finds sliding window parameters that would explain the observed inputs and outputs, and it verifies that they 
+3. **It finds sliding window parameters** that would explain the observed inputs and outputs, and it verifies that they 
 are correct by generating new specific inputs and checking their outputs.
 
 Let's test it on a simple example. We'll write a moving average function with window size and stride as parameters.
