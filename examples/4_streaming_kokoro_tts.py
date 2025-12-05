@@ -83,6 +83,8 @@ def tts_infer(device_type: str):
     next(pipeline(text, voice="af_heart"))
 
     with st.echo():
+        import time
+
         # Normal, non-streaming inference
         start_time = time.perf_counter()
         *_, wave = next(pipeline(text, voice="af_heart"))
@@ -320,7 +322,7 @@ classes that allow you to treat jointly these combined types as a single sequenc
 with st.echo():
     from functools import partial
 
-    from torchstream.sequence.sequence import SeqSpec
+    from torchstream import SeqSpec
 
     decoder_in_spec = SeqSpec(
         # asr
@@ -527,8 +529,7 @@ def get_naive_streaming_audio():
     with st.echo():
         import math
 
-        from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
-        from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
+        from torchstream import SlidingWindowParams, SlidingWindowStream
 
         sli_params = SlidingWindowParams(
             kernel_size_in=28,
@@ -879,7 +880,7 @@ TTS model.
 
 ### Wrapping up
 
-We haven't digged too deep into the topic of performance: how to write proper benchmarks, how to profile models 
+We haven't dug too deep into the topic of performance: how to write proper benchmarks, how to profile models 
 quickly, how to pick the ideal chunk size for streaming, ... These topics will be covered in future examples, yet 
 to be written.
 
