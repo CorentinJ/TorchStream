@@ -830,8 +830,7 @@ with st.echo():
         return streaming_instance_norm
 
 
-# Let's listen to see how we've improved
-# @st.cache_data()
+@st.cache_data()
 def get_streamed_audio():
     with st.echo():
         with intercept_calls(
