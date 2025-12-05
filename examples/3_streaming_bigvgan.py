@@ -45,7 +45,7 @@ with st.echo():
 
     @st.cache_resource
     def load_bigvgan() -> BigVGAN:
-        model = BigVGAN.from_pretrained("nvidia/bigvgan_v2_24khz_100band_256x", use_cuda_kernel=False)
+        model = BigVGAN.from_pretrained("nvidia/bigvgan_v2_24khz_100band_256x")
         model.remove_weight_norm()
         model = model.eval().to(device)
         return model
@@ -55,10 +55,16 @@ with st.echo():
     # Load an audio file at the model's samplerate
     MP3_URL = "https://d38nvwmjovqyq6.cloudfront.net/va90web25003/companions/ws_smith/32%20Speaking%20The%20Text%20As%20A%20Dramatic%20Reading.mp3"
     local_audio_path = download_file_cached(MP3_URL)
-    wave, sample_rate = load_audio(local_audio_path, sample_rate=model.h.sampling_rate)
+    wave, sample_rate = load_audio(
+        local_audio_path,
+        sample_rate=model.h.sampling_rate,
+    )
 
     # Compute the mel spectrogam input
-    mel = get_mel_spectrogram(torch.from_numpy(wave).unsqueeze(0), model.h).to(device)
+    mel = get_mel_spectrogram(
+        torch.from_numpy(wave).unsqueeze(0),
+        model.h,
+    ).to(device)
 
 st.write("##### Input audio & spectrogram")
 st.audio(wave, sample_rate=sample_rate)
@@ -86,9 +92,9 @@ st.audio(wav_out.numpy(), sample_rate=sample_rate)
 st.write(f"_{len(wav_out) / sample_rate:.2f} seconds of audio generated in {inference_time:.2f} seconds._")
 
 """
-It should sound the same as our input. 
+It should sound the same as our input. We've recovered a great approximation of it from its mel spectrogram.
 
-Let's proceed with streaming.
+Let's proceed with streaming:
 """
 
 with st.echo():
@@ -151,7 +157,7 @@ but still **all with the same input/output size relation, output delay and input
 randomness of the solver, you might even have obtained a different solution than the one hardcoded below.
 
 There are [many variations of hyperparameters for BigVGAN](https://huggingface.co/nvidia/bigvgan_v2_24khz_100band_256x#pretrained-models), 
-**each will have its own set of sliding window parameters**. But you only need to compute them once with the solver, 
+**each will have their own set of sliding window parameters**. But you only need to compute them once with the solver, 
 and you can then store them alongside the hyperparameters.
 
 """
@@ -267,9 +273,9 @@ Yet you can see from the above images that the trimmed portion of the output is 
 We should be able to keep some of that trimmed output.
 
 The sliding window parameter solver finds the original parameters of the transform, which allows us to stream it 
-**exactly**. Aside from minor differences in computation introduced by optimizations and floating point rounding, the 
-output you get from a `SlidingWindowStream` with the correct parameters will be identical to the non-streamed 
-transform.
+**exactly**. Aside from minor differences in computation introduced by optimizations and floating point rounding, **the 
+output you get from a `SlidingWindowStream`** with the correct parameters **will be identical to the non-streamed 
+transform**.
 
 Hence, you can significantly reduce the output delay at the cost of some output fidelity. TorchStream does not yet 
 expose functions to enable this, but it is a planned feature.
@@ -278,12 +284,14 @@ st.caption(
     "¹ this is _technically_ wasteful compute. Depending on your choices of chunk size and your benchmarks, "
     "the additional compute might end up being negligible"
 )
-st.caption("² as in with a chunk size of 1. This is possible because the parameters indicate a minimum input size of 1")
+st.caption(
+    "² i.e. with input chunks of size 1. This is possible because the parameters indicate a minimum input size of 1"
+)
 
 """
 ### Up next
-We've found the sliding window parameters of a fully fledged neural network and made it streamable. The following 
-example will target a more complex model, with some non-sliding-window components.
+We've found the sliding window parameters of a deep neural network and made it streamable. The following 
+example will target a more complex architecture, with some non-sliding-window components.
 """
 
 render_prev_next(__file__)

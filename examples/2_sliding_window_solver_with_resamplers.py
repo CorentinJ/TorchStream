@@ -19,7 +19,6 @@ from examples.utils.streamlit_worker import await_running_thread, run_managed_th
 from torchstream import SeqSpec, SlidingWindowParams, find_sliding_window_params, intercept_calls
 from torchstream.exception_signature import DEFAULT_ZERO_SIZE_EXCEPTIONS
 from torchstream.sequence.sequence import Sequence
-from torchstream.sliding_window.sliding_window_params import in_out_size_rel_repr
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -28,7 +27,7 @@ logging.basicConfig(level=logging.INFO)
 st.title("2. The Sliding Window Parameters Solver (with audio resamplers)")
 
 """
-In the first example we mentioned that TorchStream can automatically determine the sliding window parameters of a 
+In the first example we mentioned that TorchStream can **automatically** determine the sliding window parameters of a 
 given transform, but did not exploit it. 
 
 This second example will cover transforms for which the sliding window parameters are not disclosed and go into 
@@ -44,7 +43,7 @@ with st.container(border=True):
 ### Overview
 The solver takes any function **that transforms sequential data** (torch tensors, numpy arrays) into **other sequential 
 data**. The data can be any shape or data type, it can be audio, video, text, etc... It can also be a combination of 
-multiple arrays (more on this in example #4).
+multiple arrays (covered in example #4).
 
 Then:
 1. **It probes the function** with a randomly generated input to see if it behaves correctly, until it finds a valid 
@@ -52,14 +51,19 @@ input-output pair.
 2. **It infers the input size to output size relationship** of the function by forwarding multiple inputs of different 
 sizes.
 3. **It finds sliding window parameters** that would explain the observed inputs and outputs, and it verifies that they 
-are correct by generating new specific inputs and checking their outputs.
+are compatible by generating new specific inputs and checking their outputs.
 
 Let's test it on a simple example. We'll write a moving average function with window size and stride as parameters.
 """
 
 
 def find_sli_params_and_print(*args, **kwargs):
-    sols = find_sliding_window_params(*args, **kwargs)
+    try:
+        sols = find_sliding_window_params(*args, **kwargs)
+    except RuntimeError as e:
+        logger.info("-----------------\n")
+        logger.info(f"Solver failed with error: {e}")
+        return
 
     logger.info("-----------------\n")
     for i, sol in enumerate(sols):
@@ -91,7 +95,11 @@ def moving_average(x: np.ndarray) -> np.ndarray:
 
 code_placeholder.code(
     """
-from torchstream import SeqSpec, SlidingWindowParams, find_sliding_window_params
+import logging
+
+import numpy as np
+
+from torchstream import SeqSpec, find_sliding_window_params
 
 # The solver emits INFO level logs, enable them to see its progress
 logging.basicConfig(level=logging.INFO)
@@ -120,6 +128,7 @@ with right_col:
             trsfm=moving_average,
             in_spec=SeqSpec(-1, dtype=np.float32),
             max_equivalent_sols=3,
+            max_hypotheses=30,
         ),
     )
 
@@ -188,7 +197,7 @@ never returns suboptimal or incorrect solutions. Hence by default, `max_equivale
 maps input indices to output indices. Python, numpy and torch will output a NaN in virtually every operation that 
 has a NaN for operand. For example:
 """
-st.caption("¹ Defined in the IEEE 754 Standard for Floating-Point Arithmetic")
+st.caption("¹ A convention defined in the IEEE 754 Standard for Floating-Point Arithmetic")
 
 with st.echo():
     x = torch.tensor([[[1.0, 2.0, 3.0, float("nan"), 5.0, 6.0, 7.0]]])
@@ -212,6 +221,11 @@ trade-offs.
 
 MP3_URL = "https://d38nvwmjovqyq6.cloudfront.net/va90web25003/companions/ws_smith/32%20Speaking%20The%20Text%20As%20A%20Dramatic%20Reading.mp3"
 with st.echo():
+    import librosa
+
+    from examples.utils.audio import load_audio
+    from examples.utils.download import download_file_cached
+
     local_audio_path = download_file_cached(MP3_URL)
     wave_48khz, _ = load_audio(local_audio_path, sample_rate=48000)
     wave_8khz = librosa.core.resample(wave_48khz, orig_sr=48000, target_sr=8000, res_type="kaiser_best")
@@ -251,8 +265,8 @@ st.exception(librosa.util.exceptions.ParameterError("Audio buffer is not finite 
 
 """
 And we've hit our first snag. Librosa has an internal check to verify that input audio is valid, not containing NaNs. 
-If you go into the resample function, you'll see that this method is `valid_audio()`. In practice, you can understand 
-these types of issues by **going through stack traces** or ideally by **stepping into the transform with a debugger**.
+If you go into the resample function, you'll see that this method is `valid_audio()`. In practice, you can figure 
+out types of issues by **going through stack traces** or ideally by **stepping into the transform with a debugger**.
 """
 
 with st.container(border=True):
@@ -264,7 +278,7 @@ with st.container(border=True):
 
 
 """
-Use `torchstream.intercept_calls()` to replace the function with a no-op that always returns True. We only need to do 
+Use `torchstream.intercept_calls()` to replace the function with a no-op that always returns `True`. We only need to do 
 this during the solver's execution.
 """
 
@@ -288,7 +302,7 @@ that are too small for the given transform to produce any output, because findin
 transform is part of its job.
 
 Therefore the solver must swallow these exceptions and work as if the transform gave a **zero-sized output**. 
-Because there is no universal exception type for "zero-sized output", you can provide its signature as a tuple 
+Because there is no universal exception type for "input is too small", you can provide its signature as a tuple 
 `(exception_type, message_substring)` like so:
 
 """
@@ -341,6 +355,25 @@ Let's visualize the streaming of this resampling operation:
 
 
 with st.container(border=True):
+    with st.container(border=True):
+        sli_params = SlidingWindowParams(
+            kernel_size_in=11,
+            stride_in=6,
+            left_pad=5,
+            right_pad=5,
+            kernel_size_out=99,
+            stride_out=1,
+            left_out_trim=49,
+            right_out_trim=49,
+            min_input_size=6,
+        )
+        st.code(
+            str(sli_params)
+            + f"\n-> min/max overlap: {[sli_params.streaming_context_size, sli_params.streaming_context_size + sli_params.stride_in - 1]}\n"
+            + f"-> min/max output delay: {list(sli_params.output_delay_bounds)}\n"
+            + f"-> in/out size relation: {sli_params.in_out_size_rel_repr}"
+        )
+
     total_seconds = len(wave_48khz) / 48000
     min_slice_seconds = 0.01
     start_sec, end_sec = st.slider(
@@ -359,25 +392,6 @@ with st.container(border=True):
     end_sample = max(start_sample + int(min_slice_seconds * 48000), int(end_sec * 48000))
 
     wave_48khz_slice = wave_48khz[start_sample:end_sample]
-
-    with st.container(border=True):
-        sli_params = SlidingWindowParams(
-            kernel_size_in=11,
-            stride_in=6,
-            left_pad=5,
-            right_pad=5,
-            kernel_size_out=99,
-            stride_out=1,
-            left_out_trim=49,
-            right_out_trim=49,
-            min_input_size=6,
-        )
-        st.code(
-            str(sli_params)
-            + f"\n-> min/max overlap: {[sli_params.streaming_context_size, sli_params.streaming_context_size + sli_params.stride_in - 1]}\n"
-            + f"-> min/max output delay: {list(sli_params.output_delay_bounds)}\n"
-            + f"-> in/out size relation: {in_out_size_rel_repr(*sli_params.canonical_in_out_size_params)}"
-        )
 
     def build_stream(chunk_size: int) -> AnimatedSlidingWindowStream:
         stream_obj = AnimatedSlidingWindowStream(
