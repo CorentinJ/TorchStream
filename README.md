@@ -16,7 +16,7 @@ Install as a project, to run the streamlit examples yourself (some examples requ
 ```bash
 git clone https://github.com/CorentinJ/TorchStream
 cd TorchStream
-uv run streamlit run examples --server.port 8004
+uv run --group demos streamlit run examples
 ```
 
 If you don't have `uv` yet:
@@ -34,7 +34,7 @@ pip install -U uv
 ## Overview
 TorchStream offers a set of tools to help you stream complex neural networks and other sequence to sequence transforms. 
 
-Below is an example with streaming BigVGAN, a state of the art neural vocoder:
+The example below requires cloning the project and installing the demos dependencies (`uv sync --group demos`). It streams BigVGAN, a state of the art neural vocoder:
 
 ```python
 import logging

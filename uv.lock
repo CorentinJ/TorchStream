@@ -4834,7 +4834,7 @@ wheels = [
 ]
 
 [[package]]
-name = "torchstream"
+name = "torchstream-lib"
 version = "1.0.0"
 source = { editable = "." }
 dependencies = [
@@ -4901,8 +4901,8 @@ demos = [
     { name = "resampy", marker = "python_full_version >= '3.10'", specifier = ">=0.4.3" },
     { name = "soundfile", marker = "python_full_version >= '3.10'" },
     { name = "streamlit", marker = "python_full_version >= '3.10'", specifier = ">=1.40.1" },
-    { name = "torch", marker = "python_full_version >= '3.10'", specifier = ">=1.11.0", index = "https://download.pytorch.org/whl/cu118", conflict = { package = "torchstream", group = "demos" } },
-    { name = "torchaudio", marker = "python_full_version >= '3.10'", specifier = ">=2.5.1", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "torchstream", group = "demos" } },
+    { name = "torch", marker = "python_full_version >= '3.10'", specifier = ">=1.11.0", index = "https://download.pytorch.org/whl/cu118", conflict = { package = "torchstream-lib", group = "demos" } },
+    { name = "torchaudio", marker = "python_full_version >= '3.10'", specifier = ">=2.5.1", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "torchstream-lib", group = "demos" } },
 ]
 dev = [
     { name = "opentelemetry-sdk", specifier = ">=1.33.1" },

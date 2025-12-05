@@ -2,7 +2,6 @@ import itertools
 from typing import Callable, Iterable, Tuple
 
 import numpy as np
-import pytest
 import torch
 
 from torchstream.sequence.dtype import SeqArrayLike
@@ -11,7 +10,6 @@ from torchstream.sliding_window.nan_trick import get_nan_idx
 from torchstream.stream import Stream
 
 
-@pytest.mark.skip()
 @torch.no_grad()
 def test_stream_equivalent(
     sync_fn: Callable,
