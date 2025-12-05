@@ -10,6 +10,7 @@ import torch
 from matplotlib import pyplot as plt
 from torch import nn
 
+from examples.streamlit_app import render_prev_next
 from examples.utils.animated_sliding_window_stream import AnimatedSlidingWindowStream
 from examples.utils.audio import load_audio
 from examples.utils.download import download_file_cached
@@ -443,5 +444,7 @@ You've seen how to automatically find the sliding window parameters of a simple 
 In the following examples we'll attack real world neural networks.
 """
 
+
+render_prev_next(__file__)
 
 await_running_thread()

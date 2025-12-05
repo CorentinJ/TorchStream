@@ -6,6 +6,7 @@ import streamlit as st
 import torch
 import torchaudio
 
+from examples.streamlit_app import render_prev_next
 from examples.utils.animated_sliding_window_stream import AnimatedSlidingWindowStream
 from examples.utils.audio import load_audio
 from examples.utils.download import download_file_cached
@@ -407,3 +408,5 @@ You've seen how we can stream a simple transform with known sliding window param
 cover **automatic derivation of sliding window parameters** and handling of **complex transforms**, including those that 
 are **not sliding window based**.
 """
+
+render_prev_next(__file__)

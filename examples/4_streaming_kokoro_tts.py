@@ -9,6 +9,7 @@ import torch
 from kokoro import KPipeline
 from kokoro.model import KModel
 
+from examples.streamlit_app import render_prev_next
 from examples.utils.streamlit_worker import await_running_thread, run_managed_thread
 from torchstream import intercept_calls
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams
@@ -886,3 +887,4 @@ to be written.
 For now this is the last TorchStream example. I hope you've enjoyed it. If you have questions or troubles streaming 
 your own models, consider opening an issue or shouting me an email at corentin.jemine@gmail.com
 """
+render_prev_next(__file__)

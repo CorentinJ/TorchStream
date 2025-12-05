@@ -4,6 +4,7 @@ import time
 import streamlit as st
 from matplotlib import pyplot as plt
 
+from examples.streamlit_app import render_prev_next
 from examples.utils.animated_sliding_window_stream import AnimatedSlidingWindowStream
 from examples.utils.plots import plot_audio, plot_spectrogram
 from examples.utils.streamlit_worker import await_running_thread, run_managed_thread
@@ -136,6 +137,8 @@ run_managed_thread(
     ),
     log_height=500,
 )
+await_running_thread()
+
 
 """
 This time around we managed to find a solution without hitting any snags. Just like in the previous example, we 
@@ -283,5 +286,4 @@ We've found the sliding window parameters of a fully fledged neural network and 
 example will target a more complex model, with some non-sliding-window components.
 """
 
-
-await_running_thread()
+render_prev_next(__file__)

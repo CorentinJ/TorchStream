@@ -37,17 +37,21 @@ def render_prev_next(python_filepath: str | Path) -> None:
 
     col_prev, col_next = st.columns(2)
     if prev_page:
+        prev_page_title = prev_page.title.replace(".", "\\.")
         with col_prev:
-            st.page_link(
-                prev_page,
-                label=f"⬅ {prev_page.title}",
-            )
+            with st.container(border=True):
+                st.page_link(
+                    prev_page,
+                    label=f"⬅ {prev_page_title}",
+                )
     if next_page:
+        next_page_title = next_page.title.replace(".", "\\.")
         with col_next:
-            st.page_link(
-                next_page,
-                label=f"{next_page.title} ➡",
-            )
+            with st.container(border=True):
+                st.page_link(
+                    next_page,
+                    label=f"{next_page_title} ➡",
+                )
 
 
 if __name__ == "__main__":
