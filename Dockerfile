@@ -26,5 +26,5 @@ ENV PATH="/app/.venv/bin:${PATH}" \
 
 EXPOSE 8004
 
-CMD ["streamlit", "run", "examples/1_introduction_with_spectrograms.py", "--server.port=8004", "--server.address=0.0.0.0"]
-# streamlit run examples/1_introduction_with_spectrograms.py  --server.port 8004
+CMD ["streamlit", "run", "examples", "--server.port=8004", "--server.address=0.0.0.0"]
+# streamlit run examples  --server.port 8004
