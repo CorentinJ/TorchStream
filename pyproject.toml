@@ -1,7 +1,7 @@
 [project]
 # PyPi name, import name is "torchstream"
 name = "torchstream-lib"
-version = "1.0.0"
+version = "1.0.1"
 authors = [
   { name = "Corentin Jemine", email = "corentin.jemine@gmail.com" }
 ]
