@@ -1,34 +1,31 @@
 import inspect
 
 import matplotlib.pyplot as plt
-import numpy as np
 import streamlit as st
-import torch
-import torchaudio
 
 from examples.streamlit_app import render_prev_next
 from examples.utils.animated_sliding_window_stream import AnimatedSlidingWindowStream
-from examples.utils.audio import load_audio
-from examples.utils.download import download_file_cached
 from examples.utils.plots import plot_audio, plot_spectrogram
 from torchstream import SeqSpec, Sequence, SlidingWindowParams
-from torchstream.sliding_window.sliding_window_params import get_streaming_context_size, in_out_size_rel_repr
-from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
-from torchstream.stream_equivalence import test_stream_equivalent
+from torchstream.sliding_window.sliding_window_params import get_streaming_context_size
 
 st.title("1. Introduction to TorchStream (with Spectrograms)")
 
 """
+We'll illustrate the purpose of TorchStream with a simple example. 
+
 A very common speech processing data transformation is the Mel-Spectrogram. ML models that generate or ingest speech 
-will typically represent it as a Mel-Spectrogram.
-"""
-st.space(1)
-"""
+will often represent it as a Mel-Spectrogram.
+
 Let's take a short speech sample from the web:
 """
-MP3_URL = "https://d38nvwmjovqyq6.cloudfront.net/va90web25003/companions/ws_smith/32%20Speaking%20The%20Text%20As%20A%20Dramatic%20Reading.mp3"
-local_audio_path = download_file_cached(MP3_URL)
-wave, sample_rate = load_audio(local_audio_path)
+with st.echo():
+    from examples.utils.audio import load_audio
+    from examples.utils.download import download_file_cached
+
+    MP3_URL = "https://d38nvwmjovqyq6.cloudfront.net/va90web25003/companions/ws_smith/32%20Speaking%20The%20Text%20As%20A%20Dramatic%20Reading.mp3"
+    local_audio_path = download_file_cached(MP3_URL)
+    wave, sample_rate = load_audio(local_audio_path)
 st.audio(wave, sample_rate=sample_rate)
 st.caption("Source: https://global.oup.com/us/companion.websites/9780195300505/audio/audio_samples/, sample 32")
 
@@ -38,37 +35,30 @@ plot_audio(ax, wave, sample_rate)
 st.pyplot(fig)
 
 """
-Torchaudio provides a function to compute Mel-Spectrograms from an audio. Let's wrap it in a function with a 
-couple useful parameters
+The above is its waveform representation, a dense 1-dimensional vector of floating point values. We can compute 
+its Mel-Spectrogram representation like so:
 """
 
+with st.echo():
+    import torch
+    import torchaudio
 
-def get_spec_trsfm_and_sli_params(
-    wave: np.ndarray,
-    n_mels=120,
-    n_fft=2048,
-    hop_size: int | None = None,
-    center: bool = True,
-):
-    return torchaudio.transforms.MelSpectrogram(
+    wave = torch.from_numpy(wave).float()
+
+    melspec_trsfm = torchaudio.transforms.MelSpectrogram(
         sample_rate=sample_rate,
-        n_fft=n_fft,
-        center=center,
-        n_mels=n_mels,
-        hop_length=hop_size,
-    )(torch.from_numpy(wave))
-
-
-st.code(inspect.getsource(get_spec_trsfm_and_sli_params))
+        n_fft=2048,
+        center=True,
+        n_mels=120,
+    )
+    melspectrogram = melspec_trsfm(wave)
 
 
 """
 The output of that function is a (n_mels, n_frames) shaped tensor that we can view as a 2D image:
 """
-melspectrogram = get_spec_trsfm_and_sli_params(wave)
-st.code(
-    f">>> melspectrogram = get_spectrogram(wave)\n{tuple(melspectrogram.shape)} shaped {melspectrogram.dtype} tensor"
-)
+# TODO: convenient streamlit wrapper "evaluate_expr" for these types of snippets
+st.code(f">>> melspectrogram\n{tuple(melspectrogram.shape)} shaped {melspectrogram.dtype} tensor")
 
 
 fig, ax = plt.subplots(figsize=(10, 2.5))
@@ -96,20 +86,10 @@ C/C++/CUDA** code. Furthermore, the deep neural networks that use such functions
 hundreds** of them in **deeply nested** python code.
 
 For any complex sequence-to-sequence transform, let alone a fully fledged deep neural network, trying to pick apart 
-its inner workings or to change their batch mode of operation (=all input is processed in one go) to streaming is a 
-tedious feat of engineering.
-"""
+its inner workings or to change their mode of operation from batched (=all input is processed in one go) to streaming 
+is a tedious feat of engineering.
 
-"""
-Take the docs of our Mel-Spectrogram function. They do not document how the length of the spectrogram is computed:
-> Returns Dimension (…, freq, time), where freq is n_fft // 2 + 1 where n_fft is the number of Fourier bins, and time 
-is the number of window hops (n_frame).
-
-Nor does [librosa](https://librosa.org/doc/main/generated/librosa.feature.melspectrogram.html#librosa-feature-melspectrogram), 
-which also implements Mel-Spectrograms:
-> S: np.ndarray [shape=(…, n_mels, t)]
-
-And if you try to stream our function by naively forwarding chunks of your input data, you'll be disappointed with the 
+If you try to stream this function by naively forwarding chunks of your input data, you'll be disappointed with the 
 results:
 """
 
@@ -117,20 +97,20 @@ with st.echo():
     spec_chunks = []
     for i in range(0, wave.shape[0], 1500):
         try:
-            spec_chunks.append(get_spec_trsfm_and_sli_params(wave[i : i + 1500]))
+            spec_chunks.append(melspec_trsfm(wave[i : i + 1500]))
         except RuntimeError:
             pass  # the last chunk may be too small
-    naive_spec = torch.cat(spec_chunks, dim=1)
+    naive_melspec = torch.cat(spec_chunks, dim=1)
 
 
 fig, axs = plt.subplots(figsize=(10, 5.5), nrows=2, sharex=True)
 fig.subplots_adjust(hspace=0.5)
 axs[0].set_title("Naively Streamed Mel-Spectrogram")
-plot_spectrogram(axs[0], naive_spec)
+plot_spectrogram(axs[0], naive_melspec)
 axs[1].set_title("Original Mel-Spectrogram")
-original_spec = get_spec_trsfm_and_sli_params(wave)
+original_spec = melspec_trsfm(wave)
 plot_spectrogram(axs[1], original_spec)
-axs[0].set_xlim(0, max(naive_spec.shape[1], original_spec.shape[1]))
+axs[0].set_xlim(0, max(naive_melspec.shape[1], original_spec.shape[1]))
 st.pyplot(fig)
 """
 The outputs are not of the same size and there are frequency artifacts at the top and bottom of the naive spectrogram. 
@@ -207,14 +187,16 @@ Args:
     hop_length (int or None, optional): Length of hop between STFT windows. (Default: win_length // 2)
     center (bool, optional): whether to pad `waveform` on both sides so that frames are centered. (Default: True)
 (...)
-"""
+""",
+    wrap_lines=True,
 )
 
 """
-This is rather straightforward. We can retrieve the function and derive its sliding window parameters:
+It's rather straightforward to retrieve the sliding window parameters from this documentation:
 """
 
 with st.echo():
+    from torchstream import SlidingWindowParams
 
     def get_spec_trsfm_and_sli_params(n_fft=2048, center: bool = False):
         trsfm = torchaudio.transforms.MelSpectrogram(
@@ -229,9 +211,9 @@ with st.echo():
             stride_in=n_fft // 2,
             left_pad=n_fft // 2 if center else 0,
             right_pad=n_fft // 2 if center else 0,
-            # Not documented but empirically verifiable: the input size below which the transform will raise an error
-            # for not having enough data
-            min_input_size=n_fft // 2 + 1 if center else n_fft,
+            # Not documented but empirically verifiable: the input size below
+            # which the transform will raise an error for not having enough data
+            min_input_size=(n_fft // 2 + 1 if center else n_fft),
         )
 
         return trsfm, sli_params
@@ -242,37 +224,68 @@ TorchStream can empirically verify whether these parameters give the correct inp
 whether they produce the correct output when streaming. It doesn't _guarantee_ the parameters are true to the transform
 nor that they are optimal for streaming, but it's a good smoke test.
 """
-with st.echo():
-    trsfm, sli_params = get_spec_trsfm_and_sli_params()
 
-    stream = SlidingWindowStream(
-        trsfm,
-        sli_params,
-        # Audio inputs are 1D float arrays of varying length
-        in_spec=SeqSpec(-1),
-        # Spectrogram outputs are 2D: 120 channels for the mel bins, and varying length for the time frames
-        out_spec=SeqSpec(120, -1),
-    )
 
-    # This will raise an error if the streamed function differs
-    test_stream_equivalent(
-        sync_fn=trsfm,
-        stream=stream,
-        in_data=torch.from_numpy(wave),
-        # Take random input chunk sizes (inputs that are too small are not problematic,
-        # the stream waits until it has enough to produce an output)
-        in_step_sizes=torch.randint(1, 10_000, (20,)).tolist(),
-        atol=5e-3,
-    )
+@st.cache_data()
+def equivalence_test():
+    with st.echo():
+        from torchstream import SeqSpec, SlidingWindowStream, test_stream_equivalent
 
-st.success("Passed the equivalence test")
+        trsfm, sli_params = get_spec_trsfm_and_sli_params()
+
+        stream = SlidingWindowStream(
+            trsfm,
+            sli_params,
+            # Specify the stream inputs as a 1-dimensional tensor of varying length (the -1 dimension)
+            in_spec=SeqSpec(-1, dtype=torch.float32),
+            # For the outputs: 2D spectrograms with 120 channels for the mel bins,
+            # and varying length for the time frames
+            out_spec=SeqSpec(120, -1, dtype=torch.float32),
+        )
+
+        # This will raise an error if the streamed function differs
+        test_stream_equivalent(
+            sync_fn=trsfm,
+            stream=stream,
+            in_data=wave,
+            # Take random input chunk sizes (inputs that are too small are not problematic,
+            # the stream waits until it has enough to produce an output)
+            in_step_sizes=torch.randint(1, 10_000, (20,)).tolist(),
+            atol=5e-3,
+        )
+
+    st.success("Passed the equivalence test")
+
+
+equivalence_test()
 
 """
-So there we have it. TorchStream took a function not originally designed for streaming and it inferred how it should 
-be streamed based on its sliding window parameters. Let's see what that looks like under the hood.
+So, TorchStream took a function **not originally designed for streaming** and it inferred **how it should 
+be streamed based on its sliding window parameters**. 
+
+Let's see what that looks like under the hood:
 """
 
 with st.container(border=True):
+    with st.container(border=True):
+        """
+        Set the transform's parameters
+        """
+        left_col, right_col = st.columns([0.2, 0.8])
+
+        with left_col:
+            n_fft = st.slider("n_fft", 64, 4096, value=2048)
+            center = st.checkbox("center", value=True)
+
+        trsfm, sli_params = get_spec_trsfm_and_sli_params(n_fft=n_fft, center=center)
+        with right_col:
+            st.code(
+                str(sli_params)
+                + f"\n-> min/max overlap: {[sli_params.streaming_context_size, sli_params.streaming_context_size + sli_params.stride_in - 1]}\n"
+                + f"-> min/max output delay: {list(sli_params.output_delay_bounds)}\n"
+                + f"-> in/out size relation: {sli_params.in_out_size_rel_repr}",
+            )
+
     total_seconds = len(wave) / sample_rate
     min_slice_seconds = 0.1
     start_sec, end_sec = st.slider(
@@ -290,25 +303,7 @@ with st.container(border=True):
     start_sample = int(start_sec * sample_rate)
     end_sample = max(start_sample + int(min_slice_seconds * sample_rate), int(end_sec * sample_rate))
 
-    wave_slice = torch.from_numpy(wave[start_sample:end_sample])
-
-    with st.container(border=True):
-        """
-        Set the transform's parameters
-        """
-        left_col, right_col = st.columns([0.25, 0.75])
-        with left_col:
-            n_fft = st.slider("n_fft", 64, 4096, value=sli_params.kernel_size_in)
-            center = st.checkbox("center", value=True)
-
-        trsfm, sli_params = get_spec_trsfm_and_sli_params(n_fft=n_fft, center=center)
-        with right_col:
-            st.code(
-                str(sli_params)
-                + f"\n-> min/max overlap: {[sli_params.streaming_context_size, sli_params.streaming_context_size + sli_params.stride_in - 1]}\n"
-                + f"-> min/max output delay: {list(sli_params.output_delay_bounds)}\n"
-                + f"-> in/out size relation: {in_out_size_rel_repr(*sli_params.canonical_in_out_size_params)}"
-            )
+    wave_slice = wave[start_sample:end_sample]
 
     def build_stream(chunk_size: int) -> AnimatedSlidingWindowStream:
         stream_obj = AnimatedSlidingWindowStream(
@@ -362,31 +357,29 @@ with st.container(border=True):
 """
 #### Streaming context size
 
-In the above demo you'll see that our input chunks overlap eachother quite a bit. The blue arrow displays the 
-rightmost section of the _previous_ input chunk that is reused in the current input. Hence overlap means: "how much 
-of the previous input is kept in a **buffer** inbetween steps". TorchStream automatically manages this buffer 
-inside the stream object and ensures its size remains **minimal**.
+In the above demo you'll see that input chunks overlap eachother. The blue arrow displays the section of the 
+_previous_ input chunk that is reused in the current input. Hence this overlap must be stored in memory between steps. 
+TorchStream manages this for you in a buffer stored inside the SlidingWindowStream object.
 
 The minimum size of this buffer is called the **streaming context size**. This amount of context is **intrinsically 
 needed by the stream** to produce the same output as the non-streaming function. In general, the streaming context 
-size is non trivial to determine.
+size is non trivial to determine. Take a peek at the source code of the function that computes it to convince yourself:
 """
 
-with st.expander("See the source code of `get_streaming_context_size()`"):
+with st.expander("`get_streaming_context_size()`"):
     st.code(inspect.getsource(get_streaming_context_size))
 
-with st.container(border=True):
-    """
-    A suboptimal streaming implementation might use an excessive amount of context, leading to a higher computational 
-    **overhead** that is particularly impactful on **smaller chunk sizes**.
-    """
+"""
+A suboptimal streaming implementation might use an excessive amount of context, leading to a higher computational 
+**overhead** that is particularly impactful on **smaller chunk sizes**.
+"""
 
 """
 #### Output delay
 
 You might have noticed that the "output to discard" rectangles appear on each step only when the center parameter is 
-set to True. This is because enabling `center` adds half a window of padding on each side of every intermediary 
-input, which does not happen during the non-streaming function call, leading to skewed outputs.
+set to True. This is because enabling it adds half a window of padding on each side of the input _at each step_, 
+when it should normally only be applied to the _full input_, leading to skewed outputs.
 
 The output delay is the amount of output that we need to discard on the right of intermediary outputs, and therefore 
 it also acts as a measure of overhead.
