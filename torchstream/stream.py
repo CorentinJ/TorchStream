@@ -151,8 +151,6 @@ class Stream:
         """
         TODO! instruct how to override
 
-        principles
-
         :raises NotEnoughInputsError: if the stream cannot perform a step because it does not have enough inputs. This
         is typically a low severity error that can be caught by the caller in order to wait for more inputs before
         stepping again...

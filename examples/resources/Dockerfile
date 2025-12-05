@@ -27,4 +27,4 @@ ENV PATH="/app/.venv/bin:${PATH}" \
 EXPOSE 8004
 
 CMD ["streamlit", "run", "examples", "--server.port=8004", "--server.address=0.0.0.0"]
-# streamlit run examples  --server.port 8004
+# streamlit run examples --server.port 8004
