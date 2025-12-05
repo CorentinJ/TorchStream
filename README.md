@@ -1,19 +1,18 @@
 # TorchStream
 
-TorchStream is a library to help ML developers stream PyTorch models without retraining nor rewriting them, 
-reducing their latency or enabling them to work in live applications.
+TorchStream is a library to help ML developers stream PyTorch models **without retraining nor rewriting them**, 
+in order to reduce their latency or use them in live applications.
 
-TorchStream comes with [live web examples](https://excellent-diandra-corentinj-63561158.koyeb.app/) to quickly 
-understand how it works.
+TorchStream comes with [a website of live examples](https://excellent-diandra-corentinj-63561158.koyeb.app/).
 
 
 ## Installation
-As a package (any OS, CUDA optional):
+Install as a package (any OS, CUDA optional):
 ```bash
 (uv) pip install torchstream-lib
 ```
 
-As a project, to run the streamlit examples yourself (some examples require CUDA):
+Install as a project, to run the streamlit examples yourself (some examples require CUDA):
 ```bash
 git clone https://github.com/CorentinJ/TorchStream
 cd TorchStream
@@ -33,7 +32,9 @@ pip install -U uv
 
 
 ## Overview
-Stream complex neural networks and other sequence to sequence transforms with the tools offered by TorchStream. Below is an example with streaming BigVGAN, a state of the art neural vocoder:
+TorchStream offers a set of tools to help you stream complex neural networks and other sequence to sequence transforms. 
+
+Below is an example with streaming BigVGAN, a state of the art neural vocoder:
 
 ```python
 import logging
@@ -74,6 +75,6 @@ for audio_chunk in stream.forward_in_chunks_iter(mel, chunk_size=80):
     print(f"Got a {tuple(audio_chunk.shapes[0])} shaped audio chunk")
 ```
 
-### Disclaimer
+## Disclaimer
 
 TorchStream is developed by myself. It is not affiliated with, endorsed by, or sponsored by the PyTorch team or Meta.
