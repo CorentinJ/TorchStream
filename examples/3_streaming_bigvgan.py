@@ -77,19 +77,25 @@ st.pyplot(fig)
 And now run inference with it:
 """
 
-start_time = time.perf_counter()
-with st.echo():
-    with torch.inference_mode():
-        # mel is a (1, M, T_frames) shaped float32 tensor
-        # wav_out is a (1, 1, T_samples) shaped float32 tensor
-        wav_out = model(mel)
 
-inference_time = time.perf_counter() - start_time
+@st.cache_data()
+def run_bigvgan_inference():
+    start_time = time.perf_counter()
+    with st.echo():
+        with torch.inference_mode():
+            # mel is a (1, M, T_frames) shaped float32 tensor
+            # wav_out is a (1, 1, T_samples) shaped float32 tensor
+            wav_out = model(mel)
 
-wav_out = wav_out.cpu().flatten()
-st.write("##### Output audio")
-st.audio(wav_out.numpy(), sample_rate=sample_rate)
-st.write(f"_{len(wav_out) / sample_rate:.2f} seconds of audio generated in {inference_time:.2f} seconds._")
+    inference_time = time.perf_counter() - start_time
+
+    wav_out = wav_out.cpu().flatten()
+    st.write("##### Output audio")
+    st.audio(wav_out.numpy(), sample_rate=sample_rate)
+    st.write(f"_{len(wav_out) / sample_rate:.2f} seconds of audio generated in {inference_time:.2f} seconds._")
+
+
+run_bigvgan_inference()
 
 """
 It should sound the same as our input. We've recovered a great approximation of it from its mel spectrogram.
