@@ -41,7 +41,7 @@ with st.echo():
     from examples.utils.audio import load_audio
     from examples.utils.download import download_file_cached
 
-    device = "cuda"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     @st.cache_resource
     def load_bigvgan() -> BigVGAN:

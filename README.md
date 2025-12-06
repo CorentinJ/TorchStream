@@ -12,11 +12,11 @@ Install as a package (any OS, CUDA optional):
 (uv) pip install torchstream-lib
 ```
 
-Install as a project, to run the streamlit examples yourself (some examples require CUDA):
+Install as a project, to run the streamlit examples yourself (set "--extra cpu" for a cpu only install):
 ```bash
 git clone https://github.com/CorentinJ/TorchStream
 cd TorchStream
-uv run --group demos streamlit run examples
+uv run --group demos streamlit run examples --extra cuda
 ```
 
 If you don't have `uv` yet:
@@ -48,7 +48,7 @@ from torchstream import SeqSpec, SlidingWindowStream, find_sliding_window_params
 
 logging.basicConfig(level=logging.INFO)
 
-device = "cuda"
+device = "cuda" if torch.cuda.is_available() else "cpu"
 model = BigVGAN.from_pretrained("nvidia/bigvgan_v2_24khz_100band_256x").eval().to(device)
 model.remove_weight_norm()
 

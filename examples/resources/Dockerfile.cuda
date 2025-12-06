@@ -18,7 +18,7 @@ COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY torchstream ./torchstream
 COPY examples ./examples
 
-RUN uv sync --group demos --python 3.11
+RUN uv sync --group demos --extra cuda --python 3.11
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONPATH="/app:${PYTHONPATH}" \

@@ -42,7 +42,18 @@ experience. For models deployed on the user side, usually running on CPU, the go
 make the difference between a usable and an unusable experience**, as CPU inference times are often much higher.
 """
 
-device = st.radio("**Select device for inference:**", ("cuda", "cpu"))
+
+device = st.radio(
+    "**Select device for inference:**",
+    (
+        "cuda" + (" (not available/enabled)" if not torch.cuda.is_available() else ""),
+        "cpu",
+    ),
+    disabled=not torch.cuda.is_available(),
+    index=0 if torch.cuda.is_available() else 1,
+)
+if not torch.cuda.is_available():
+    device = "cpu"
 
 
 @st.cache_resource
