@@ -88,7 +88,7 @@ with st.echo():
     )
 
 
-@st.cache_data()
+@st.cache_data(show_time=True, persist=True)
 def tts_infer(device_type: str):
     # Do a single warmup run to get better benchmarks
     next(pipeline(text, voice="af_heart"))
@@ -177,7 +177,7 @@ getting to that line vs. running the whole pipeline.
 """
 
 
-@st.cache_data()
+@st.cache_data(show_time=True, persist=True)
 def full_pipeline_bench(device_type: str):
     with st.echo():
         n_runs = 5
@@ -202,7 +202,7 @@ certain function. That will let us benchmark up to the decoder call only without
 """
 
 
-@st.cache_data()
+@st.cache_data(show_time=True, persist=True)
 def partial_pipeline_bench(device_type: str):
     with st.echo():
         from torchstream import make_exit_early
@@ -286,7 +286,7 @@ with intercept_calls("kokoro.istftnet.Decoder.forward", store_in_out=True) as in
 )
 
 
-@st.cache_data()
+@st.cache_data(show_time=True, persist=True)
 def in_out_inspect(text: str, device_type: str):
     with intercept_calls("kokoro.istftnet.Decoder.forward", store_in_out=True) as interceptor:
         *_, audio = next(pipeline(text, voice="af_heart"))
@@ -535,7 +535,7 @@ we can already try out streaming as is. Sometimes, you get away without a proper
 """
 
 
-@st.cache_data()
+@st.cache_data(show_time=True, persist=True)
 def get_naive_streaming_audio():
     with st.echo():
         import math
@@ -614,28 +614,36 @@ sli_params = SlidingWindowParams(
 )
 decoder_input = decoder_in_spec.new_sequence_from_data(ref_asr, ref_f0_curve, ref_n)
 
-with st.echo():
-    with intercept_calls(
-        "torch.nn.functional.instance_norm",
-        lambda x, *args: x,
-    ):
-        with intercept_calls(
-            "torch.cumsum",
-            store_in_out=True,
-        ) as interceptor:
-            # Record the cumsum input when not streaming
-            decoder_trsfm(*decoder_input.data)
-            (ref_cumsum_in,), _, ref_cumsum_out = interceptor.calls_in_out[0]
 
-            # And what it gets when streaming with chunks of size 100
-            stream = SlidingWindowStream(
-                decoder_trsfm,
-                sli_params,
-                decoder_in_spec,
-                decoder_out_spec,
-            )
-            stream.forward_in_chunks(decoder_input, chunk_size=100)
-            stream_cumsum_ins = [args[0] for args, _, _ in interceptor.calls_in_out[1:]]
+@st.cache_data(show_time=True, persist=True)
+def ref_cumsum_in_out():
+    with st.echo():
+        with intercept_calls(
+            "torch.nn.functional.instance_norm",
+            lambda x, *args: x,
+        ):
+            with intercept_calls(
+                "torch.cumsum",
+                store_in_out=True,
+            ) as interceptor:
+                # Record the cumsum input when not streaming
+                decoder_trsfm(*decoder_input.data)
+                (ref_cumsum_in,), _, ref_cumsum_out = interceptor.calls_in_out[0]
+
+                # And what it gets when streaming with chunks of size 100
+                stream = SlidingWindowStream(
+                    decoder_trsfm,
+                    sli_params,
+                    decoder_in_spec,
+                    decoder_out_spec,
+                )
+                stream.forward_in_chunks(decoder_input, chunk_size=100)
+                stream_cumsum_ins = [args[0] for args, _, _ in interceptor.calls_in_out[1:]]
+
+                return ref_cumsum_in, ref_cumsum_out, stream_cumsum_ins
+
+
+ref_cumsum_in, ref_cumsum_out, stream_cumsum_ins = ref_cumsum_in_out()
 
 st.code(
     f"Non-streaming cumsum input shape: {tuple(ref_cumsum_in.shape)}\n"
@@ -708,7 +716,7 @@ the demonstration - rest assured that the final streaming implementation is very
 
 with st.echo():
 
-    @st.cache_data()
+    @st.cache_data(show_time=True, persist=True)
     def verify_cumsum_correctness(apply_cumsum_patch: bool):
         with intercept_calls(
             "torch.nn.functional.instance_norm",
@@ -739,7 +747,7 @@ with st.echo():
         return diffs
 
 
-@st.cache_data()
+@st.cache_data(show_time=True, persist=True)
 def _verify_cumsum_correctness(apply_cumsum_patch: bool):
     diffs = verify_cumsum_correctness(apply_cumsum_patch)
 
@@ -842,7 +850,7 @@ with st.echo():
         return streaming_instance_norm
 
 
-@st.cache_data()
+@st.cache_data(show_time=True, persist=True)
 def get_streamed_audio():
     with st.echo():
         with intercept_calls(

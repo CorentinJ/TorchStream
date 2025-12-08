@@ -78,7 +78,7 @@ And now run inference with it:
 """
 
 
-@st.cache_data()
+@st.cache_data(show_time=True, persist=True)
 def run_bigvgan_inference():
     start_time = time.perf_counter()
     with st.echo():

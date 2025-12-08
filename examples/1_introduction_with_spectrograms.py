@@ -226,7 +226,7 @@ nor that they are optimal for streaming, but it's a good smoke test.
 """
 
 
-@st.cache_data()
+@st.cache_data(show_time=True, persist=True)
 def equivalence_test():
     with st.echo():
         from torchstream import SeqSpec, SlidingWindowStream, test_stream_equivalent
