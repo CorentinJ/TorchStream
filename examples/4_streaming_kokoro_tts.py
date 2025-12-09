@@ -37,7 +37,7 @@ a TTS model, it means having a small and consistent Time To First Sound (TTFS), 
 starts hearing audio playback when a request is made. 
 
 An internal model will usually be deployed on a server with 
-GPU(s), and streaming will help **shave a couple hundred milliseconds off the TTFS**, leading to a more responsive 
+GPU(s), and streaming will help **shave off a couple hundred milliseconds from the TTFS**, leading to a more responsive 
 experience. For models deployed on the user side, usually running on CPU, the goal is the same but **streaming can 
 make the difference between a usable and an unusable experience**, as CPU inference times are often much higher.
 """
@@ -65,10 +65,7 @@ st.code(
     """
 from kokoro import KPipeline
 
-def load_kokoro_pipeline():
-    return KPipeline(lang_code="en-us", repo_id="hexgrad/Kokoro-82M")
-
-pipeline = load_kokoro_pipeline()
+pipeline = KPipeline(lang_code="en-us", repo_id="hexgrad/Kokoro-82M")
 """
 )
 

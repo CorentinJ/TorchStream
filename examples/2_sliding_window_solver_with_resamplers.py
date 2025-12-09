@@ -266,7 +266,8 @@ st.exception(librosa.util.exceptions.ParameterError("Audio buffer is not finite 
 """
 And we've hit our first snag. Librosa has an internal check to verify that input audio is valid, not containing NaNs. 
 If you go into the resample function, you'll see that this method is `valid_audio()`. In practice, you can figure 
-out types of issues by **going through stack traces** or ideally by **stepping into the transform with a debugger**.
+out these types of issues by **going through stack traces** or ideally by **stepping into the transform with a 
+debugger**.
 """
 
 with st.container(border=True):
