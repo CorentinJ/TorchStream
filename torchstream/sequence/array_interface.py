@@ -1,5 +1,5 @@
 from abc import ABC
-from typing import Generic, Tuple
+from typing import Generic, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -18,7 +18,7 @@ class ArrayInterface(ABC, Generic[SeqArray]):
     dtype: seqdtype
 
     # TODO: overloads
-    def __new__(cls, dtype_like: SeqDTypeLike | SeqArrayLike, device: str | torch.device = None):
+    def __new__(cls, dtype_like: Union[SeqDTypeLike, SeqArrayLike], device: Optional[Union[str, torch.device]] = None):
         if cls is ArrayInterface:
             dtype = to_seqdtype(dtype_like)
 
@@ -57,7 +57,7 @@ class ArrayInterface(ABC, Generic[SeqArray]):
     def get_shape(self, arr: SeqArray) -> Tuple[int, ...]:
         raise NotImplementedError()
 
-    def matches(self, arr: SeqArray | SeqDTypeLike) -> bool:
+    def matches(self, arr: Union[SeqArray, SeqDTypeLike]) -> bool:
         """
         Returns whether the given array matches the specification of this interface.
         For the purpose of this class, matching means that the array is from the same library and has a numerical
@@ -78,19 +78,19 @@ class ArrayInterface(ABC, Generic[SeqArray]):
     def concat(self, *arrays: SeqArray, dim: int) -> SeqArray:
         raise NotImplementedError()
 
-    def new_empty(self, *shape: int | Tuple[int, ...]) -> SeqArray:
+    def new_empty(self, *shape: Union[int, Tuple[int, ...]]) -> SeqArray:
         """
         Returns an empty array of the given shape. The array's values are uninitialized.
         """
         raise NotImplementedError()
 
-    def new_zeros(self, *shape: int | Tuple[int, ...]) -> SeqArray:
+    def new_zeros(self, *shape: Union[int, Tuple[int, ...]]) -> SeqArray:
         """
         Returns an array of the given shape, filled with zeros.
         """
         return self.new_empty(*shape).zero_()
 
-    def new_randn(self, *shape: int | Tuple[int, ...]) -> SeqArray:
+    def new_randn(self, *shape: Union[int, Tuple[int, ...]]) -> SeqArray:
         """
         Sample a sequence of the given size from a normal distribution (discretized for integer types).
         """
@@ -98,7 +98,7 @@ class ArrayInterface(ABC, Generic[SeqArray]):
 
 
 class NumpyArrayInterface(ArrayInterface[np.ndarray]):
-    def __init__(self, dtype_like: DTypeLike | ArrayLike, device=None):
+    def __init__(self, dtype_like: Union[DTypeLike, ArrayLike], device=None):
         assert not device
         # TODO: limit to numerical types (i.e. not strings)
         #   -> Why though? For the NaN trick?
@@ -113,13 +113,13 @@ class NumpyArrayInterface(ArrayInterface[np.ndarray]):
     def get_shape(self, arr: np.ndarray) -> Tuple[int, ...]:
         return arr.shape
 
-    def new_empty(self, *shape: int | Tuple[int, ...]) -> np.ndarray:
+    def new_empty(self, *shape: Union[int, Tuple[int, ...]]) -> np.ndarray:
         return np.empty(shape[0] if isinstance(shape[0], tuple) else shape, dtype=self.dtype)
 
-    def new_zeros(self, *shape: int | Tuple[int, ...]) -> np.ndarray:
+    def new_zeros(self, *shape: Union[int, Tuple[int, ...]]) -> np.ndarray:
         return np.zeros(shape[0] if isinstance(shape[0], tuple) else shape, dtype=self.dtype)
 
-    def new_randn(self, *shape: int | Tuple[int, ...]) -> np.ndarray:
+    def new_randn(self, *shape: Union[int, Tuple[int, ...]]) -> np.ndarray:
         return np.random.randn(*(shape[0] if isinstance(shape[0], tuple) else shape)).astype(self.dtype)
 
     def concat(self, *arrays: np.ndarray, dim: int) -> np.ndarray:
@@ -143,7 +143,7 @@ class NumpyArrayInterface(ArrayInterface[np.ndarray]):
 
 
 class TensorInterface(ArrayInterface[torch.Tensor]):
-    def __init__(self, dtype_like: torch.dtype | torch.Tensor, device: str | torch.device = None):
+    def __init__(self, dtype_like: Union[torch.dtype, torch.Tensor], device: Optional[Union[str, torch.device]] = None):
         if torch.is_tensor(dtype_like):
             self.dtype = dtype_like.dtype
             self.device = dtype_like.device
@@ -166,18 +166,18 @@ class TensorInterface(ArrayInterface[torch.Tensor]):
     def get_shape(self, arr: torch.Tensor) -> Tuple[int, ...]:
         return tuple(arr.shape)
 
-    def matches(self, arr: SeqArray | SeqDTypeLike) -> bool:
+    def matches(self, arr: Union[SeqArray, SeqDTypeLike]) -> bool:
         if super().matches(arr):
             return arr.device == self.device
         return False
 
-    def new_empty(self, *shape: int | Tuple[int, ...]) -> torch.Tensor:
+    def new_empty(self, *shape: Union[int, Tuple[int, ...]]) -> torch.Tensor:
         return torch.empty(*shape, dtype=self.dtype, device=self.device)
 
-    def new_zeros(self, *shape: int | Tuple[int, ...]) -> torch.Tensor:
+    def new_zeros(self, *shape: Union[int, Tuple[int, ...]]) -> torch.Tensor:
         return torch.zeros(*shape, dtype=self.dtype, device=self.device)
 
-    def new_randn(self, *shape: int | Tuple[int, ...]) -> torch.Tensor:
+    def new_randn(self, *shape: Union[int, Tuple[int, ...]]) -> torch.Tensor:
         return torch.randn(*shape, dtype=self.dtype, device=self.device)
 
     def concat(self, *arrays: torch.Tensor, dim: int) -> torch.Tensor:

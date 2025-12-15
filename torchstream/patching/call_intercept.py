@@ -1,6 +1,6 @@
 import importlib
 from copy import deepcopy
-from typing import Callable
+from typing import Callable, Optional, Union
 
 from torchstream.patching.call_identification import (
     get_callstack_locs,
@@ -8,13 +8,13 @@ from torchstream.patching.call_identification import (
 )
 
 
-def get_fully_qualified_name(obj: str | object) -> str:
+def get_fully_qualified_name(obj: Union[str, object]) -> str:
     if isinstance(obj, str):
         return obj
     return obj.__module__ + "." + obj.__qualname__
 
 
-def retrieve_object(target: str | object):
+def retrieve_object(target: Union[str, object]):
     target = get_fully_qualified_name(target)
     target_parts = target.split(".")
 
@@ -45,8 +45,8 @@ def retrieve_object(target: str | object):
 class intercept_calls:
     def __init__(
         self,
-        target_fn: str | object,
-        handler_fn: Callable | None = None,
+        target_fn: Union[str, object],
+        handler_fn: Optional[Callable] = None,
         store_in_out: bool = False,
         deep_copy_in_out: bool = True,
         pass_original_fn: bool = False,
@@ -151,7 +151,7 @@ class intercept_calls:
 
 
 # TODO: offer to return on the exit of the the target function, rather than on the start
-def make_exit_early(fn: Callable, target_to_exit_on: str, out_proc_fn: Callable | None = None) -> Callable:
+def make_exit_early(fn: Callable, target_to_exit_on: str, out_proc_fn: Optional[Callable] = None) -> Callable:
     """
     TODO: doc
     """

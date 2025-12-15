@@ -1,5 +1,5 @@
 import logging
-from typing import Callable, Iterable, Optional, Tuple, overload
+from typing import Callable, Iterable, Optional, Tuple, Union, overload
 from typing import Sequence as _Sequence
 
 import numpy as np
@@ -183,7 +183,7 @@ class Sequence:
     def __getitem__(self, idx: int) -> "Sequence": ...
     @overload
     def __getitem__(self, sli: slice) -> "Sequence": ...
-    def __getitem__(self, sli: int | slice) -> "Sequence":
+    def __getitem__(self, sli: Union[int, slice]) -> "Sequence":
         """
         Reads from the sequence without consuming it, returning a new Sequence with a copy of the sliced data. The
         indexing is done across the sequence dimension, and across this dimension only (multi indexing is not allowed).
@@ -238,7 +238,7 @@ class Sequence:
     def __setitem__(self, idx: int, value: SeqArrayLike) -> None: ...
     @overload
     def __setitem__(self, sli: slice, value: SeqArrayLike) -> None: ...
-    def __setitem__(self, sli: int | slice, value: SeqArrayLike) -> None:
+    def __setitem__(self, sli: Union[int, slice], value: SeqArrayLike) -> None:
         if not isinstance(sli, slice):
             sli = slice(sli, sli + 1)
         sli = slice(*sli.indices(self.size))
@@ -328,8 +328,10 @@ class Sequence:
     def apply(
         self,
         trsfm: Callable,
-        out_spec: "SeqSpec | None" = None,
-        zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
+        out_spec: Optional["SeqSpec"] = None,
+        zero_size_exception_signatures: Iterable[
+            Union[Exception, ExceptionWithSubstring]
+        ] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
     ) -> "Sequence":
         """
         Forwards the sequence's data (without consuming it) through the given transform while:
@@ -366,7 +368,7 @@ class Sequence:
     #     trsfm: Callable,
     #     sli_params: SlidingWindowParams,
     #     chunk_size: int,
-    #     out_spec: "SeqSpec | None" = None,
+    #     out_spec: Optional["SeqSpec"] = None,
     # ) -> Iterator["Sequence"]:
     #     # TODO! doc
     #     from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream
@@ -379,7 +381,7 @@ class Sequence:
     #     trsfm: Callable,
     #     sli_params: SlidingWindowParams,
     #     chunk_size: int,
-    #     out_spec: "SeqSpec | None" = None,
+    #     out_spec: Optional["SeqSpec"] = None,
     # ) -> "Sequence":
     #     # TODO! doc
     #     from torchstream.sliding_window.sliding_window_stream import SlidingWindowStream

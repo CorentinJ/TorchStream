@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Iterable, Tuple, overload
+from typing import TYPE_CHECKING, Callable, Iterable, Optional, Tuple, Union, overload
 from typing import Sequence as _Sequence
 
 import numpy as np
@@ -147,8 +147,10 @@ class SeqSpec:
         self,
         trsfm: Callable,
         *in_arrs: SeqArrayLike,
-        out_spec: "SeqSpec | None" = None,
-        zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
+        out_spec: Optional["SeqSpec"] = None,
+        zero_size_exception_signatures: Iterable[
+            Union[Exception, ExceptionWithSubstring]
+        ] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
     ) -> Tuple[SeqArrayLike, ...]:
         """
         Forwards the given input arrays through the given transform while:

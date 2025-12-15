@@ -3,7 +3,7 @@ This module helps us catch specific exceptions using substrings in their message
 legitimate exceptions that happen to be of the same type.
 """
 
-from typing import Iterable, Tuple
+from typing import Iterable, Tuple, Union
 
 ExceptionWithSubstring = Tuple[Exception, str]
 
@@ -33,7 +33,7 @@ DEFAULT_ZERO_SIZE_EXCEPTIONS = [
 
 def matches_any_exception(
     e: Exception,
-    exception_signatures: Iterable[Exception | ExceptionWithSubstring],
+    exception_signatures: Iterable[Union[Exception, ExceptionWithSubstring]],
 ) -> bool:
     """
     Returns whether the given exception matches any of the provided exception signatures by:

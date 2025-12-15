@@ -1,5 +1,5 @@
 import itertools
-from typing import Callable, Iterable, Tuple
+from typing import Callable, Iterable, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -16,10 +16,10 @@ def test_stream_equivalent(
     stream: Stream,
     # TODO: offer comparison to an output array instead, to avoid recomputing for multiple streams
     # TODO: overloads with input sequence size
-    in_data: SeqArrayLike | Tuple[SeqArrayLike, ...] | Sequence | None = None,
+    in_data: Union[SeqArrayLike, Tuple[SeqArrayLike, ...], Sequence, None] = None,
     in_step_sizes: Iterable[int] = (7, 4, 12, 1, 17, 9),
     atol: float = 1e-5,
-    throughput_check_max_delay: int | None = None,
+    throughput_check_max_delay: Optional[int] = None,
 ):
     """
     Tests if a stream implementation gives outputs close or equivalent to its synchronous counterpart.

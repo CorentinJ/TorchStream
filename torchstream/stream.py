@@ -1,4 +1,4 @@
-from typing import Iterator, Optional, Tuple, overload
+from typing import Iterator, Optional, Tuple, Union, overload
 
 from torchstream.sequence.dtype import SeqArrayLike
 from torchstream.sequence.sequence import SeqSpec, Sequence
@@ -81,7 +81,7 @@ class Stream:
         self, *in_arrs: SeqArrayLike, is_last_input: bool = False, allow_zero_size_outputs: bool = False
     ) -> Sequence: ...
     def __call__(
-        self, *inputs: Sequence | SeqArrayLike, is_last_input: bool = False, allow_zero_size_outputs: bool = False
+        self, *inputs: Union[Sequence, SeqArrayLike], is_last_input: bool = False, allow_zero_size_outputs: bool = False
     ) -> Sequence:
         """
         Forwards input data through the stream.
@@ -147,7 +147,9 @@ class Stream:
         """
         return self(is_last_input=True, allow_zero_size_outputs=True)
 
-    def _step(self, in_buff: Sequence, is_last_input: bool) -> Sequence | Tuple[SeqArrayLike, ...] | SeqArrayLike:
+    def _step(
+        self, in_buff: Sequence, is_last_input: bool
+    ) -> Union[Sequence, Tuple[SeqArrayLike, ...], SeqArrayLike]:
         """
         TODO! instruct how to override
 

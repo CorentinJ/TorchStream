@@ -1,4 +1,9 @@
-from typing import TypeAlias, TypeVar
+try:
+    from typing import TypeAlias  # Python 3.10+
+except ImportError:  # Python 3.8/3.9
+    from typing_extensions import TypeAlias
+
+from typing import TypeVar, Union
 
 import numpy as np
 import torch
@@ -12,17 +17,17 @@ a similar scalar type but also memory layout information, byte encoding order, e
 """
 
 # Used for argument typing. Supports a broad range of types.
-SeqDTypeLike: TypeAlias = torch.dtype | DTypeLike
-SeqArrayLike: TypeAlias = torch.Tensor | ArrayLike
-DeviceLike: TypeAlias = str | torch.device
+SeqDTypeLike: TypeAlias = Union[torch.dtype, DTypeLike]
+SeqArrayLike: TypeAlias = Union[torch.Tensor, ArrayLike]
+DeviceLike: TypeAlias = Union[str, torch.device]
 
 # Used for normalized types (e.g. class attributes)
-seqdtype: TypeAlias = torch.dtype | np.dtype
+seqdtype: TypeAlias = Union[torch.dtype, np.dtype]
 SeqArray = TypeVar("SeqArray", torch.Tensor, np.ndarray)
 
 
 # TODO: clean overload for type vs array
-def to_seqdtype(obj: SeqDTypeLike | SeqArrayLike) -> seqdtype:
+def to_seqdtype(obj: Union[SeqDTypeLike, SeqArrayLike]) -> seqdtype:
     """
     Normalizes a dtype to a torch.dtype or a numpy dtype. Can also extract the dtype from an array-like object.
     """

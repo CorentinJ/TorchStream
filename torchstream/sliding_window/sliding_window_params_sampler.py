@@ -1,5 +1,5 @@
 import logging
-from typing import Tuple
+from typing import Optional, Tuple
 
 from opentelemetry import trace
 from z3 import And, Bool, Implies, Int, Ints, Or, Solver, sat
@@ -130,8 +130,8 @@ class SlidingWindowParamsSampler:
         self,
         in_len: int,
         out_len: int,
-        in_nan_range: Tuple[int, int] | None,
-        out_nan_range: Tuple[int, int] | None,
+        in_nan_range: Optional[Tuple[int, int]],
+        out_nan_range: Optional[Tuple[int, int]],
     ):
         """
         TODO: doc
@@ -343,9 +343,9 @@ class SlidingWindowParamsSampler:
     def get_new_solution(
         self,
         *cstrs,
-        same_family_as: SlidingWindowParams | None = None,
-        different_family_than: SlidingWindowParams | None = None,
-    ) -> SlidingWindowParams | None:
+        same_family_as: Optional[SlidingWindowParams] = None,
+        different_family_than: Optional[SlidingWindowParams] = None,
+    ) -> Optional[SlidingWindowParams]:
         # TODO! doc
 
         # FIXME? Constraints are modifying the sampling direction with stateful cost limits samplers. Shouldn't be a

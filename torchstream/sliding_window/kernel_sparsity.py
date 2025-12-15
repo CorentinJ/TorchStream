@@ -1,5 +1,5 @@
 import logging
-from typing import Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 from opentelemetry import trace
@@ -40,9 +40,9 @@ def get_init_kernel_array(kernel_size: int, full: bool = False) -> np.ndarray:
 def get_nan_map(
     params: SlidingWindowParams,
     in_len: int,
-    in_nan_range: Tuple[int, int] | None,
-    kernel_in: np.ndarray | None = None,
-    kernel_out: np.ndarray | None = None,
+    in_nan_range: Optional[Tuple[int, int]],
+    kernel_in: Optional[np.ndarray] = None,
+    kernel_out: Optional[np.ndarray] = None,
 ):
     # TODO! doc
     assert in_nan_range is None or (0 <= in_nan_range[0] < in_nan_range[1] <= in_len)
@@ -88,8 +88,8 @@ class KernelSparsitySampler:
     def __init__(
         self,
         params: SlidingWindowParams,
-        kernel_in_prior: np.ndarray | None = None,
-        kernel_out_prior: np.ndarray | None = None,
+        kernel_in_prior: Optional[np.ndarray] = None,
+        kernel_out_prior: Optional[np.ndarray] = None,
     ):
         # TODO! doc
         if kernel_in_prior is None:
@@ -130,7 +130,7 @@ class KernelSparsitySampler:
     @tracer.start_as_current_span("kernel_sampler.get_window_corruption_map")
     def _get_window_corruption_map(
         self, in_len: int, in_nan_range: Tuple[int, int], out_nan_idx: np.ndarray
-    ) -> np.ndarray | None:
+    ) -> Optional[np.ndarray]:
         """
         Given an input and output nan map, returns the window corruption array (with values 0, 1, 2) based on the
         current kernel sparsity assumptions. Returns None if the input and output NaNs observed cannot be reconciled
@@ -260,7 +260,7 @@ class KernelSparsitySampler:
         return self._solvable  # and (self.solver.check() != unsat)
 
     @tracer.start_as_current_span("kernel_sampler.determine")
-    def determine(self) -> Tuple[np.ndarray | None, np.ndarray | None]:
+    def determine(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
         # TODO: doc
         if not self.has_solution():
             return None, None

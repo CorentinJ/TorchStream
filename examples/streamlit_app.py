@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from typing import Union
 
 import streamlit as st
 
@@ -32,7 +33,7 @@ PAGES = {
 }
 
 
-def render_prev_next(python_filepath: str | Path) -> None:
+def render_prev_next(python_filepath: Union[str, Path]) -> None:
     python_filepath = Path(python_filepath)
 
     # FIXME: adhoc

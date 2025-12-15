@@ -1,5 +1,5 @@
 import math
-from typing import Iterator, List, Tuple, overload
+from typing import Iterator, List, Optional, Tuple, overload
 
 from z3 import If, Int
 
@@ -48,7 +48,7 @@ class SlidingWindowParams:
         stride_out: int = 1,
         left_out_trim: int = 0,
         right_out_trim: int = 0,
-        min_input_size: int | None = None,
+        min_input_size: Optional[int] = None,
     ):
         self.kernel_size_in = int(kernel_size_in)
         self.kernel_size_out = int(kernel_size_out)
@@ -220,7 +220,7 @@ class SlidingWindowParams:
     @overload
     def iter_kernel_map(self, *, num_wins: int) -> Iterator[Tuple[Tuple[int, int], Tuple[int, int]]]: ...
     def iter_kernel_map(
-        self, *, in_len: int | None = None, num_wins: int | None = None
+        self, *, in_len: Optional[int] = None, num_wins: Optional[int] = None
     ) -> Iterator[Tuple[Tuple[int, int], Tuple[int, int]]]:
         """
         Iterates over the regions of input and output mapped by the sliding window parameters.

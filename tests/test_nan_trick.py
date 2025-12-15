@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 import pytest
@@ -32,7 +32,7 @@ from torchstream.sliding_window.nan_trick import get_nan_idx
 def test_get_nan_range(
     shape: Tuple[int],
     dtype: SeqDTypeLike,
-    nan_range: Tuple[int, int] | None,
+    nan_range: Optional[Tuple[int, int]],
 ):
     seq = Sequence.new_zeros(shape, dtype, seq_size=20)
 

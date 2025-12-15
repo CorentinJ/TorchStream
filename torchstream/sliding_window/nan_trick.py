@@ -1,6 +1,6 @@
 import logging
 import math
-from typing import Callable, Iterable, Optional, Tuple
+from typing import Callable, Iterable, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -52,9 +52,9 @@ def get_nan_idx(x: Sequence) -> np.ndarray:
 def run_nan_trick(
     trsfm: Callable,
     in_seq: Sequence,
-    in_nan_range: Tuple[int, int] | None,
+    in_nan_range: Optional[Tuple[int, int]],
     out_spec: Optional[SeqSpec] = None,
-    zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
+    zero_size_exception_signatures: Iterable[Union[Exception, ExceptionWithSubstring]] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
 ) -> Tuple[Sequence, np.ndarray]:
     """
     TODO: doc
@@ -84,9 +84,9 @@ def run_nan_trick(
 
 def get_context_size_empirically(
     params: SlidingWindowParams,
-    trsfm: Callable | None = None,
-    in_spec: SeqSpec | None = None,
-    out_spec: SeqSpec | None = None,
+    trsfm: Optional[Callable] = None,
+    in_spec: Optional[SeqSpec] = None,
+    out_spec: Optional[SeqSpec] = None,
 ) -> int:
     if trsfm:
         assert in_spec is not None, "Both trsfm and in_spec must be provided if either is provided"

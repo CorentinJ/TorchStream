@@ -1,7 +1,7 @@
 import logging
 import math
 from itertools import zip_longest
-from typing import Callable, Iterable, List, Tuple
+from typing import Callable, Iterable, List, Optional, Tuple, Union
 
 from colorama import Fore as colors
 from opentelemetry import trace
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 
-def _compare_params_str(params: tuple, real_params: tuple | None, names: Iterable[str] | None = None) -> str:
+def _compare_params_str(params: tuple, real_params: Optional[tuple], names: Optional[Iterable[str]] = None) -> str:
     assert not real_params or len(params) == len(real_params)
     names = [n + "=" for n in names] if names else [""] * len(params)
     assert len(params) == len(names), (params, names)
@@ -44,7 +44,7 @@ def _compare_params_str(params: tuple, real_params: tuple | None, names: Iterabl
 
 
 # TODO: I need this fancy function elsewhere, it's very useful
-def _compare_sli_params_str(params: SlidingWindowParams, real_params: SlidingWindowParams | None = None) -> str:
+def _compare_sli_params_str(params: SlidingWindowParams, real_params: Optional[SlidingWindowParams] = None) -> str:
     if real_params:
         ref_params = real_params.as_tuple(with_min_in_size=False)
         ref_size_rel = (real_params.canonical_in_out_size_params) + (real_params.min_input_size,)
@@ -172,11 +172,13 @@ class SlidingWindowParamsSolver:
         self,
         trsfm: Callable,
         in_spec: SeqSpec,
-        out_spec: SeqSpec | None = None,
+        out_spec: Optional[SeqSpec] = None,
         init_seq_size: int = 30,
         max_in_out_seq_size: int = 100_000,
-        zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
-        debug_ref_params: SlidingWindowParams | None = None,
+        zero_size_exception_signatures: Iterable[
+            Union[Exception, ExceptionWithSubstring]
+        ] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
+        debug_ref_params: Optional[SlidingWindowParams] = None,
     ):
         self._trsfm = trsfm
         self.in_spec = in_spec
@@ -201,7 +203,7 @@ class SlidingWindowParamsSolver:
         return len(self.nan_trick_history)
 
     def run_nan_trick(
-        self, in_seq_size: int, in_nan_range: Tuple[int, int] | None, raise_on_max_seq_size: bool = True
+        self, in_seq_size: int, in_nan_range: Optional[Tuple[int, int]], raise_on_max_seq_size: bool = True
     ) -> dict:
         """
         Forwards an input of size `in_seq_size` with NaNs in the range `in_nan_range` through the transform, storing
@@ -466,7 +468,7 @@ class SlidingWindowParamsSolver:
         self,
         sampler,
         event: str,
-        other_params: SlidingWindowParams | None = None,
+        other_params: Optional[SlidingWindowParams] = None,
     ):
         """
         Debugging method for checking why a good reference hypothesis gets rejected.
@@ -600,14 +602,14 @@ class SlidingWindowParamsSolver:
 def find_sliding_window_params(
     trsfm: Callable,
     in_spec: SeqSpec,
-    out_spec: SeqSpec | None = None,
+    out_spec: Optional[SeqSpec] = None,
     init_seq_size: int = 30,
     max_in_out_seq_size: int = 100_000,
     max_equivalent_sols: int = 1,
     max_hypotheses: int = 300,
     hyp_test_upsize_factor: int = 3,
-    zero_size_exception_signatures: Iterable[Exception | ExceptionWithSubstring] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
-    debug_ref_params: SlidingWindowParams | None = None,
+    zero_size_exception_signatures: Iterable[Union[Exception, ExceptionWithSubstring]] = DEFAULT_ZERO_SIZE_EXCEPTIONS,
+    debug_ref_params: Optional[SlidingWindowParams] = None,
 ) -> List[SlidingWindowParams]:
     """
     Convenience wrapper around SlidingWindowParamsSolver.find_sliding_window_params. Refer to the class constructor

@@ -1,3 +1,5 @@
+from typing import Optional
+
 import numpy as np
 import torch
 
@@ -45,8 +47,8 @@ def plot_spectrogram(
     spec,
     aspect="auto",
     is_log: bool = False,
-    vmin: float | None = -20.0,
-    vmax: float | None = 15.0,
+    vmin: Optional[float] = -20.0,
+    vmax: Optional[float] = 15.0,
 ):
     if torch.is_tensor(spec):
         spec = spec.cpu().numpy()

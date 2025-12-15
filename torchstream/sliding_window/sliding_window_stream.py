@@ -1,4 +1,4 @@
-from typing import Callable, Tuple
+from typing import Callable, Optional, Tuple
 
 from torchstream.sequence.sequence import SeqSpec, Sequence
 from torchstream.sliding_window.sliding_window_params import SlidingWindowParams, get_output_delay
@@ -25,7 +25,7 @@ class SlidingWindowStream(Stream):
         transform: Callable,
         sliding_window_params: SlidingWindowParams,
         in_spec: SeqSpec,
-        out_spec: SeqSpec | None = None,
+        out_spec: Optional[SeqSpec] = None,
     ):
         super().__init__(in_spec, out_spec)
 
@@ -39,7 +39,7 @@ class SlidingWindowStream(Stream):
         # being requested to compute any new window, and some previous output has not been returned yet.
         self._prev_trimmed_output = None
 
-    def get_next_output_slice(self, in_buff_size: int, is_last_input: bool) -> Tuple[int | None, int, int]:
+    def get_next_output_slice(self, in_buff_size: int, is_last_input: bool) -> Tuple[Optional[int], int, int]:
         """
         Given an input buffer size and whether this is the last input, returns the output size and the start and end
         indices of the next output to compute.

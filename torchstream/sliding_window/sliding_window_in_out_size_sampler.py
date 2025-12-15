@@ -1,7 +1,7 @@
 import logging
 import math
 from bisect import bisect_left
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 from opentelemetry import trace
@@ -34,7 +34,7 @@ class SlidingWindowInOutSizeSampler:
             raise ValueError("This observation has already been added")
         self.obs = np.insert(self.obs, insert_idx, (in_len, out_len), axis=0)
 
-    def _solve_so(self) -> Tuple[int | None, int | None]:
+    def _solve_so(self) -> Tuple[Optional[int], Optional[int]]:
         if len(self.obs) == 0:
             raise RuntimeError("No observations (with a non-zero output size) have been added yet")
 
@@ -59,7 +59,7 @@ class SlidingWindowInOutSizeSampler:
         in_size_b = self.obs[min_pos_out_diff_idx + 1, 0]
         return None, int((in_size_a + in_size_b) // 2)
 
-    def _solve_si_bounds(self, s_o: int) -> Tuple[Tuple[int, int] | None, int | None]:
+    def _solve_si_bounds(self, s_o: int) -> Tuple[Optional[Tuple[int, int]], Optional[int]]:
         s_i_bounds = [1, float("inf")]
 
         # Take all observations pairwise to infer s_i bounds
@@ -84,7 +84,7 @@ class SlidingWindowInOutSizeSampler:
 
     def _determine_unique_solution(
         self, s_i_bounds: Tuple[int, int], s_o: int, min_in_size: int = 1, max_in_size: int = 10_000
-    ) -> Tuple[Tuple[int, int, int, int] | None, int | None]:
+    ) -> Tuple[Optional[Tuple[int, int, int, int]], Optional[int]]:
         # At this point in the process, we only have a small finite number of solutions possible. We can brute force the
         # remaining parameters.
         possible_params = []
@@ -107,7 +107,7 @@ class SlidingWindowInOutSizeSampler:
         return None, max_infogain_input_size
 
     @tracer.start_as_current_span("in_out_size_sampler.solve")
-    def solve(self, min_in_size: int, max_in_size: int) -> Tuple[Tuple[int, int, int, int] | None, int | None]:
+    def solve(self, min_in_size: int, max_in_size: int) -> Tuple[Optional[Tuple[int, int, int, int]], Optional[int]]:
         s_o, next_in_size = self._solve_so()
         if next_in_size:
             return None, next_in_size

@@ -1,3 +1,5 @@
+from typing import Optional
+
 import numpy as np
 
 # TODO: docs for all functions
@@ -36,11 +38,11 @@ def overlap_windows(windows: np.ndarray, stride: int, overlap_fn=np.add) -> np.n
 def run_sliding_window(
     in_vec: np.ndarray,
     stride_in: int = 1,
-    kernel_in: np.ndarray | None = None,
+    kernel_in: Optional[np.ndarray] = None,
     kernel_in_fn=np.multiply,
     kernel_in_reduce=np.sum,
     stride_out: int = 1,
-    kernel_out: np.ndarray | None = None,
+    kernel_out: Optional[np.ndarray] = None,
     kernel_out_fn=np.multiply,
     overlap_fn=np.add,
 ):

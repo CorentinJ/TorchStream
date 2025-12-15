@@ -1,4 +1,4 @@
-from typing import Callable
+from typing import Callable, Optional
 
 from matplotlib.patches import ConnectionPatch, Rectangle
 
@@ -13,7 +13,7 @@ class AnimatedSlidingWindowStream(SlidingWindowStream):
         transform: Callable,
         sliding_window_params: SlidingWindowParams,
         in_spec: SeqSpec,
-        out_spec: SeqSpec | None = None,
+        out_spec: Optional[SeqSpec] = None,
     ):
         super().__init__(transform, sliding_window_params, in_spec, out_spec)
 
