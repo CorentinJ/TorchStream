@@ -54,11 +54,7 @@ device = st.radio(
 )
 if not torch.cuda.is_available():
     device = "cpu"
-
-
-@st.cache_resource
-def load_kokoro_pipeline(device: str):
-    return KPipeline(lang_code="en-us", repo_id="hexgrad/Kokoro-82M", device=device)
+device = torch.device(device)
 
 
 st.code(
@@ -68,9 +64,6 @@ from kokoro import KPipeline
 pipeline = KPipeline(lang_code="en-us", repo_id="hexgrad/Kokoro-82M")
 """
 )
-
-pipeline = load_kokoro_pipeline(device)
-device = pipeline.model.device
 
 
 with st.echo():
@@ -85,8 +78,17 @@ with st.echo():
     )
 
 
+# Cached as resource, but all results are disk-cached as data, so this should should not need to persist to RAM.
+# TODO: clear at the end of the script execution? Add an env var to ensure this is not running?
+@st.cache_resource()
+def get_kokoro_pipeline(device):
+    return KPipeline(lang_code="en-us", repo_id="hexgrad/Kokoro-82M", device=device)
+
+
 @st.cache_data(show_time=True, persist=True)
 def tts_infer(device_type: str):
+    pipeline = get_kokoro_pipeline(device)
+
     # Do a single warmup run to get better benchmarks
     next(pipeline(text, voice="af_heart"))
 
@@ -176,6 +178,8 @@ getting to that line vs. running the whole pipeline.
 
 @st.cache_data(show_time=True, persist=True)
 def full_pipeline_bench(device_type: str):
+    pipeline = get_kokoro_pipeline(device)
+
     with st.echo():
         n_runs = 5
         deltas = []
@@ -201,6 +205,8 @@ certain function. That will let us benchmark up to the decoder call only without
 
 @st.cache_data(show_time=True, persist=True)
 def partial_pipeline_bench(device_type: str):
+    pipeline = get_kokoro_pipeline(device)
+
     with st.echo():
         from torchstream import make_exit_early
 
@@ -285,9 +291,11 @@ with intercept_calls("kokoro.istftnet.Decoder.forward", store_in_out=True) as in
 
 @st.cache_data(show_time=True, persist=True)
 def in_out_inspect(text: str, device_type: str):
+    pipeline = get_kokoro_pipeline(device)
+
     with intercept_calls("kokoro.istftnet.Decoder.forward", store_in_out=True) as interceptor:
         *_, audio = next(pipeline(text, voice="af_heart"))
-        (decoder, ref_asr, ref_f0_curve, ref_n, ref_s), _, ref_audio = interceptor.calls_in_out[0]
+        (_, ref_asr, ref_f0_curve, ref_n, ref_s), _, ref_audio = interceptor.calls_in_out[0]
 
         st.code(
             f"Pipeline input text: {text}\n\n"
@@ -300,7 +308,7 @@ def in_out_inspect(text: str, device_type: str):
             f"- audio: {tuple(ref_audio.shape)} {str(ref_audio.dtype)} {str(ref_audio.device)}"
         )
 
-    return decoder, ref_asr, ref_f0_curve, ref_n, ref_s, ref_audio
+    return ref_asr, ref_f0_curve, ref_n, ref_s, ref_audio
 
 
 """
