@@ -322,7 +322,7 @@ in_out_inspect("Hello world!", device.type)
 For the second input let's put the longer original text (and let's store the results for later use)
 """
 
-decoder, ref_asr, ref_f0_curve, ref_n, ref_s, ref_audio = in_out_inspect(text, device.type)
+ref_asr, ref_f0_curve, ref_n, ref_s, ref_audio = in_out_inspect(text, device.type)
 ref_audio = ref_audio.cpu().numpy().flatten()
 
 """
