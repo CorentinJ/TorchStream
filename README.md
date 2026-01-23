@@ -3,7 +3,7 @@
 TorchStream is a library to help ML developers stream PyTorch models **without retraining nor rewriting them**, 
 in order to reduce their latency or use them in live applications.
 
-TorchStream comes with [a website of live examples](https://torchstream.koyeb.app).
+TorchStream comes with [a website of live examples](https://torchstream.cjemine.xyz/).
 
 
 ## Installation
