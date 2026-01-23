@@ -11,11 +11,11 @@ ENV PATH="/root/.local/bin:${PATH}"
 WORKDIR /app
 
 COPY pyproject.toml uv.lock README.md LICENSE ./
+RUN uv sync --group demos --extra cpu --python 3.11
 
 COPY torchstream ./torchstream
 COPY examples ./examples
 
-RUN uv sync --group demos --extra cpu --python 3.11
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONPATH="/app:${PYTHONPATH}" \

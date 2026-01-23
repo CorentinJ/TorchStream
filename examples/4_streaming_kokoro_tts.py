@@ -1,6 +1,7 @@
 import inspect
 import logging
 import time
+from argparse import Namespace
 from textwrap import dedent
 
 import numpy as np
@@ -54,11 +55,7 @@ device = st.radio(
 )
 if not torch.cuda.is_available():
     device = "cpu"
-
-
-@st.cache_resource
-def load_kokoro_pipeline(device: str):
-    return KPipeline(lang_code="en-us", repo_id="hexgrad/Kokoro-82M", device=device)
+device = torch.device(device)
 
 
 st.code(
@@ -68,9 +65,6 @@ from kokoro import KPipeline
 pipeline = KPipeline(lang_code="en-us", repo_id="hexgrad/Kokoro-82M")
 """
 )
-
-pipeline = load_kokoro_pipeline(device)
-device = pipeline.model.device
 
 
 with st.echo():
@@ -85,8 +79,17 @@ with st.echo():
     )
 
 
+# Cached as resource, but all results are disk-cached as data, so this should should not need to persist to RAM.
+# TODO: clear at the end of the script execution? Add an env var to ensure this is not running?
+@st.cache_resource()
+def get_kokoro_pipeline(device):
+    return KPipeline(lang_code="en-us", repo_id="hexgrad/Kokoro-82M", device=device)
+
+
 @st.cache_data(show_time=True, persist=True)
 def tts_infer(device_type: str):
+    pipeline = get_kokoro_pipeline(device)
+
     # Do a single warmup run to get better benchmarks
     next(pipeline(text, voice="af_heart"))
 
@@ -176,6 +179,8 @@ getting to that line vs. running the whole pipeline.
 
 @st.cache_data(show_time=True, persist=True)
 def full_pipeline_bench(device_type: str):
+    pipeline = get_kokoro_pipeline(device)
+
     with st.echo():
         n_runs = 5
         deltas = []
@@ -201,6 +206,8 @@ certain function. That will let us benchmark up to the decoder call only without
 
 @st.cache_data(show_time=True, persist=True)
 def partial_pipeline_bench(device_type: str):
+    pipeline = get_kokoro_pipeline(device)
+
     with st.echo():
         from torchstream import make_exit_early
 
@@ -285,9 +292,11 @@ with intercept_calls("kokoro.istftnet.Decoder.forward", store_in_out=True) as in
 
 @st.cache_data(show_time=True, persist=True)
 def in_out_inspect(text: str, device_type: str):
+    pipeline = get_kokoro_pipeline(device)
+
     with intercept_calls("kokoro.istftnet.Decoder.forward", store_in_out=True) as interceptor:
         *_, audio = next(pipeline(text, voice="af_heart"))
-        (decoder, ref_asr, ref_f0_curve, ref_n, ref_s), _, ref_audio = interceptor.calls_in_out[0]
+        (_, ref_asr, ref_f0_curve, ref_n, ref_s), _, ref_audio = interceptor.calls_in_out[0]
 
         st.code(
             f"Pipeline input text: {text}\n\n"
@@ -300,7 +309,7 @@ def in_out_inspect(text: str, device_type: str):
             f"- audio: {tuple(ref_audio.shape)} {str(ref_audio.dtype)} {str(ref_audio.device)}"
         )
 
-    return decoder, ref_asr, ref_f0_curve, ref_n, ref_s, ref_audio
+    return ref_asr, ref_f0_curve, ref_n, ref_s, ref_audio
 
 
 """
@@ -314,7 +323,7 @@ in_out_inspect("Hello world!", device.type)
 For the second input let's put the longer original text (and let's store the results for later use)
 """
 
-decoder, ref_asr, ref_f0_curve, ref_n, ref_s, ref_audio = in_out_inspect(text, device.type)
+ref_asr, ref_f0_curve, ref_n, ref_s, ref_audio = in_out_inspect(text, device.type)
 ref_audio = ref_audio.cpu().numpy().flatten()
 
 """
@@ -327,6 +336,8 @@ shapes and even different time resolutions. TorchStream handles this for you wit
 classes that allow you to treat jointly these combined types as a single sequence.
 """
 
+decoder = Namespace()  # Placeholder for the code block below
+decoder.forward = lambda x: x
 with st.echo():
     from functools import partial
 
@@ -346,6 +357,14 @@ with st.echo():
 
     # Here we handle the constant input by creating a wrapper that always injects it
     decoder_trsfm = partial(decoder.forward, s=ref_s)
+
+
+# We'll actually write this wrapper function so that it does not capture the model object in a closure,
+# for minimizing the RAM footprint
+def decoder_trsfm(*args, **kwargs):
+    decoder = get_kokoro_pipeline(device).model.decoder
+    return decoder.forward(*args, s=ref_s, **kwargs)
+
 
 """
 It's the first time we're dealing with multi-tensor data for streaming so let's take a quick peek at how 
@@ -904,3 +923,5 @@ For now this is the last TorchStream example. I hope you've enjoyed it. If you h
 your own models, consider opening an issue or shouting me an email at corentin.jemine@gmail.com
 """
 render_prev_next(__file__)
+
+get_kokoro_pipeline.clear()
