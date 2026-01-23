@@ -1,6 +1,7 @@
 import inspect
 import logging
 import time
+from argparse import Namespace
 from textwrap import dedent
 
 import numpy as np
@@ -335,6 +336,8 @@ shapes and even different time resolutions. TorchStream handles this for you wit
 classes that allow you to treat jointly these combined types as a single sequence.
 """
 
+decoder = Namespace()  # Placeholder for the code block below
+decoder.forward = lambda x: x
 with st.echo():
     from functools import partial
 
@@ -354,6 +357,14 @@ with st.echo():
 
     # Here we handle the constant input by creating a wrapper that always injects it
     decoder_trsfm = partial(decoder.forward, s=ref_s)
+
+
+# We'll actually write this wrapper function so that it does not capture the model object in a closure,
+# for minimizing the RAM footprint
+def decoder_trsfm(*args, **kwargs):
+    decoder = get_kokoro_pipeline(device).model.decoder
+    return decoder.forward(*args, s=ref_s, **kwargs)
+
 
 """
 It's the first time we're dealing with multi-tensor data for streaming so let's take a quick peek at how 
@@ -912,3 +923,5 @@ For now this is the last TorchStream example. I hope you've enjoyed it. If you h
 your own models, consider opening an issue or shouting me an email at corentin.jemine@gmail.com
 """
 render_prev_next(__file__)
+
+get_kokoro_pipeline.clear()
