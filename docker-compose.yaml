@@ -1,0 +1,8 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: examples/resources/Dockerfile.cpu
+    ports:
+      - "8004:8004"
+    restart: unless-stopped
